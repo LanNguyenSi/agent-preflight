@@ -1,0 +1,65 @@
+import fs from "fs";
+import path from "path";
+import { CheckResult } from "../types.js";
+
+interface CheckSetResult { checks: CheckResult[]; limitations: string[]; }
+
+const SECRET_PATTERNS = [
+  /(?:api[_-]?key|apikey)\s*[:=]\s*["']?[a-zA-Z0-9_\-]{20,}["']?/i,
+  /(?:password|passwd|pwd)\s*[:=]\s*["'][^"']{8,}["']/i,
+  /(?:secret|token)\s*[:=]\s*["'][a-zA-Z0-9_\-]{20,}["']/i,
+  /ghp_[a-zA-Z0-9]{36}/,
+  /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
+];
+
+const IGNORE_FILES = [".env.example", ".env.test", "*.test.ts", "*.spec.ts"];
+
+export async function runSecretDetection(repoPath: string): Promise<CheckSetResult> {
+  const start = Date.now();
+  const findings: string[] = [];
+  const limitations: string[] = ["secret detection uses pattern matching; not exhaustive"];
+
+  scanDir(repoPath, repoPath, findings);
+
+  return {
+    checks: [{
+      name: "secret-detection",
+      kind: "secret-detection",
+      status: findings.length > 0 ? "fail" : "pass",
+      message: findings.length > 0 ? `Potential secrets found in ${findings.length} location(s)` : undefined,
+      details: findings.slice(0, 5),
+      durationMs: Date.now() - start,
+      confidenceContribution: 0.1,
+    }],
+    limitations,
+  };
+}
+
+function scanDir(dir: string, root: string, findings: string[]): void {
+  const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".venv", "__pycache__"]);
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP_DIRS.has(entry.name)) continue;
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      scanDir(fullPath, root, findings);
+    } else if (entry.isFile() && isTextFile(entry.name) && !isIgnored(entry.name)) {
+      try {
+        const content = fs.readFileSync(fullPath, "utf-8");
+        for (const pattern of SECRET_PATTERNS) {
+          if (pattern.test(content)) {
+            findings.push(path.relative(root, fullPath));
+            break;
+          }
+        }
+      } catch {}
+    }
+  }
+}
+
+function isTextFile(name: string): boolean {
+  return /\.(ts|js|json|env|yaml|yml|toml|py|sh|md)$/.test(name);
+}
+
+function isIgnored(name: string): boolean {
+  return IGNORE_FILES.some(p => p.includes("*") ? name.endsWith(p.replace("*", "")) : name === p);
+}
