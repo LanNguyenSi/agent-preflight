@@ -1,218 +1,139 @@
 # agent-preflight
 
-A TypeScript CLI tool that runs CI preflight validation for AI agents. Uses act (nektos/act) as a local CI simulation engine plus direct lint and audit checks. Outputs structured JSON with pass/fail status, confidence score, and explicit limitations so agents know exactly what could not be validated locally before pushing.
+CI preflight validation for AI agents — run local checks before pushing, get structured feedback with confidence scoring.
 
-## Overview
+> Planned with [agent-planforge](https://github.com/LanNguyenSi/agent-planforge) · Generated with [scaffoldkit](https://github.com/LanNguyenSi/scaffoldkit) · Guided by [agent-engineering-playbook](https://github.com/LanNguyenSi/agent-engineering-playbook)
 
-`agent-preflight` is a command-line tool built with **python** and **typer**.
-It is distributed as a Python package via PyPI.
+## The Problem
+
+AI agents can change code. They can't easily verify whether the pipeline will accept it. The typical loop:
+
+```
+change code → push → wait for CI → fix → repeat
+```
+
+agent-preflight breaks that cycle by validating locally first.
+
+## What It Does
+
+Runs a hybrid set of checks before you push:
+
+| Check | Tool | Speed |
+|-------|------|-------|
+| TypeScript typecheck | tsc | fast |
+| Lint | eslint / ruff | fast |
+| Dependency audit | npm audit | fast |
+| Secret detection | pattern scan | fast |
+| Commit convention | git log | fast |
+| CI simulation | act (optional) | slow |
+
+Returns structured JSON with a **confidence score** (0–1) and explicit **limitations** — so agents know what was and wasn't validated.
 
 ## Installation
 
-### Via pip
-
 ```bash
-pip install agent-preflight
+npm install -g agent-preflight
 ```
 
-### Via pipx (recommended for isolated install)
+Or use directly:
 
 ```bash
-pipx install agent-preflight
-```
-
-### From source
-
-```bash
-git clone https://github.com/your-org/agent-preflight.git
-cd agent-preflight
-pip install -e ".[dev]"
-```
-
-## Quick Start
-
-```bash
-# Show help
-agent-preflight --help
-
-# Show version
-agent-preflight --version
-
-# Run the default command
-agent-preflight run
-
-# Get help for a subcommand
-agent-preflight run --help
+npx agent-preflight run
 ```
 
 ## Usage
 
-### Global Options
-
-| Option | Description |
-|--------|-------------|
-| `--help` | Show help and exit |
-| `--version` | Show version and exit |
-| `--config PATH` | Path to config file (default: `~/.config/agent-preflight/config.yaml`) |
-| `--verbose` | Enable verbose output |
-| `--quiet` | Suppress non-error output |
-| `--no-color` | Disable colored output |
-
-### Commands
-
-#### `agent-preflight run`
-
-Execute the primary action.
+### Single repo
 
 ```bash
-agent-preflight run [OPTIONS] [ARGS]...
+# Run in current directory
+preflight run
 
-Options:
-  --dry-run   Show what would happen without making changes
-  --output    Output format: text, json, yaml  [default: text]
-  --help      Show this message and exit
+# Run against a specific repo
+preflight run ./my-project
+
+# JSON output (for agent consumption)
+preflight run ./my-project --json
+
+# Enable act-based CI simulation (requires act)
+preflight run --ci-simulation
 ```
 
-#### `agent-preflight config`
+### Batch mode (multiple repos)
 
-Manage tool configuration.
+Inspired by [git-batch-cli](https://github.com/LanNguyenSi/git-batch-cli):
 
 ```bash
-agent-preflight config show              # Print current config
-agent-preflight config set KEY VALUE     # Set a config value
-agent-preflight config get KEY           # Get a config value
-agent-preflight config reset             # Reset to defaults
+# Run against all repos in a directory
+preflight batch ~/git
+
+# Filter by name pattern
+preflight batch ~/git --only "frost-*"
+preflight batch ~/git --exclude "*-playground"
+
+# JSON output
+preflight batch ~/git --json
 ```
 
-#### `agent-preflight version`
+## Output
 
-Show detailed version information.
+```
+✅ preflight: READY (confidence: 87%)
 
-```bash
-agent-preflight version
-# agent-preflight v0.1.0
-# Language: python
-# Framework: typer
-# Build: (commit hash)
+Warnings:
+  ⚠ 3 recent commits don't follow conventional format
+
+Limitations (not validated locally):
+  ~ CI simulation skipped (enable with --ci-simulation, requires act)
+  ~ secret detection uses pattern matching; not exhaustive
+
+Checks: 5 | Duration: 234ms
+```
+
+### JSON output format
+
+```json
+{
+  "ready": true,
+  "confidence": 0.87,
+  "checks": [...],
+  "blockers": [],
+  "warnings": ["3 recent commits don't follow conventional format"],
+  "limitations": [
+    "CI simulation skipped (requires act)",
+    "secret detection uses pattern matching; not exhaustive"
+  ],
+  "durationMs": 234,
+  "timestamp": "2026-03-25T17:00:00.000Z"
+}
 ```
 
 ## Configuration
 
-agent-preflight stores configuration at:
+Create `.preflight.json` in your repo root:
 
-- **Linux/macOS**: `~/.config/agent-preflight/config.yaml`
-- **Windows**: `%APPDATA%\agent-preflight\config.yaml`
-
-The `--config` flag overrides the default path.
-
-### Example config file
-
-```yaml
-# agent-preflight configuration
-output_format: text
-color: true
-verbose: false
-# Add your settings here
+```json
+{
+  "checks": {
+    "lint": true,
+    "typecheck": true,
+    "test": true,
+    "audit": true,
+    "ciSimulation": false,
+    "commitConvention": true,
+    "secretDetection": true
+  },
+  "commitConvention": "conventional",
+  "actFlags": ["--platform", "ubuntu-latest=catthehacker/ubuntu:act-latest"]
+}
 ```
 
-### Environment Variables
+## Requirements
 
-All config keys can be overridden via environment variables prefixed with `AGENT_PREFLIGHT_`:
-
-```bash
-export AGENT_PREFLIGHT_OUTPUT_FORMAT=json
-export AGENT_PREFLIGHT_VERBOSE=true
-```
-
-Priority order (highest to lowest): CLI flags > environment variables > config file > defaults.
-
-## Project Structure
-
-```
-agent-preflight/
-├── src/
-│   ├── commands/         # One file per subcommand
-│   ├── config/           # Config loading and validation
-│   └── main.py
-├── tests/
-│   └── ...               # Test files mirroring src/
-├── docs/
-│   ├── architecture.md
-│   ├── ways-of-working.md
-│   └── adrs/
-├── AI_CONTEXT.md
-└── README.md
-```
-
-## Development
-
-### Prerequisites
-
-- Python 3.11+
-- [uv](https://github.com/astral-sh/uv) or pip
-
-### Setup
-
-```bash
-git clone https://github.com/your-org/agent-preflight.git
-cd agent-preflight
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-
-# Install with dev dependencies
-pip install -e ".[dev]"
-```
-
-### Running Tests
-
-```bash
-pytest tests/
-pytest tests/ -v --tb=short   # Verbose output
-pytest tests/ --cov=src       # With coverage
-```
-
-### Linting and Formatting
-
-```bash
-ruff check src/ tests/
-ruff format src/ tests/
-mypy src/
-```
-
-## CI/CD
-
-Continuous integration runs on every pull request and push to `main`:
-
-- Lint and format check
-- Unit tests
-- Build verification
-- Publish to PyPI on tagged releases
-
-See `.github/workflows/` for pipeline definitions.
-
-## Testing
-
-Strategy: **unit-tests**
-
-Tests cover individual commands, argument parsing, config loading, and output formatting.
-Run them with the command shown in the Development section above.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes with tests
-4. Run the full test suite
-5. Open a pull request
-
-See [ways-of-working](docs/ways-of-working.md) for full contribution guidelines.
+- Node.js 18+
+- [act](https://github.com/nektos/act) (optional, for CI simulation)
+- `ruff` (optional, for Python lint checks)
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
-
----
-
-*Generated with [ScaffoldKit](https://github.com/scaffoldkit)*
+MIT
