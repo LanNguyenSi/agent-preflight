@@ -6,7 +6,7 @@ feature
 
 ## Priority
 
-P0
+P1
 
 ## Wave
 
@@ -14,11 +14,10 @@ wave-2
 
 ## Delivery Phase
 
-implementation
+core-checks
 
 ## Depends On
 
-- 001
 - 002
 
 ## Blocks
@@ -27,42 +26,36 @@ implementation
 
 ## Summary
 
-Design and implement the capability for: direct lint checks (ruff, eslint, tsc).
+Implement `src/checks/lint.ts` and `src/checks/typecheck.ts` — auto-detect the repo's language/framework and run appropriate linters directly (not via act).
 
 ## Problem
 
-The product cannot satisfy its initial scope until direct lint checks (ruff, eslint, tsc) exists as a reviewable, testable capability.
+CI lint failures are the most common cause of failed pipelines. Running linters directly (without Docker/act) is fast (<5s) and catches the majority of issues.
 
 ## Solution
 
-Add a focused module for direct lint checks (ruff, eslint, tsc) that matches the recommended modular monolith and keeps integration boundaries explicit.
+**lint.ts:**
+- Detect TypeScript/JS project (package.json with eslint) → run `npx eslint`
+- Detect Python project (pyproject.toml / setup.py) → run `ruff check` if installed
+- Return limitation if no linter found
+
+**typecheck.ts:**
+- Detect tsconfig.json → run `npx tsc --noEmit --skipLibCheck`
+- Return limitation if no tsconfig found
 
 ## Files To Create Or Modify
 
-- lib/github/client.ts — GitHub API client with octokit
-- lib/github/types.ts — GitHub API types (Repository, PR, Check, Workflow)
-- lib/github/repos.ts — Repository health functions (CI status, open PRs)
-- lib/github/checks.ts — Check runs and check suites
-- lib/github/prs.ts — Pull request operations
-- lib/github/workflows.ts — GitHub Actions workflow runs
-- app/api/github/repos/route.ts — GET repositories with health status
-- app/api/github/repos/[owner]/[repo]/route.ts — GET single repo details
-- app/api/github/prs/route.ts — GET open pull requests
-- app/api/github/checks/route.ts — GET failing checks
-- components/RepoCard.tsx — Repository card with CI status badge
-- components/RepoList.tsx — Repository list component
-- components/PRCard.tsx — Pull request card
-- components/CheckStatus.tsx — Check run status indicator
-- tests/github/client.test.ts — API client tests with mocked octokit
-- tests/github/repos.test.ts — Repository health logic tests
+- `src/checks/lint.ts` — eslint + ruff detection and execution (implemented ✅)
+- `src/checks/typecheck.ts` — tsc execution (implemented ✅)
 
 ## Acceptance Criteria
 
-- [ ] The direct lint checks (ruff, eslint, tsc) capability is available through the intended application surface.
-- [ ] Core validation, error handling, and persistence for direct lint checks (ruff, eslint, tsc) are covered by tests.
+- [ ] Detects eslint from package.json devDependencies
+- [ ] Detects ruff via `which ruff`
+- [ ] Returns limitation message when no linter available
+- [ ] TypeScript check uses --skipLibCheck for speed
+- [ ] Each check has confidenceContribution assigned
 
 ## Implementation Notes
 
-- Start from domain rules and access constraints before UI or transport details.
-- Keep module boundaries explicit so later extraction remains possible if the system grows.
-- Update docs and tests in the same change instead of leaving them for cleanup.
+Status: **DONE** ✅ — see `src/checks/lint.ts` and `src/checks/typecheck.ts`
