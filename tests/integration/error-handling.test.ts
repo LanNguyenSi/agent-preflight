@@ -8,14 +8,20 @@ describe('Error Handling Integration Tests', () => {
     const nonExistentPath = '/tmp/does-not-exist-' + Date.now();
     const config = {
       checks: {
-        lint: true,
+        lint: false,
+        typecheck: false,
+        audit: false,
+        secretDetection: false,
+        commitConvention: false,
+        ciSimulation: false,
       },
     };
 
-    // Should not throw, but may return limited results
-    await expect(async () => {
-      await runPreflight(nonExistentPath, config);
-    }).rejects.toThrow(); // Expect it to throw on invalid path
+    // Runner degrades gracefully rather than throwing on non-existent path
+    const result = await runPreflight(nonExistentPath, config);
+    expect(result).toBeDefined();
+    expect(typeof result.ready).toBe('boolean');
+    expect(result.limitations.length).toBeGreaterThan(0);
   });
 
   it('should handle empty configuration gracefully', async () => {

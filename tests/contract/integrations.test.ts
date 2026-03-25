@@ -42,7 +42,10 @@ describe('Contract Tests - JSON Output Stability', () => {
   it('should maintain stable CheckResult schema', async () => {
     const config = {
       checks: {
-        lint: true,
+        lint: false, // avoid eslint slowness on CI
+        typecheck: false,
+        commitConvention: true,
+        secretDetection: true,
       },
     };
 

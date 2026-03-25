@@ -37,7 +37,13 @@ export async function runSecretDetection(repoPath: string): Promise<CheckSetResu
 
 function scanDir(dir: string, root: string, findings: string[]): void {
   const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".venv", "__pycache__"]);
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return; // skip directories we can't read (permission denied etc.)
+  }
+  for (const entry of entries) {
     if (SKIP_DIRS.has(entry.name)) continue;
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
