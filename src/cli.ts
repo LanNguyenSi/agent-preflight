@@ -3,6 +3,7 @@ import { Command } from "commander";
 import path from "path";
 import { loadConfig } from "./config.js";
 import { runPreflight } from "./runner.js";
+import { runBatch } from "./batch.js";
 
 const program = new Command();
 
@@ -33,7 +34,6 @@ program
       process.exit(result.ready ? 0 : 1);
     }
 
-    // Pretty summary
     const icon = result.ready ? "✅" : "❌";
     const conf = Math.round(result.confidence * 100);
     console.log(`\n${icon} preflight: ${result.ready ? "READY" : "NOT READY"} (confidence: ${conf}%)\n`);
@@ -58,6 +58,51 @@ program
 
     console.log(`Checks: ${result.checks.length} | Duration: ${result.durationMs}ms`);
     process.exit(result.ready ? 0 : 1);
+  });
+
+program
+  .command("batch [root]")
+  .description("Run preflight across all Git repos in a directory (inspired by git-batch-cli)")
+  .option("--only <pattern>", "Only include repos matching glob pattern (e.g. frost-*)")
+  .option("--exclude <pattern>", "Exclude repos matching glob pattern")
+  .option("--json", "Output raw JSON")
+  .option("--no-audit", "Skip dependency audit for all repos")
+  .option("--no-secrets", "Skip secret detection for all repos")
+  .action(async (root: string | undefined, opts) => {
+    const resolvedRoot = path.resolve(root ?? process.cwd());
+    const configOverride: Record<string, unknown> = {};
+
+    if (opts.noAudit) configOverride.checks = { audit: false };
+    if (opts.noSecrets) configOverride.checks = { ...(configOverride.checks as object ?? {}), secretDetection: false };
+
+    const batchResult = await runBatch(
+      resolvedRoot,
+      { only: opts.only, exclude: opts.exclude },
+      configOverride
+    );
+
+    if (opts.json) {
+      console.log(JSON.stringify(batchResult, null, 2));
+      process.exit(batchResult.notReady > 0 ? 1 : 0);
+    }
+
+    console.log(`\n📦 Batch preflight: ${resolvedRoot}`);
+    console.log(`   ${batchResult.total} repos | ✅ ${batchResult.ready} ready | ❌ ${batchResult.notReady} not ready | ⚠ ${batchResult.skipped} skipped\n`);
+
+    for (const { repo, result, error } of batchResult.results) {
+      if (error) {
+        console.log(`  ⚠ ${repo}: error — ${error}`);
+        continue;
+      }
+      if (!result) continue;
+      const icon = result.ready ? "✅" : "❌";
+      const conf = Math.round(result.confidence * 100);
+      const blockers = result.blockers.length > 0 ? ` [${result.blockers[0]}]` : "";
+      console.log(`  ${icon} ${repo} (${conf}%)${blockers}`);
+    }
+
+    console.log();
+    process.exit(batchResult.notReady > 0 ? 1 : 0);
   });
 
 program.parseAsync();
