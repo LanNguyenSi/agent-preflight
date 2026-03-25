@@ -177,6 +177,31 @@ Examples:
 
 If no custom commands are configured, agent-preflight auto-detects common Node, Python, PHP and Java manifests and chooses reasonable defaults.
 
+### PHP / Symfony projects
+
+For PHP projects, `composer install` must have run first (the `vendor/` directory must exist). Without it, all PHP checks will be skipped with a limitation message.
+
+**Host mode (PHP + Composer installed locally):**
+
+```bash
+cd my-symfony-project
+composer install
+preflight run .
+```
+
+**Sandbox mode (no local PHP):**
+
+```bash
+# Mount your repo into the container (writable so composer can install)
+docker run --rm -v /path/to/my-symfony-project:/workspace agent-preflight:local run /workspace
+```
+
+> Note: The sandbox installs PHP CLI and Composer but does not run `composer install` automatically. Add a custom command if you need it:
+>
+> ```json
+> { "commands": { "test": ["composer install --no-interaction", "vendor/bin/phpunit"] } }
+> ```
+
 ## Skill Templates
 
 The repo also ships reusable skill templates for agent workflows:
