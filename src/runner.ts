@@ -63,7 +63,8 @@ export async function runPreflight(
     .map((c) => c.message ?? c.name);
 
   const confidence = computeConfidence(checks, limitations);
-  const ready = blockers.length === 0 && confidence >= 0.7;
+  // ready = no blockers (warnings are ok); confidence is separate signal for agents
+  const ready = blockers.length === 0;
 
   return {
     ready,
