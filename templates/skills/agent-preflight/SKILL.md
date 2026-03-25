@@ -7,6 +7,14 @@ description: Use this skill when an agent should validate a repository with agen
 
 Use this skill when the task includes "check before push", "validate locally", "run preflight", "summarize readiness", or equivalent agent handoff gates.
 
+## Install Source
+
+- Source repository: `https://github.com/LanNguyenSi/agent-preflight`
+- Template path: `templates/skills/agent-preflight`
+- Intended installed skill name: `agent-preflight`
+
+If an agent is installing this skill from a repo template, it should fetch it from the source repository and copy this folder into the local skills directory under `agent-preflight/`.
+
 ## Workflow
 
 1. Resolve the repo root and inspect `.preflight.json` when present.

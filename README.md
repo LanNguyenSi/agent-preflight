@@ -186,6 +186,10 @@ The repo also ships reusable skill templates for agent workflows:
 - [agent-preflight-claude](./templates/skills/agent-preflight-claude/SKILL.md)
 
 They are meant as starting points for installing or adapting `agent-preflight` into agent-specific workflows.
+Each template now includes its canonical install source:
+
+- source repo: `https://github.com/LanNguyenSi/agent-preflight`
+- template path inside repo: `templates/skills/<skill-name>`
 
 ## Requirements
 

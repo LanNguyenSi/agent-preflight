@@ -7,6 +7,14 @@ description: Use this skill when OpenCode should run agent-preflight as a final 
 
 Use this skill when OpenCode is about to finish coding work, open a PR, or hand off results.
 
+## Install Source
+
+- Source repository: `https://github.com/LanNguyenSi/agent-preflight`
+- Template path: `templates/skills/agent-preflight-opencode`
+- Intended installed skill name: `agent-preflight-opencode`
+
+If an agent is installing this skill from a repo template, it should fetch it from the source repository and copy this folder into the local skills directory under `agent-preflight-opencode/`.
+
 ## OpenCode Workflow
 
 1. Inspect `.preflight.json` if present.

@@ -7,6 +7,14 @@ description: Use this skill when Claude should run agent-preflight before comple
 
 Use this skill when Claude needs a deterministic final validation step before handoff.
 
+## Install Source
+
+- Source repository: `https://github.com/LanNguyenSi/agent-preflight`
+- Template path: `templates/skills/agent-preflight-claude`
+- Intended installed skill name: `agent-preflight-claude`
+
+If an agent is installing this skill from a repo template, it should fetch it from the source repository and copy this folder into the local skills directory under `agent-preflight-claude/`.
+
 ## Claude Workflow
 
 1. Find the repo root and read `.preflight.json` if present.
