@@ -110,7 +110,7 @@ describe('Contract Tests - JSON Output Stability', () => {
     // Confidence should be deterministic (same input = same output)
     // Allow small floating-point variance
     expect(Math.abs(result1.confidence - result2.confidence)).toBeLessThan(0.01);
-  }, 15000); // Increase timeout for running checks twice
+  }, 30000); // Running the same full preflight twice can exceed 15s on slower environments
 
   it('should maintain backward-compatible limitation messages', async () => {
     const config = {

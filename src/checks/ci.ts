@@ -23,7 +23,7 @@ export async function runCiSimulation(repoPath: string, actFlags: string[] = [])
   try {
     const { exitCode, all } = await execa(
       "act",
-      ["--dry-run", "--json", ...actFlags],
+      ["--dryrun", "--json", ...actFlags],
       { cwd: repoPath, reject: false, all: true, timeout: 120_000 }
     );
 

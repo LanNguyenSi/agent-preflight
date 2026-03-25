@@ -115,6 +115,7 @@ export async function runConfiguredCommands(
       command,
       weight,
       failureMessage: `${kind} command failed`,
+      timeoutMs: kind === "test" ? 300_000 : undefined,
     });
 
     if (result.check) {
@@ -152,7 +153,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
   try {
     const { exitCode, all } = await execa(
       "bash",
-      ["-lc", options.command],
+      ["-c", options.command],
       {
         cwd: options.repoPath,
         reject: false,
@@ -204,7 +205,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
 export async function commandExists(command: string, repoPath: string): Promise<boolean> {
   const { exitCode } = await execa(
     "bash",
-    ["-lc", 'command -v "$CHECK_CMD" >/dev/null 2>&1'],
+    ["-c", 'command -v "$CHECK_CMD" >/dev/null 2>&1'],
     {
       cwd: repoPath,
       reject: false,
@@ -413,7 +414,7 @@ function buildCommandEnv(repoPath: string): NodeJS.ProcessEnv {
 async function runSetupCommand(repoPath: string, command: string): Promise<number> {
   const { exitCode } = await execa(
     "bash",
-    ["-lc", command],
+    ["-c", command],
     {
       cwd: repoPath,
       reject: false,

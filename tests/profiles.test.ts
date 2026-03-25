@@ -52,6 +52,7 @@ describe("profile configuration", () => {
     expect(config.checks?.audit).toBe(false);
     expect(config.checks?.lint).toBe(true);
     expect(config.commands?.test).toEqual(["true"]);
+    expect(config.actFlags).toEqual(["--platform", "ubuntu-latest=catthehacker/ubuntu:act-latest"]);
     expect(config.sandbox?.aptPackages).toEqual([]);
   });
 

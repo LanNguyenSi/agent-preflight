@@ -107,6 +107,7 @@ preflight sandbox --build
 
 `preflight sandbox` mounts the current Git root at `/workspace` when no path is passed. `--docker-socket` is only required when you want `act` inside the sandbox.
 The image name is derived from detected capabilities such as Node, Python, PHP, Java, Symfony and `--ci-simulation`, so switching repositories can trigger a different local image automatically.
+CI simulation uses a default `act` platform mapping for `ubuntu-latest` unless you override `actFlags` in `.preflight.json`.
 The legacy wrapper `./agent-preflight-sandbox` is still available for direct use from a checkout.
 
 ### Building a release bundle

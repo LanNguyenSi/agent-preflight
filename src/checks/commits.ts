@@ -35,7 +35,21 @@ export async function runCommitConventionCheck(repoPath: string, convention?: st
       }],
       limitations,
     };
-  } catch {
-    return { checks: [], limitations: ["git not available; commit convention check skipped"] };
+  } catch (err: unknown) {
+    const error = err as NodeJS.ErrnoException & { stderr?: string; shortMessage?: string };
+    const stderr = `${error.stderr ?? ""} ${error.shortMessage ?? ""}`.trim();
+
+    if (error.code === "ENOENT") {
+      return { checks: [], limitations: ["git not available; commit convention check skipped"] };
+    }
+
+    if (stderr.includes("dubious ownership")) {
+      return {
+        checks: [],
+        limitations: ["git refused repository ownership; commit convention check skipped"],
+      };
+    }
+
+    return { checks: [], limitations: ["git log failed; commit convention check skipped"] };
   }
 }

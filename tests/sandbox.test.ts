@@ -62,6 +62,9 @@ describe("sandbox helpers", () => {
     expect(command).toContain("docker");
     expect(command).toContain("run");
     expect(command).toContain("agent-preflight-space-repo");
+    expect(command).toContain("GIT_CONFIG_COUNT=1");
+    expect(command).toContain("GIT_CONFIG_KEY_0=safe.directory");
+    expect(command).toContain("GIT_CONFIG_VALUE_0=/workspace");
     expect(command).toContain(`${homeDir}/.npm:/root/.npm`);
     expect(command).toContain(`${homeDir}/.m2:/root/.m2`);
     expect(command).toContain("/var/run/docker.sock:/var/run/docker.sock");

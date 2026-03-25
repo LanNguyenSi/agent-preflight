@@ -161,8 +161,21 @@ describe('Error Handling Integration Tests', () => {
   it('should maintain JSON output contract even on errors', async () => {
     const config = {
       checks: {
-        ciSimulation: true, // Will fail if act not installed
+        lint: false,
+        typecheck: false,
+        test: false,
+        audit: false,
+        secretDetection: false,
+        commitConvention: false,
+        ciSimulation: false,
       },
+      customChecks: [
+        {
+          name: 'failing-contract-check',
+          command: 'false',
+          failOnError: true,
+        },
+      ],
     };
 
     const result = await runPreflight('.', config);

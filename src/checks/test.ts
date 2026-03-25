@@ -50,6 +50,7 @@ export async function runTestChecks(
           weight: 0.2,
           failureMessage: "npm test failed",
           missingLimitation: "npm not installed; Node test check skipped",
+          timeoutMs: 300_000,
         });
         if (result.check) {
           checks.push(result.check);
@@ -73,6 +74,7 @@ export async function runTestChecks(
         weight: 0.2,
         failureMessage: "pytest failed",
         missingLimitation: "pytest not installed; Python test check skipped",
+        timeoutMs: 300_000,
       });
       if (result.check) {
         checks.push(result.check);
@@ -92,6 +94,7 @@ export async function runTestChecks(
         weight: 0.2,
         failureMessage: "composer test failed",
         missingLimitation: "composer not installed; PHP test check skipped",
+        timeoutMs: 300_000,
       });
       if (result.check) {
         checks.push(result.check);
@@ -104,6 +107,7 @@ export async function runTestChecks(
         command: "vendor/bin/phpunit",
         weight: 0.2,
         failureMessage: "phpunit failed",
+        timeoutMs: 300_000,
       });
       if (result.check) {
         checks.push(result.check);
@@ -133,6 +137,7 @@ export async function runTestChecks(
         weight: 0.2,
         failureMessage: "Java test command failed",
         missingLimitation: "Maven/Gradle not installed; Java test check skipped",
+        timeoutMs: 300_000,
       });
       if (result.check) {
         checks.push(result.check);

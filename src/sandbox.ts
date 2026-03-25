@@ -180,6 +180,11 @@ export function buildDockerRunCommand(
   }
 
   args.push("-v", `${context.workspacePath}:/workspace`, "-w", "/workspace");
+  args.push(
+    "-e", "GIT_CONFIG_COUNT=1",
+    "-e", "GIT_CONFIG_KEY_0=safe.directory",
+    "-e", "GIT_CONFIG_VALUE_0=/workspace"
+  );
 
   for (const [hostPath, containerPath] of getCacheMounts(context.homeDir)) {
     if (fs.existsSync(hostPath)) {

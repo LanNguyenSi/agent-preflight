@@ -3,6 +3,7 @@ import path from "path";
 import { PreflightConfig } from "./types.js";
 
 const CONFIG_FILENAME = ".preflight.json";
+const DEFAULT_ACT_FLAGS = ["--platform", "ubuntu-latest=catthehacker/ubuntu:act-latest"];
 
 export function loadConfig(repoPath: string): PreflightConfig {
   const configPath = path.join(repoPath, CONFIG_FILENAME);
@@ -34,7 +35,7 @@ export function defaultConfig(): PreflightConfig {
     },
     commitConvention: "conventional",
     workingDir: ".",
-    actFlags: [],
+    actFlags: [...DEFAULT_ACT_FLAGS],
     commands: {},
     sandbox: {
       aptPackages: [],
