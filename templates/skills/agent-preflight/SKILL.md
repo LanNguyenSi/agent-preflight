@@ -20,6 +20,13 @@ Use this skill when the task includes "check before push", "validate locally", "
    - confidence
    - whether the repo is ready
 
+## Tool Discovery
+
+- Prefer `preflight` when it is already available in `PATH`.
+- If `preflight` is not installed globally, use a checked-out `agent-preflight` repository when one is available.
+- `./agent-preflight-sandbox` only works from inside an `agent-preflight` checkout because it depends on the local wrapper and `Dockerfile`.
+- If neither a binary nor a checkout is available, say that `agent-preflight` must be installed or made available before you can run the validation.
+
 ## Output Rules
 
 - Treat `ready` as the release gate.

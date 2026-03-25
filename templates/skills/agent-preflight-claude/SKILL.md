@@ -14,6 +14,13 @@ Use this skill when Claude needs a deterministic final validation step before ha
 3. If important checks are skipped because tooling is absent, rerun in `agent-preflight-sandbox`.
 4. Present the result as a short readiness report.
 
+## Tool Discovery
+
+- Prefer `preflight` if it is already available in `PATH`.
+- If not, use a checked-out `agent-preflight` repository when one is available.
+- `./agent-preflight-sandbox` only works from that checkout because the wrapper and container build files live there.
+- If Claude cannot find either form, it should explicitly report that `agent-preflight` is not installed or not available in the workspace.
+
 ## Reporting Format
 
 Claude should summarize:

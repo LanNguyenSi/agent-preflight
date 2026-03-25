@@ -19,6 +19,13 @@ Use this skill when OpenCode is about to finish coding work, open a PR, or hand 
    - limitations
    - confidence
 
+## Tool Discovery
+
+- Prefer `preflight` from `PATH`.
+- If the binary is not installed, use a checked-out `agent-preflight` repo when one is available in the workspace.
+- `./agent-preflight-sandbox` requires that local checkout because it uses the repo's wrapper and `Dockerfile`.
+- If OpenCode cannot find either the binary or a checkout, it should report that `agent-preflight` is unavailable instead of pretending validation succeeded.
+
 ## OpenCode-Specific Guidance
 
 - Prefer short, factual summaries.
