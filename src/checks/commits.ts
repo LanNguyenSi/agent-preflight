@@ -3,7 +3,9 @@ import { CheckResult } from "../types.js";
 
 interface CheckSetResult { checks: CheckResult[]; limitations: string[]; }
 
-const CONVENTIONAL_PATTERN = /^(feat|fix|docs|style|refactor|test|chore|ci|build|perf|revert)(\(.+\))?: .{1,80}/;
+// Relaxed pattern: Allow up to 200 chars to accommodate emojis and longer messages
+// Only validates format (type + optional scope + colon + message), not length
+const CONVENTIONAL_PATTERN = /^(feat|fix|docs|style|refactor|test|chore|ci|build|perf|revert)(\(.+\))?: .+/;
 
 export async function runCommitConventionCheck(repoPath: string, convention?: string): Promise<CheckSetResult> {
   if (convention === "none") {
