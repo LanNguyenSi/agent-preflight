@@ -18,14 +18,16 @@ agent-preflight breaks that cycle by validating locally first.
 
 Runs a hybrid set of checks before you push:
 
-| Check | Tool | Speed |
-|-------|------|-------|
-| TypeScript typecheck | tsc | fast |
-| Lint | eslint / ruff | fast |
-| Dependency audit | npm audit | fast |
-| Secret detection | pattern scan | fast |
-| Commit convention | git log | fast |
-| CI simulation | act (optional) | slow |
+| Check | What it catches | Tool | Speed |
+|-------|----------------|------|-------|
+| TypeScript typecheck | Type errors | tsc | fast |
+| Lint | Code quality issues | eslint / ruff | fast |
+| Dependency audit | Known CVEs in dependencies | npm audit | fast |
+| **Secret detection** | API keys, tokens, private keys in source files | pattern scan | fast |
+| Commit convention | Non-conventional commit messages | git log | fast |
+| CI simulation | Workflow failures before push | act (optional) | slow |
+
+> **Secret detection** scans all source files for patterns matching API keys, tokens, and private keys. Placeholder/example values (e.g. `your_api_key_here`) are ignored.
 
 Returns structured JSON with a **confidence score** (0–1) and explicit **limitations** — so agents know what was and wasn't validated.
 
