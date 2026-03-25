@@ -5,9 +5,9 @@ import { CheckResult } from "../types.js";
 interface CheckSetResult { checks: CheckResult[]; limitations: string[]; }
 
 const SECRET_PATTERNS = [
-  /(?:api[_-]?key|apikey)\s*[:=]\s*["']?[a-zA-Z0-9_\-]{20,}["']?(?!.*(?:your_|example|placeholder|here|xxx|todo|dummy))/i,
+  /(?:api[_-]?key|apikey)\s*[:=]\s*["']?[a-zA-Z0-9_-]{20,}["']?(?!.*(?:your_|example|placeholder|here|xxx|todo|dummy))/i,
   /(?:password|passwd|pwd)\s*[:=]\s*["'][^"']{8,}["'](?!.*(?:your_|example|placeholder|here|xxx))/i,
-  /(?:secret|token)\s*[:=]\s*["'][a-zA-Z0-9_\-]{20,}["'](?!.*(?:your_|example|placeholder|here|xxx))/i,
+  /(?:secret|token)\s*[:=]\s*["'][a-zA-Z0-9_-]{20,}["'](?!.*(?:your_|example|placeholder|here|xxx))/i,
   /ghp_[a-zA-Z0-9]{36}/,
   /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
 ];
@@ -72,7 +72,7 @@ function scanDir(dir: string, root: string, findings: string[]): void {
             }
           }
         }
-      } catch {}
+      } catch (_) { /* ignore read errors */ }
     }
   }
 }
