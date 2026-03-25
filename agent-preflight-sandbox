@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE="${AGENT_PREFLIGHT_SANDBOX_IMAGE:-agent-preflight:local}"
 BUILD_IMAGE=false
 PULL_IMAGE=false
@@ -58,7 +59,7 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-BUILD_CMD=(docker build -t "$IMAGE" "$WORKDIR")
+BUILD_CMD=(docker build -t "$IMAGE" "$SCRIPT_DIR")
 PULL_CMD=(docker pull "$IMAGE")
 
 CONTAINER_NAME_SUFFIX="$(basename "$WORKDIR" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-')"

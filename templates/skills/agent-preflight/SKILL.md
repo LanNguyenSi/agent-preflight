@@ -20,7 +20,7 @@ If an agent is installing this skill from a repo template, it should fetch it fr
 1. Resolve the repo root and inspect `.preflight.json` when present.
 2. If the repo is a monorepo or the relevant code lives below the root, set or honor `workingDir`.
 3. Run `preflight run <repo> --json`.
-4. If the result mainly contains missing-tool limitations, consider rerunning with `./agent-preflight-sandbox`.
+4. If the result mainly contains missing-tool limitations, consider rerunning with `preflight sandbox <repo> --json`.
 5. Report:
    - blockers
    - warnings
@@ -32,7 +32,8 @@ If an agent is installing this skill from a repo template, it should fetch it fr
 
 - Prefer `preflight` when it is already available in `PATH`.
 - If `preflight` is not installed globally, use a checked-out `agent-preflight` repository when one is available.
-- `./agent-preflight-sandbox` only works from inside an `agent-preflight` checkout because it depends on the local wrapper and `Dockerfile`.
+- Prefer `preflight sandbox <repo> --json` for sandbox reruns.
+- `./agent-preflight-sandbox` remains available as a checkout-local compatibility wrapper.
 - If neither a binary nor a checkout is available, say that `agent-preflight` must be installed or made available before you can run the validation.
 
 ## Output Rules

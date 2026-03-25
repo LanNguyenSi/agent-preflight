@@ -125,12 +125,12 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## Release Process
 
-1. Bump version in `pyproject.toml`
+1. Bump version in `package.json`
 2. Update `CHANGELOG.md`
 3. Commit: `chore(release): v1.2.3`
 4. Tag: `git tag v1.2.3`
 5. Push tag: `git push origin v1.2.3`
-6. CI publishes to PyPI automatically
+6. CI builds and publishes the release bundle assets automatically
 
 ## Branching Strategy
 

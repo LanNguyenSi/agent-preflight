@@ -19,14 +19,15 @@ If an agent is installing this skill from a repo template, it should fetch it fr
 
 1. Find the repo root and read `.preflight.json` if present.
 2. Run `preflight run <repo> --json`.
-3. If important checks are skipped because tooling is absent, rerun in `agent-preflight-sandbox`.
+3. If important checks are skipped because tooling is absent, rerun with `preflight sandbox <repo> --json`.
 4. Present the result as a short readiness report.
 
 ## Tool Discovery
 
 - Prefer `preflight` if it is already available in `PATH`.
 - If not, use a checked-out `agent-preflight` repository when one is available.
-- `./agent-preflight-sandbox` only works from that checkout because the wrapper and container build files live there.
+- Prefer `preflight sandbox <repo> --json` for sandbox reruns.
+- `./agent-preflight-sandbox` remains available as a checkout-local compatibility wrapper.
 - If Claude cannot find either form, it should explicitly report that `agent-preflight` is not installed or not available in the workspace.
 
 ## Reporting Format

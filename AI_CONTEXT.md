@@ -25,8 +25,11 @@ The tool runs local checks and returns a structured result with:
 
 - `preflight run [repoPath]`
 - `preflight batch [root]`
+- `preflight sandbox [repoPath]`
 
-The optional Docker wrapper is `./agent-preflight-sandbox`.
+The optional legacy Docker wrapper is `./agent-preflight-sandbox`.
+`preflight sandbox` resolves a capability-based local image profile from the target repo and may auto-build a matching image on first use.
+`install.sh` supports both a source checkout and a prebuilt release bundle.
 
 ## Repository Structure
 
@@ -42,6 +45,8 @@ agent-preflight/
 ├── tests/            # Vitest suites
 ├── Dockerfile        # Optional sandbox runtime
 ├── agent-preflight-sandbox
+├── install.sh
+├── scripts/          # Packaging helpers such as the release bundle builder
 ├── README.md
 └── Makefile
 ```
@@ -60,14 +65,16 @@ When adding a check:
 1. Keep the runner contract stable.
 2. Prefer manifest detection plus sensible defaults.
 3. Allow repo-specific overrides through `.preflight.json`.
-4. Return explicit limitations instead of throwing when a tool is missing.
-5. Add or update Vitest coverage for the new behavior.
+4. Keep sandbox profile detection conservative and extend it via config when inference would be risky.
+5. Return explicit limitations instead of throwing when a tool is missing.
+6. Add or update Vitest coverage for the new behavior.
 
 Supported override areas in config:
 
 - `workingDir`
 - `checks`
 - `commands`
+- `sandbox`
 - `customChecks`
 - `actFlags`
 

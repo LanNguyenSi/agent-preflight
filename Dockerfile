@@ -2,6 +2,7 @@ FROM node:20-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+ARG EXTRA_APT_PACKAGES=""
 RUN apt-get update && apt-get install -y --no-install-recommends \
   bash \
   ca-certificates \
@@ -17,18 +18,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   python3-pip \
   python3-venv \
   unzip \
+  $EXTRA_APT_PACKAGES \
   && rm -rf /var/lib/apt/lists/*
 
+ARG EXTRA_PIP_PACKAGES=""
 RUN pip3 install --break-system-packages \
   mypy \
   pip-audit \
   pytest \
-  ruff
+  ruff \
+  $EXTRA_PIP_PACKAGES
 
 ARG ACT_VERSION=v0.2.82
 RUN curl -fsSL "https://github.com/nektos/act/releases/download/${ACT_VERSION}/act_Linux_x86_64.tar.gz" \
   | tar -xz -C /usr/local/bin act \
   && chmod +x /usr/local/bin/act
+
+ARG SANDBOX_PROFILE=default
+LABEL io.agent-preflight.sandbox-profile="${SANDBOX_PROFILE}"
 
 WORKDIR /app
 
@@ -39,5 +46,5 @@ COPY src ./src
 COPY README.md ./
 RUN npm run build
 
-ENTRYPOINT ["node", "dist/cli.js"]
+ENTRYPOINT ["node", "/app/dist/cli.js"]
 CMD ["run", "/workspace"]

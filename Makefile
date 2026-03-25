@@ -1,8 +1,16 @@
-.PHONY: install build test lint check clean run batch sandbox-build sandbox help
+.PHONY: install build test lint check clean run batch sandbox-build sandbox install-cli release-bundle help
 
 ## Install dependencies
 install:
 	npm ci
+
+## Install preflight into ~/.local/bin from the local checkout
+install-cli:
+	./install.sh
+
+## Create a release bundle tarball in out/release
+release-bundle:
+	./scripts/create-release-bundle.sh
 
 ## Build TypeScript
 build:
@@ -50,6 +58,8 @@ help:
 	@echo ""
 	@echo "Examples:"
 	@echo "  make setup              # Install + build"
+	@echo "  make install-cli        # Install preflight into ~/.local/bin"
+	@echo "  make release-bundle     # Create a release bundle tarball"
 	@echo "  make run                # Check current directory"
 	@echo "  make batch DIR=~/git    # Check all repos in ~/git"
 	@echo "  make sandbox            # Run preflight in the sandbox image"
