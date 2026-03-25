@@ -56,6 +56,22 @@ export async function runLintChecks(
       if (result.check) {
         checks.push(result.check);
       }
+    } else if (context.hasTsconfig) {
+      const result = await runShellCheck({
+        repoPath,
+        name: "tsc-lint-fallback",
+        kind: "lint",
+        command: "npx tsc --noEmit --skipLibCheck",
+        weight: 0.15,
+        failureMessage: "TypeScript lint fallback failed",
+        missingLimitation: "tsc not available; TypeScript lint fallback skipped",
+      });
+      if (result.check) {
+        checks.push(result.check);
+      }
+      if (result.limitation) {
+        limitations.push(result.limitation);
+      }
     } else {
       limitations.push("No supported Node lint command found (npm script or eslint)");
     }
