@@ -5,5 +5,6 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    testTimeout: 30_000, // integration tests with lint/audit checks can take >5s on CI
   },
 });
