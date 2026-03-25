@@ -147,6 +147,7 @@ interface ShellCheckRunResult {
 
 export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCheckRunResult> {
   const start = Date.now();
+  const env = buildCommandEnv(options.repoPath);
 
   try {
     const { exitCode, all } = await execa(
@@ -157,6 +158,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
         reject: false,
         all: true,
         timeout: options.timeoutMs ?? 120_000,
+        env,
       }
     );
 
@@ -207,7 +209,7 @@ export async function commandExists(command: string, repoPath: string): Promise<
       cwd: repoPath,
       reject: false,
       env: {
-        ...process.env,
+        ...buildCommandEnv(repoPath),
         CHECK_CMD: command,
       },
     }
@@ -224,22 +226,63 @@ export async function ensureProjectSetup(repoPath: string): Promise<string[]> {
   const limitations: string[] = [];
   const context = createProjectContext(repoPath);
 
-  if (hasPhpProject(context) && !fileExists(repoPath, "vendor")) {
-    const { exitCode } = await execa(
-      "bash",
-      ["-lc", "composer install --no-interaction --no-progress"],
-      {
-        cwd: repoPath,
-        reject: false,
-        all: true,
-        timeout: 120_000,
-      }
-    );
+  if (hasNodeProject(context) && fileExists(repoPath, "package-lock.json") && !fileExists(repoPath, "node_modules")) {
+    const exitCode = await runSetupCommand(repoPath, "npm ci");
+    if (exitCode === 127) {
+      limitations.push("package-lock.json found but node_modules/ is missing; npm ci skipped because npm is not available");
+    } else if (exitCode !== 0) {
+      limitations.push("npm ci failed while preparing Node checks");
+    }
+  }
 
+  if (hasPythonProject(context) && context.hasRequirementsTxt && !fileExists(repoPath, ".preflight-venv")) {
+    const exitCode = await runSetupCommand(
+      repoPath,
+      "python3 -m venv .preflight-venv && .preflight-venv/bin/pip install -r requirements.txt"
+    );
+    if (exitCode === 127) {
+      limitations.push("requirements.txt found but .preflight-venv/ is missing; Python setup skipped because python3 is not available");
+    } else if (exitCode !== 0) {
+      limitations.push("Python environment setup failed while preparing checks");
+    }
+  }
+
+  if (hasPhpProject(context) && !fileExists(repoPath, "vendor")) {
+    const exitCode = await runSetupCommand(repoPath, "composer install --no-interaction --no-progress");
     if (exitCode === 127) {
       limitations.push("composer.json found but vendor/ is missing; composer install skipped because composer is not available");
     } else if (exitCode !== 0) {
       limitations.push("composer install failed while preparing PHP checks");
+    }
+  }
+
+  if (context.hasMavenWrapper || context.hasPomXml) {
+    const command = context.hasMavenWrapper
+      ? "./mvnw -q -DskipTests dependency:go-offline"
+      : "mvn -q -DskipTests dependency:go-offline";
+    const marker = path.join(repoPath, "target");
+    if (!fs.existsSync(marker)) {
+      const exitCode = await runSetupCommand(repoPath, command);
+      if (exitCode === 127) {
+        limitations.push("pom.xml found but Maven setup skipped because mvn is not available");
+      } else if (exitCode !== 0) {
+        limitations.push("Maven setup failed while preparing Java checks");
+      }
+    }
+  }
+
+  if (context.hasGradleWrapper || context.hasGradleBuild) {
+    const command = context.hasGradleWrapper
+      ? "./gradlew classes testClasses -q"
+      : "gradle classes testClasses -q";
+    const marker = path.join(repoPath, ".gradle");
+    if (!fs.existsSync(marker)) {
+      const exitCode = await runSetupCommand(repoPath, command);
+      if (exitCode === 127) {
+        limitations.push("build.gradle found but Gradle setup skipped because gradle is not available");
+      } else if (exitCode !== 0) {
+        limitations.push("Gradle setup failed while preparing Java checks");
+      }
     }
   }
 
@@ -352,4 +395,33 @@ function outputLines(output: string | undefined): string[] | undefined {
     .slice(0, 10);
 
   return lines.length > 0 ? lines : undefined;
+}
+
+function buildCommandEnv(repoPath: string): NodeJS.ProcessEnv {
+  const pathEntries = [
+    path.join(repoPath, ".preflight-venv", "bin"),
+    path.join(repoPath, "node_modules", ".bin"),
+    process.env.PATH ?? "",
+  ].filter(Boolean);
+
+  return {
+    ...process.env,
+    PATH: pathEntries.join(":"),
+  };
+}
+
+async function runSetupCommand(repoPath: string, command: string): Promise<number> {
+  const { exitCode } = await execa(
+    "bash",
+    ["-lc", command],
+    {
+      cwd: repoPath,
+      reject: false,
+      all: true,
+      timeout: 120_000,
+      env: buildCommandEnv(repoPath),
+    }
+  );
+
+  return exitCode ?? 1;
 }

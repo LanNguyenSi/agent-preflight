@@ -177,30 +177,17 @@ Examples:
 
 If no custom commands are configured, agent-preflight auto-detects common Node, Python, PHP and Java manifests and chooses reasonable defaults.
 
-### PHP / Symfony projects
+### Setup phase
 
-For PHP projects, `composer install` must have run first (the `vendor/` directory must exist). Without it, all PHP checks will be skipped with a limitation message.
+`agent-preflight` now includes a conservative setup phase before checks:
 
-**Host mode (PHP + Composer installed locally):**
+- Node: runs `npm ci` when `package-lock.json` exists and `node_modules/` is missing
+- Python: creates `.preflight-venv` and installs `requirements.txt` when present
+- PHP: runs `composer install --no-interaction --no-progress` when `vendor/` is missing
+- Maven: runs dependency warmup before Java compile/test checks
+- Gradle: runs `classes testClasses` before Java compile/test checks
 
-```bash
-cd my-symfony-project
-composer install
-preflight run .
-```
-
-**Sandbox mode (no local PHP):**
-
-```bash
-# Mount your repo into the container (writable so composer can install)
-docker run --rm -v /path/to/my-symfony-project:/workspace agent-preflight:local run /workspace
-```
-
-> Note: The sandbox installs PHP CLI and Composer but does not run `composer install` automatically. Add a custom command if you need it:
->
-> ```json
-> { "commands": { "test": ["composer install --no-interaction", "vendor/bin/phpunit"] } }
-> ```
+This is intentionally conservative. It only runs when the project files make the setup step unambiguous. For more specialized setups, use explicit `commands.*` overrides in `.preflight.json`.
 
 ## Skill Templates
 
