@@ -24,6 +24,7 @@ export interface ProjectContext {
   repoPath: string;
   packageJson?: PackageJson;
   composerJson?: ComposerJson;
+  suggestedWorkingDir?: string;
   hasPyproject: boolean;
   hasSetupPy: boolean;
   hasRequirementsTxt: boolean;
@@ -35,10 +36,13 @@ export interface ProjectContext {
 }
 
 export function createProjectContext(repoPath: string): ProjectContext {
+  const packageJson = readJsonFile<PackageJson>(path.join(repoPath, "package.json"));
+
   return {
     repoPath,
-    packageJson: readJsonFile<PackageJson>(path.join(repoPath, "package.json")),
+    packageJson,
     composerJson: readJsonFile<ComposerJson>(path.join(repoPath, "composer.json")),
+    suggestedWorkingDir: packageJson ? undefined : findSuggestedWorkingDir(repoPath, "package.json"),
     hasPyproject: fs.existsSync(path.join(repoPath, "pyproject.toml")),
     hasSetupPy: fs.existsSync(path.join(repoPath, "setup.py")),
     hasRequirementsTxt: fs.existsSync(path.join(repoPath, "requirements.txt")),
@@ -216,6 +220,36 @@ export function fileExists(repoPath: string, relativePath: string): boolean {
   return fs.existsSync(path.join(repoPath, relativePath));
 }
 
+export async function ensureProjectSetup(repoPath: string): Promise<string[]> {
+  const limitations: string[] = [];
+  const context = createProjectContext(repoPath);
+
+  if (hasPhpProject(context) && !fileExists(repoPath, "vendor")) {
+    const { exitCode } = await execa(
+      "bash",
+      ["-lc", "composer install --no-interaction --no-progress"],
+      {
+        cwd: repoPath,
+        reject: false,
+        all: true,
+        timeout: 120_000,
+      }
+    );
+
+    if (exitCode === 127) {
+      limitations.push("composer.json found but vendor/ is missing; composer install skipped because composer is not available");
+    } else if (exitCode !== 0) {
+      limitations.push("composer install failed while preparing PHP checks");
+    }
+  }
+
+  return limitations;
+}
+
+export function getWorkingDirHint(repoPath: string): string | undefined {
+  return createProjectContext(repoPath).suggestedWorkingDir;
+}
+
 export function shouldSkipRecursiveNodeTest(repoPath: string, command: string): boolean {
   if (!process.env.VITEST) {
     return false;
@@ -244,6 +278,65 @@ function readJsonFile<T>(filePath: string): T | undefined {
     return JSON.parse(raw) as T;
   } catch {
     return undefined;
+  }
+}
+
+function findSuggestedWorkingDir(repoPath: string, targetFile: string): string | undefined {
+  const matches = findNestedFiles(repoPath, targetFile, 3);
+  if (matches.length !== 1) {
+    return undefined;
+  }
+
+  return path.dirname(matches[0]);
+}
+
+function findNestedFiles(repoPath: string, targetFile: string, maxDepth: number): string[] {
+  const matches: string[] = [];
+  const skipDirs = new Set([
+    ".git",
+    ".idea",
+    ".next",
+    ".venv",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "out",
+    "target",
+    "tmp",
+    "vendor",
+  ]);
+
+  scan(repoPath, 0);
+  return matches;
+
+  function scan(currentPath: string, depth: number): void {
+    if (depth > maxDepth) {
+      return;
+    }
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(currentPath, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.name.startsWith(".") && entry.name !== ".github") {
+        continue;
+      }
+
+      const entryPath = path.join(currentPath, entry.name);
+      if (entry.isDirectory()) {
+        if (skipDirs.has(entry.name)) {
+          continue;
+        }
+        scan(entryPath, depth + 1);
+      } else if (entry.isFile() && entry.name === targetFile && currentPath !== repoPath) {
+        matches.push(path.relative(repoPath, entryPath));
+      }
+    }
   }
 }
 

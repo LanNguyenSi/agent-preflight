@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { CheckResult, PreflightConfig, PreflightResult } from "./types.js";
+import { ensureProjectSetup, getWorkingDirHint } from "./checks/shared.js";
 
 export async function runPreflight(
   repoPath: string,
@@ -9,6 +10,7 @@ export async function runPreflight(
   const start = Date.now();
   const checks: CheckResult[] = [];
   const { targetPath, limitations } = resolveTargetPath(repoPath, config.workingDir);
+  limitations.push(...await ensureProjectSetup(targetPath));
 
   // Import check runners dynamically to keep dependencies optional
   const { runLintChecks } = await import("./checks/lint.js");
@@ -112,8 +114,12 @@ function computeConfidence(checks: CheckResult[], limitations: string[]): number
 }
 
 function resolveTargetPath(repoPath: string, workingDir?: string): { targetPath: string; limitations: string[] } {
-  if (!workingDir) {
-    return { targetPath: repoPath, limitations: [] };
+  if (!workingDir || workingDir === ".") {
+    const suggestedWorkingDir = getWorkingDirHint(repoPath);
+    const limitations = suggestedWorkingDir
+      ? [`package.json found in ${suggestedWorkingDir}/ - set workingDir: ${suggestedWorkingDir} in .preflight.json`]
+      : [];
+    return { targetPath: repoPath, limitations };
   }
 
   try {
