@@ -177,6 +177,16 @@ Examples:
 
 If no custom commands are configured, agent-preflight auto-detects common Node, Python, PHP and Java manifests and chooses reasonable defaults.
 
+## Skill Templates
+
+The repo also ships reusable skill templates for agent workflows:
+
+- [agent-preflight](./templates/skills/agent-preflight/SKILL.md)
+- [agent-preflight-opencode](./templates/skills/agent-preflight-opencode/SKILL.md)
+- [agent-preflight-claude](./templates/skills/agent-preflight-claude/SKILL.md)
+
+They are meant as starting points for installing or adapting `agent-preflight` into agent-specific workflows.
+
 ## Requirements
 
 - Node.js 18+
