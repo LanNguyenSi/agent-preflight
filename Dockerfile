@@ -46,5 +46,5 @@ COPY src ./src
 COPY README.md ./
 RUN npm run build
 
-ENTRYPOINT ["node", "dist/cli.js"]
+ENTRYPOINT ["node", "/app/dist/cli.js"]
 CMD ["run", "/workspace"]
