@@ -33,14 +33,20 @@ Returns structured JSON with a **confidence score** (0–1) and explicit **limit
 
 ## Installation
 
+### From source (recommended for now)
+
 ```bash
-npm install -g agent-preflight
+git clone https://github.com/LanNguyenSi/agent-preflight
+cd agent-preflight
+make setup       # install + build
+make run         # check current directory
+make batch DIR=~/git  # check all repos
 ```
 
-Or use directly:
+### npm (coming soon)
 
 ```bash
-npx agent-preflight run
+npm install -g agent-preflight
 ```
 
 ## Usage
