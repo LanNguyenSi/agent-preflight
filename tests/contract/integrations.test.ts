@@ -163,8 +163,8 @@ describe('Contract Tests - JSON Output Stability', () => {
 
     const result = await runPreflight('.', config);
 
-    // ready = no blockers AND confidence >= 0.7
-    if (result.blockers.length === 0 && result.confidence >= 0.7) {
+    // ready = no blockers (confidence is separate signal, not a gate)
+    if (result.blockers.length === 0) {
       expect(result.ready).toBe(true);
     } else {
       expect(result.ready).toBe(false);

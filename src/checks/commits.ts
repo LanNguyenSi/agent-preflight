@@ -3,7 +3,7 @@ import { CheckResult } from "../types.js";
 
 interface CheckSetResult { checks: CheckResult[]; limitations: string[]; }
 
-const CONVENTIONAL_PATTERN = /^(feat|fix|docs|style|refactor|test|chore|ci|build|perf|revert)(\(.+\))?: .{1,80}/;
+const CONVENTIONAL_PATTERN = /^(feat|fix|docs|style|refactor|test|chore|ci|build|perf|revert)(\(.+\))?: .+/;
 
 export async function runCommitConventionCheck(repoPath: string, convention?: string): Promise<CheckSetResult> {
   if (convention === "none") {
