@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IMAGE="${AGENT_PREFLIGHT_SANDBOX_IMAGE:-agent-preflight:local}"
+BUILD_IMAGE=false
+PULL_IMAGE=false
+PRINT_ONLY=false
+MOUNT_DOCKER_SOCKET=false
+
+usage() {
+  cat <<'USAGE'
+Usage: agent-preflight-sandbox [wrapper-options] [--] [preflight-args...]
+
+Wrapper options:
+  --build           Build the local sandbox image before starting
+  --pull            Pull the configured image before starting
+  --print           Print the docker command and exit
+  --docker-socket   Mount /var/run/docker.sock so act can talk to the host daemon
+  --image <image>   Override the image to run
+  --help            Show this help
+
+Examples:
+  agent-preflight-sandbox --build
+  agent-preflight-sandbox --build -- run /workspace --json
+  agent-preflight-sandbox --build --docker-socket -- run /workspace --ci-simulation
+USAGE
+}
+
+PREFLIGHT_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --build) BUILD_IMAGE=true; shift ;;
+    --pull) PULL_IMAGE=true; shift ;;
+    --print) PRINT_ONLY=true; shift ;;
+    --docker-socket) MOUNT_DOCKER_SOCKET=true; shift ;;
+    --image)
+      if [[ $# -lt 2 ]]; then
+        echo "[agent-preflight-sandbox][error] --image requires a value." >&2
+        exit 1
+      fi
+      IMAGE="$2"
+      shift 2
+      ;;
+    --help|-h) usage; exit 0 ;;
+    --) shift; PREFLIGHT_ARGS+=("$@"); break ;;
+    *) PREFLIGHT_ARGS+=("$1"); shift ;;
+  esac
+done
+
+if command -v git >/dev/null 2>&1 && git rev-parse --show-toplevel >/dev/null 2>&1; then
+  WORKDIR="$(git rev-parse --show-toplevel)"
+else
+  WORKDIR="$(pwd)"
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "[agent-preflight-sandbox][error] Docker is not installed or not available in PATH." >&2
+  exit 1
+fi
+
+BUILD_CMD=(docker build -t "$IMAGE" "$WORKDIR")
+PULL_CMD=(docker pull "$IMAGE")
+
+CONTAINER_NAME_SUFFIX="$(basename "$WORKDIR" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-')"
+CONTAINER_NAME_SUFFIX="${CONTAINER_NAME_SUFFIX#-}"
+CONTAINER_NAME_SUFFIX="${CONTAINER_NAME_SUFFIX%-}"
+if [[ -z "$CONTAINER_NAME_SUFFIX" ]]; then
+  CONTAINER_NAME_SUFFIX="workspace"
+fi
+
+DOCKER_ARGS=(run --rm --name "agent-preflight-$CONTAINER_NAME_SUFFIX")
+if [[ -t 0 && -t 1 ]]; then
+  DOCKER_ARGS+=(-it)
+fi
+
+DOCKER_ARGS+=(
+  -v "$WORKDIR:/workspace"
+  -w /workspace
+)
+
+if [[ -d "$HOME/.npm" ]]; then
+  DOCKER_ARGS+=(-v "$HOME/.npm:/root/.npm")
+fi
+if [[ -d "$HOME/.cache/pip" ]]; then
+  DOCKER_ARGS+=(-v "$HOME/.cache/pip:/root/.cache/pip")
+fi
+if [[ -d "$HOME/.cache/composer" ]]; then
+  DOCKER_ARGS+=(-v "$HOME/.cache/composer:/root/.cache/composer")
+fi
+if [[ -d "$HOME/.m2" ]]; then
+  DOCKER_ARGS+=(-v "$HOME/.m2:/root/.m2")
+fi
+if [[ -d "$HOME/.gradle" ]]; then
+  DOCKER_ARGS+=(-v "$HOME/.gradle:/root/.gradle")
+fi
+
+if [[ "$MOUNT_DOCKER_SOCKET" == true ]]; then
+  if [[ ! -S /var/run/docker.sock ]]; then
+    echo "[agent-preflight-sandbox][error] /var/run/docker.sock not found. Start Docker or omit --docker-socket." >&2
+    exit 1
+  fi
+  DOCKER_ARGS+=(-v /var/run/docker.sock:/var/run/docker.sock)
+fi
+
+DOCKER_ARGS+=("$IMAGE")
+
+if [[ ${#PREFLIGHT_ARGS[@]} -gt 0 ]]; then
+  DOCKER_ARGS+=("${PREFLIGHT_ARGS[@]}")
+else
+  DOCKER_ARGS+=(run /workspace)
+fi
+
+if [[ "$PRINT_ONLY" == true ]]; then
+  if [[ "$BUILD_IMAGE" == true ]]; then
+    printf '%q ' "${BUILD_CMD[@]}"
+    printf '\n'
+  fi
+  if [[ "$PULL_IMAGE" == true ]]; then
+    printf '%q ' "${PULL_CMD[@]}"
+    printf '\n'
+  fi
+  printf '%q ' docker "${DOCKER_ARGS[@]}"
+  printf '\n'
+  exit 0
+fi
+
+if [[ "$BUILD_IMAGE" == true ]]; then
+  "${BUILD_CMD[@]}"
+fi
+
+if [[ "$PULL_IMAGE" == true ]]; then
+  "${PULL_CMD[@]}"
+fi
+
+exec docker "${DOCKER_ARGS[@]}"

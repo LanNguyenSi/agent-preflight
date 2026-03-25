@@ -1,70 +1,136 @@
-import { execa } from "execa";
-import fs from "fs";
-import path from "path";
-import { CheckResult } from "../types.js";
+import { CheckResult, PreflightConfig } from "../types.js";
+import {
+  CheckSetResult,
+  commandExists,
+  createProjectContext,
+  fileExists,
+  getConfiguredCommands,
+  hasComposerPackage,
+  hasComposerScript,
+  hasJavaProject,
+  hasNodeDependency,
+  hasNodeProject,
+  hasPhpProject,
+  hasPythonProject,
+  runConfiguredCommands,
+  runShellCheck,
+} from "./shared.js";
 
-interface CheckSetResult {
-  checks: CheckResult[];
-  limitations: string[];
-}
-
-export async function runLintChecks(repoPath: string): Promise<CheckSetResult> {
-  const checks: CheckResult[] = [];
-  const limitations: string[] = [];
-  const pkg = readPackageJson(repoPath);
-
-  // TypeScript/JavaScript: eslint
-  if (pkg?.devDependencies?.eslint || pkg?.dependencies?.eslint) {
-    checks.push(await runCommand("eslint", ["npx", "eslint", "src", "--ext", ".ts,.js", "--format", "json"], repoPath, "lint", 0.15));
+export async function runLintChecks(
+  repoPath: string,
+  config: PreflightConfig
+): Promise<CheckSetResult> {
+  const configuredCommands = getConfiguredCommands(config, "lint");
+  if (configuredCommands.length > 0) {
+    return runConfiguredCommands(repoPath, "lint", configuredCommands, 0.15);
   }
 
-  // Python: ruff
-  if (fs.existsSync(path.join(repoPath, "pyproject.toml")) || fs.existsSync(path.join(repoPath, "setup.py"))) {
-    if (await commandExists("ruff")) {
-      checks.push(await runCommand("ruff", ["ruff", "check", "src/", "tests/"], repoPath, "lint", 0.15));
+  const context = createProjectContext(repoPath);
+  const checks: CheckResult[] = [];
+  const limitations: string[] = [];
+
+  if (hasNodeProject(context)) {
+    if (context.packageJson?.scripts?.lint) {
+      const result = await runShellCheck({
+        repoPath,
+        name: "npm-lint",
+        kind: "lint",
+        command: "npm run lint",
+        weight: 0.15,
+        failureMessage: "npm lint failed",
+        missingLimitation: "npm not installed; Node lint check skipped",
+      });
+      if (result.check) {
+        checks.push(result.check);
+      }
+    } else if (hasNodeDependency(context, "eslint")) {
+      const result = await runShellCheck({
+        repoPath,
+        name: "eslint",
+        kind: "lint",
+        command: "npx eslint . --ext .ts,.tsx,.js,.jsx,.cjs,.mjs --format json",
+        weight: 0.15,
+        failureMessage: "eslint failed",
+        missingLimitation: "npx not installed; Node lint check skipped",
+      });
+      if (result.check) {
+        checks.push(result.check);
+      }
+    } else {
+      limitations.push("No supported Node lint command found (npm script or eslint)");
+    }
+  }
+
+  if (hasPythonProject(context)) {
+    if (await commandExists("ruff", repoPath)) {
+      const result = await runShellCheck({
+        repoPath,
+        name: "ruff",
+        kind: "lint",
+        command: "ruff check .",
+        weight: 0.15,
+        failureMessage: "ruff failed",
+        missingLimitation: "ruff not installed; Python lint check skipped",
+      });
+      if (result.check) {
+        checks.push(result.check);
+      }
     } else {
       limitations.push("ruff not installed; Python lint check skipped");
     }
   }
 
+  if (hasPhpProject(context)) {
+    if (hasComposerScript(context, "lint")) {
+      const result = await runShellCheck({
+        repoPath,
+        name: "composer-lint",
+        kind: "lint",
+        command: "composer run lint",
+        weight: 0.15,
+        failureMessage: "composer lint failed",
+        missingLimitation: "composer not installed; PHP lint check skipped",
+      });
+      if (result.check) {
+        checks.push(result.check);
+      }
+    } else if (fileExists(repoPath, "vendor/bin/pint") || hasComposerPackage(context, "laravel/pint")) {
+      const result = await runShellCheck({
+        repoPath,
+        name: "pint",
+        kind: "lint",
+        command: "vendor/bin/pint --test",
+        weight: 0.15,
+        failureMessage: "pint failed",
+        missingLimitation: "pint not installed; PHP lint check skipped",
+      });
+      if (result.check) {
+        checks.push(result.check);
+      }
+    } else if (fileExists(repoPath, "vendor/bin/phpcs")) {
+      const result = await runShellCheck({
+        repoPath,
+        name: "phpcs",
+        kind: "lint",
+        command: "vendor/bin/phpcs",
+        weight: 0.15,
+        failureMessage: "phpcs failed",
+      });
+      if (result.check) {
+        checks.push(result.check);
+      }
+    } else {
+      limitations.push("No supported PHP lint command found (composer script, pint, phpcs)");
+    }
+  }
+
+  if (hasJavaProject(context)) {
+    limitations.push("No default Java lint command detected; configure commands.lint in .preflight.json");
+  }
+
   if (checks.length === 0) {
-    limitations.push("No supported linter found (eslint, ruff); lint check skipped");
+    limitations.push("No supported linter found; lint check skipped");
   }
 
-  return { checks, limitations };
-}
-
-async function runCommand(name: string, args: string[], cwd: string, kind: CheckResult["kind"], weight: number): Promise<CheckResult> {
-  const start = Date.now();
-  try {
-    await execa(args[0], args.slice(1), { cwd, reject: false, all: true });
-    return { name, kind, status: "pass", durationMs: Date.now() - start, confidenceContribution: weight };
-  } catch (err: any) {
-    return {
-      name,
-      kind,
-      status: err.exitCode === 0 ? "pass" : "fail",
-      message: `${name} failed`,
-      details: err.all?.split("\n").slice(0, 10),
-      durationMs: Date.now() - start,
-      confidenceContribution: weight,
-    };
-  }
-}
-
-function readPackageJson(repoPath: string): Record<string, any> | null {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(repoPath, "package.json"), "utf-8"));
-  } catch {
-    return null;
-  }
-}
-
-async function commandExists(cmd: string): Promise<boolean> {
-  try {
-    await execa("which", [cmd]);
-    return true;
-  } catch {
-    return false;
-  }
+  return { checks, limitations: [...new Set(limitations)] };
 }

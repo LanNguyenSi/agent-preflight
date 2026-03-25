@@ -14,7 +14,7 @@ export function loadConfig(repoPath: string): PreflightConfig {
   try {
     const raw = fs.readFileSync(configPath, "utf-8");
     const parsed = JSON.parse(raw) as Partial<PreflightConfig>;
-    return { ...defaultConfig(), ...parsed };
+    return mergeConfig(defaultConfig(), parsed);
   } catch (err) {
     console.warn(`[preflight] Warning: failed to parse ${configPath}: ${(err as Error).message}`);
     return defaultConfig();
@@ -33,7 +33,28 @@ export function defaultConfig(): PreflightConfig {
       secretDetection: true,
     },
     commitConvention: "conventional",
+    workingDir: ".",
     actFlags: [],
+    commands: {},
     customChecks: [],
+  };
+}
+
+function mergeConfig(
+  baseConfig: PreflightConfig,
+  overrideConfig: Partial<PreflightConfig>
+): PreflightConfig {
+  return {
+    ...baseConfig,
+    ...overrideConfig,
+    checks: {
+      ...baseConfig.checks,
+      ...overrideConfig.checks,
+    },
+    commands: {
+      ...baseConfig.commands,
+      ...overrideConfig.commands,
+    },
+    customChecks: overrideConfig.customChecks ?? baseConfig.customChecks,
   };
 }

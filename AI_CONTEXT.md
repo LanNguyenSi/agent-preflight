@@ -1,200 +1,80 @@
 # AI Context: agent-preflight
 
-> Read this file before making any changes to the codebase.
-> It describes the project's structure, conventions, and rules for AI agents.
+Read this file before changing the codebase.
 
 ## Project Overview
 
-**agent-preflight** is a CLI tool that a typescript cli tool that runs ci preflight validation for ai agents. uses act (nektos/act) as a local ci simulation engine plus direct lint and audit checks. outputs structured json with pass/fail status, confidence score, and explicit limitations so agents know exactly what could not be validated locally before pushing..
+`agent-preflight` is a TypeScript CLI for local CI-preflight validation.
 
-- **Language:** python
-- **Framework:** typer
-- **Distribution:** pip-package
-- **Test strategy:** unit-tests
-- **Config format:** yaml (at `~/.config/agent-preflight/config.yaml`)
+- Language: TypeScript
+- CLI framework: Commander
+- Distribution: Node CLI / npm package
+- Config format: `.preflight.json` in the repo root
+- Main entrypoint: `src/cli.ts`
+
+The tool runs local checks and returns a structured result with:
+
+- `ready`
+- `confidence`
+- `checks`
+- `blockers`
+- `warnings`
+- `limitations`
+
+## Current Command Surface
+
+- `preflight run [repoPath]`
+- `preflight batch [root]`
+
+The optional Docker wrapper is `./agent-preflight-sandbox`.
 
 ## Repository Structure
 
-```
+```text
 agent-preflight/
 ├── src/
-│   ├── commands/         # One file per subcommand
-│   ├── config/           # Config loading and validation
-│   └── main.py
-├── tests/
-│   ├── commands/         # Tests for each command (mirrors src/commands/)
-│   └── config/           # Tests for config loading
-├── docs/
-│   ├── architecture.md   # Subsystem design, exit codes, output rules
-│   ├── ways-of-working.md
-│   └── adrs/             # Architecture Decision Records
-└── AI_CONTEXT.md         # This file
+│   ├── checks/       # Individual check runners
+│   ├── batch.ts      # Batch-mode orchestration
+│   ├── cli.ts        # Commander CLI
+│   ├── config.ts     # .preflight.json loading + defaults
+│   ├── runner.ts     # Main preflight orchestration
+│   └── types.ts      # Shared types
+├── tests/            # Vitest suites
+├── Dockerfile        # Optional sandbox runtime
+├── agent-preflight-sandbox
+├── README.md
+└── Makefile
 ```
 
-## How to Add a New Command
+## Architecture Notes
 
-Follow these steps exactly. Do not deviate from the file layout.
+- Checks are modular and return `checks[]` plus `limitations[]`.
+- `runner.ts` is the only place that computes `ready` and `confidence`.
+- Direct checks should degrade gracefully into limitations when tooling is absent.
+- `ready` means no blockers. Low confidence alone must not make a repo not ready.
 
-### Step 1: Create the command file
+## Adding Or Changing Checks
 
-Create `src/commands/<name>.py`:
+When adding a check:
 
-```python
-"""agent-preflight - <name> command."""
-from __future__ import annotations
+1. Keep the runner contract stable.
+2. Prefer manifest detection plus sensible defaults.
+3. Allow repo-specific overrides through `.preflight.json`.
+4. Return explicit limitations instead of throwing when a tool is missing.
+5. Add or update Vitest coverage for the new behavior.
 
-import typer
-from ..config.loader import Config
+Supported override areas in config:
 
-app = typer.Typer()
+- `workingDir`
+- `checks`
+- `commands`
+- `customChecks`
+- `actFlags`
 
-@app.command()
-def <name>(
-    # Add options here
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
-) -> None:
-    """One-line description of what this command does."""
-    # Implementation here
-    pass
-```
+## Working Rules
 
-### Step 2: Register the command
-
-In `src/main.py`, add:
-```python
-from .commands.<name> import app as <name>_app
-app.add_typer(<name>_app, name="<name>")
-```
-
-### Step 3: Write tests
-
-Create `tests/commands/test_<name>.py`.
-
-Test naming: `test_<name>_<scenario>_<expected_outcome>`
-
-Test the following cases:
-- Happy path with default options
-- Each optional flag changes behavior as expected
-- Invalid arguments produce exit code `2` and an error on stderr
-- Error conditions produce the correct exit code and message
-
-
-## Argument Patterns
-
-Use these patterns consistently across all commands.
-
-### Flags vs positional arguments
-
-- Use **positional arguments** for the primary subject (e.g., a file path, a name)
-- Use **flags** for options and modifiers
-- Never require a flag that has a sensible default
-
-### Standard flags every command should support
-
-| Flag | Short | Type | Description |
-|------|-------|------|-------------|
-| `--output` | `-o` | `text\|json\|yaml` | Output format (on commands with structured output) |
-| `--dry-run` | - | bool | Preview without changes (on mutating commands) |
-| `--verbose` | `-v` | bool | More diagnostic output to stderr |
-| `--quiet` | `-q` | bool | Suppress all non-error output |
-
-### Mutually exclusive flags
-
-When two flags cannot be used together:
-- Validate at parse time, not in business logic
-- Exit with code `2` and message: `error: --flag-a and --flag-b cannot be used together.`
-
-## Config Access Patterns
-
-Config is loaded once at startup by the main entrypoint and passed to each command as a parameter.
-Commands do not read config directly from disk.
-
-```
-main entrypoint
-  -> load config (src/config/loader)
-  -> pass config to command function
-     -> command uses config.field_name
-```
-
-### Adding a new config key
-
-1. Add the key to the config schema/struct in `src/config/loader.py`
-2. Set a sensible default
-3. Document the key in README.md under the Configuration section
-4. Add an environment variable override: `AGENT_PREFLIGHT_<KEY_NAME>`
-5. Write a test in `tests/config/` verifying the default, env var override, and file override
-
-Config values must never be read from global state. Always inject config as a parameter.
-
-
-## Output Formatting Rules
-
-**Never write to stdout with unstructured print/fmt/println statements inside command logic.**
-
-Use the output module in `src/output.py`:
-
-- `output.success(message)` - green checkmark + message to stdout
-- `output.error(message)` - "error: message" to stderr
-- `output.warning(message)` - "warning: message" to stderr
-- `output.info(message)` - diagnostic message to stderr (suppressed with `--quiet`)
-- `output.result(data, format)` - structured data to stdout in the requested format
-
-Color rules:
-- Respect `NO_COLOR` environment variable
-- Respect `--no-color` flag
-- Disable color when stdout is not a TTY
-
-## Testing Patterns
-
-### Unit test structure
-
-```
-tests/
-├── commands/
-│   ├── test_run.py
-│   └── test_config.py
-└── config/
-    └── test_loader.py
-```
-
-### What to test per command
-
-1. Default options produce expected output
-2. Each flag is tested independently
-3. Invalid input exits with code `2`
-4. Errors produce correct exit code and stderr message
-5. `--output json` produces valid parseable JSON
-
-### Mocking
-
-- Mock the filesystem using temp directories (never write to real paths in tests)
-- Mock external calls at the function boundary, not by patching internals
-- Do not mock the config loader - construct a Config object directly in the test
-
-
-## Exit Code Enforcement
-
-All commands must exit with one of these codes. Check against this list before completing any error path:
-
-| Code | When to use |
-|------|-------------|
-| `0` | Success |
-| `1` | Unexpected runtime error |
-| `2` | Bad arguments / usage error |
-| `3` | Config error |
-| `4` | External service / IO error |
-| `5` | Resource not found |
-
-If you are not sure which code to use, use `1` and leave a comment in the code.
-
-## What NOT to Do
-
-- Do not add a new dependency without checking if an existing one covers the use case
-- Do not write directly to stdout/stderr - use the output module
-- Do not call `sys.exit()` / `os.Exit()` inside command logic - propagate errors
-- Do not read environment variables or config files inside commands - receive config as a parameter
-- Do not add interactive prompts to commands that will be used in CI pipelines
-- Do not ignore error return values
-- Do not commit secrets, tokens, or real filesystem paths
-- Do not skip `--help` text for new flags or commands
-- Do not introduce a new pattern without updating this file and `docs/architecture.md`
+- Prefer `rg` for search.
+- Use `apply_patch` for file edits.
+- Do not revert unrelated user changes.
+- Update `README.md` when user-facing behavior changes.
+- Keep shell wrappers predictable and free of hidden side effects.

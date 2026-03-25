@@ -41,6 +41,13 @@ export interface PreflightConfig {
   };
   actFlags?: string[];
   commitConvention?: "conventional" | "none";
+  workingDir?: string;
+  commands?: {
+    lint?: string[];
+    typecheck?: string[];
+    test?: string[];
+    audit?: string[];
+  };
   customChecks?: CustomCheck[];
 }
 
