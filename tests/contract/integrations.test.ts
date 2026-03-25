@@ -4,7 +4,6 @@ import type { PreflightResult, CheckResult } from '../../src/types.js';
 
 describe('Contract Tests - JSON Output Stability', () => {
   // All tests in this suite may run lint/checks — increase timeout for CI runners
-  const TEST_TIMEOUT = 30_000;
   it('should maintain stable JSON schema for agent consumption', async () => {
     const config = {
       checks: {

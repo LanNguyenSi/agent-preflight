@@ -39,8 +39,8 @@ export async function runCiSimulation(repoPath: string, actFlags: string[] = [])
       }],
       limitations,
     };
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return {
         checks: [],
         limitations: ["act not installed; CI simulation skipped (install: https://github.com/nektos/act)"],
@@ -51,7 +51,7 @@ export async function runCiSimulation(repoPath: string, actFlags: string[] = [])
         name: "act-dry-run",
         kind: "ci-simulation",
         status: "fail",
-        message: `act failed: ${err.message}`,
+        message: `act failed: ${(err as Error).message}`,
         durationMs: Date.now() - start,
         confidenceContribution: 0.25,
       }],
