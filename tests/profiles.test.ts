@@ -52,6 +52,25 @@ describe("profile configuration", () => {
     expect(config.checks?.audit).toBe(false);
     expect(config.checks?.lint).toBe(true);
     expect(config.commands?.test).toEqual(["true"]);
+    expect(config.sandbox?.aptPackages).toEqual([]);
+  });
+
+  it("merges sandbox package overrides from .preflight.json", () => {
+    const repoPath = makeTempDir("preflight-sandbox-config-");
+    fs.writeFileSync(
+      path.join(repoPath, ".preflight.json"),
+      JSON.stringify({
+        sandbox: {
+          aptPackages: ["php-intl"],
+          pipPackages: ["bandit"],
+        },
+      })
+    );
+
+    const config = loadConfig(repoPath);
+
+    expect(config.sandbox?.aptPackages).toEqual(["php-intl"]);
+    expect(config.sandbox?.pipPackages).toEqual(["bandit"]);
   });
 
   it("runs configured test commands", async () => {

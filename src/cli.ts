@@ -4,6 +4,7 @@ import path from "path";
 import { loadConfig } from "./config.js";
 import { runPreflight } from "./runner.js";
 import { runBatch } from "./batch.js";
+import { runSandbox } from "./sandbox.js";
 
 const program = new Command();
 
@@ -103,6 +104,22 @@ program
 
     console.log();
     process.exit(batchResult.notReady > 0 ? 1 : 0);
+  });
+
+program
+  .command("sandbox [repoPath]")
+  .description("Run preflight inside the sandbox image")
+  .option("--build", "Build the local sandbox image before starting")
+  .option("--pull", "Pull the configured image before starting")
+  .option("--print", "Print the docker command and exit")
+  .option("--docker-socket", "Mount /var/run/docker.sock so act can talk to the host daemon")
+  .option("--image <image>", "Override the image to run")
+  .option("--json", "Output raw JSON from the preflight run")
+  .option("--ci-simulation", "Enable act-based CI simulation inside the container")
+  .option("--no-audit", "Skip dependency audit")
+  .option("--no-secrets", "Skip secret detection")
+  .action(async (repoPath: string | undefined, opts) => {
+    await runSandbox(repoPath, opts);
   });
 
 program.parseAsync();

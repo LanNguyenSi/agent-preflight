@@ -48,6 +48,7 @@ export interface PreflightConfig {
     test?: string[];
     audit?: string[];
   };
+  sandbox?: SandboxConfig;
   customChecks?: CustomCheck[];
 }
 
@@ -55,4 +56,9 @@ export interface CustomCheck {
   name: string;
   command: string;
   failOnError?: boolean;
+}
+
+export interface SandboxConfig {
+  aptPackages?: string[];
+  pipPackages?: string[];
 }

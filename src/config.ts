@@ -36,6 +36,10 @@ export function defaultConfig(): PreflightConfig {
     workingDir: ".",
     actFlags: [],
     commands: {},
+    sandbox: {
+      aptPackages: [],
+      pipPackages: [],
+    },
     customChecks: [],
   };
 }
@@ -54,6 +58,12 @@ function mergeConfig(
     commands: {
       ...baseConfig.commands,
       ...overrideConfig.commands,
+    },
+    sandbox: {
+      ...baseConfig.sandbox,
+      ...overrideConfig.sandbox,
+      aptPackages: overrideConfig.sandbox?.aptPackages ?? baseConfig.sandbox?.aptPackages ?? [],
+      pipPackages: overrideConfig.sandbox?.pipPackages ?? baseConfig.sandbox?.pipPackages ?? [],
     },
     customChecks: overrideConfig.customChecks ?? baseConfig.customChecks,
   };

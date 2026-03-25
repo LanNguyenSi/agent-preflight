@@ -25,13 +25,13 @@ Use sandbox execution when:
 Command:
 
 ```bash
-./agent-preflight-sandbox --build -- run /workspace --json
+preflight sandbox . --json
 ```
 
 For `act` inside the container:
 
 ```bash
-./agent-preflight-sandbox --build --docker-socket -- run /workspace --ci-simulation --json
+preflight sandbox . --docker-socket --ci-simulation --json
 ```
 
 ## Reporting
@@ -39,5 +39,5 @@ For `act` inside the container:
 Always say whether the reported result came from:
 
 - host `preflight`
-- sandbox `agent-preflight-sandbox`
+- sandbox `preflight sandbox`
 - both, with the sandbox as fallback

@@ -37,10 +37,8 @@ Returns structured JSON with a confidence score (0-1) and explicit limitations s
 ```bash
 git clone https://github.com/LanNguyenSi/agent-preflight
 cd agent-preflight
-make setup
-make run
-make batch DIR=~/git
-make sandbox
+./install.sh
+source ~/.bashrc
 ```
 
 ### npm
@@ -48,6 +46,18 @@ make sandbox
 ```bash
 npm install -g agent-preflight
 ```
+
+### From a release bundle
+
+```bash
+tar -xzf agent-preflight-v0.1.0-bundle.tar.gz
+cd agent-preflight-v0.1.0-bundle
+./install.sh
+source ~/.bashrc
+```
+
+Bundle installs require `node`, but not `npm`.
+After a source install or bundle install, `preflight` and `preflight-sandbox` are available from `~/.local/bin`.
 
 ## Usage
 
@@ -73,7 +83,7 @@ preflight batch ~/git --json
 
 ### Sandbox runtime
 
-The optional sandbox image gives you a reproducible runtime with common cross-stack tooling already installed:
+The optional sandbox runtime gives you a reproducible image with common cross-stack tooling already installed:
 
 - `act`
 - Node.js 20
@@ -82,17 +92,33 @@ The optional sandbox image gives you a reproducible runtime with common cross-st
 - Java 17, Maven and Gradle
 
 ```bash
-# Build image + run current repo in Docker
-make sandbox
+# Run current repo in Docker. The first run auto-detects the repo profile and builds a matching local image if needed.
+preflight sandbox
 
 # Print the generated docker command
-./agent-preflight-sandbox --print
+preflight sandbox --print
 
 # Allow act inside the container to talk to the host Docker daemon
-./agent-preflight-sandbox --build --docker-socket -- run /workspace --ci-simulation
+preflight sandbox --docker-socket --ci-simulation
+
+# Force a rebuild explicitly
+preflight sandbox --build
 ```
 
-The wrapper mounts the current Git root at `/workspace`. `--docker-socket` is only required when you want `act` inside the sandbox.
+`preflight sandbox` mounts the current Git root at `/workspace` when no path is passed. `--docker-socket` is only required when you want `act` inside the sandbox.
+The image name is derived from detected capabilities such as Node, Python, PHP, Java, Symfony and `--ci-simulation`, so switching repositories can trigger a different local image automatically.
+The legacy wrapper `./agent-preflight-sandbox` is still available for direct use from a checkout.
+
+### Building a release bundle
+
+```bash
+make release-bundle
+```
+
+This creates:
+
+- `out/release/agent-preflight-v<version>-bundle.tar.gz`
+- `out/release/agent-preflight-v<version>-bundle.tar.gz.sha256`
 
 ## Output
 
@@ -151,6 +177,10 @@ Create `.preflight.json` in your repo root:
   },
   "commitConvention": "conventional",
   "actFlags": ["--platform", "ubuntu-latest=catthehacker/ubuntu:act-latest"],
+  "sandbox": {
+    "aptPackages": ["php-imagick"],
+    "pipPackages": ["bandit"]
+  },
   "customChecks": [
     {
       "name": "smoke",
@@ -176,6 +206,28 @@ Examples:
 ```
 
 If no custom commands are configured, agent-preflight auto-detects common Node, Python, PHP and Java manifests and chooses reasonable defaults.
+
+### Sandbox overrides
+
+`preflight sandbox` derives its image profile from the target repo:
+
+- Node / TypeScript from `package.json` and `tsconfig.json`
+- Python from `pyproject.toml`, `setup.py`, or `requirements.txt`
+- PHP from `composer.json`
+- Symfony from `symfony.lock`, `bin/console`, or `symfony/*` Composer packages
+- Java from Maven or Gradle manifests
+- PHP extension apt packages from Composer `ext-*` requirements when they are known
+
+For repo-specific extras that cannot be inferred safely, use `.preflight.json`:
+
+```json
+{
+  "sandbox": {
+    "aptPackages": ["libvips-tools", "php-imagick"],
+    "pipPackages": ["bandit"]
+  }
+}
+```
 
 ### Setup phase
 

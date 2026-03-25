@@ -1,6 +1,6 @@
 ---
 name: agent-preflight-opencode
-description: Use this skill when OpenCode should run agent-preflight as a final validation step. It gives OpenCode-specific instructions for running `preflight --json`, escalating to agent-preflight-sandbox when tooling is missing, and summarizing blockers, warnings, limitations, and confidence in a concise handoff.
+description: Use this skill when OpenCode should run agent-preflight as a final validation step. It gives OpenCode-specific instructions for running `preflight --json`, escalating to `preflight sandbox` when tooling is missing, and summarizing blockers, warnings, limitations, and confidence in a concise handoff.
 ---
 
 # Agent Preflight For OpenCode
@@ -19,7 +19,7 @@ If an agent is installing this skill from a repo template, it should fetch it fr
 
 1. Inspect `.preflight.json` if present.
 2. Run `preflight run <repo> --json`.
-3. If output shows missing tooling, rerun with `./agent-preflight-sandbox`.
+3. If output shows missing tooling, rerun with `preflight sandbox <repo> --json`.
 4. Summarize the result in the final answer with:
    - `ready`
    - blockers
@@ -31,7 +31,8 @@ If an agent is installing this skill from a repo template, it should fetch it fr
 
 - Prefer `preflight` from `PATH`.
 - If the binary is not installed, use a checked-out `agent-preflight` repo when one is available in the workspace.
-- `./agent-preflight-sandbox` requires that local checkout because it uses the repo's wrapper and `Dockerfile`.
+- Prefer `preflight sandbox <repo> --json` for sandbox reruns.
+- `./agent-preflight-sandbox` remains available as a checkout-local compatibility wrapper.
 - If OpenCode cannot find either the binary or a checkout, it should report that `agent-preflight` is unavailable instead of pretending validation succeeded.
 
 ## OpenCode-Specific Guidance
