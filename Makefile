@@ -1,4 +1,4 @@
-.PHONY: install build test lint check clean run batch help
+.PHONY: install build test lint check clean run batch sandbox-build sandbox help
 
 ## Install dependencies
 install:
@@ -32,6 +32,14 @@ run: build
 batch: build
 	node dist/cli.js batch $(DIR)
 
+## Build the sandbox image with common runtimes and act preinstalled
+sandbox-build:
+	docker build -t agent-preflight:local .
+
+## Run preflight inside the sandbox image (usage: make sandbox ARGS='-- --json')
+sandbox: sandbox-build
+	./agent-preflight-sandbox $(ARGS)
+
 ## Clean build artifacts
 clean:
 	rm -rf dist
@@ -44,4 +52,5 @@ help:
 	@echo "  make setup              # Install + build"
 	@echo "  make run                # Check current directory"
 	@echo "  make batch DIR=~/git    # Check all repos in ~/git"
+	@echo "  make sandbox            # Run preflight in the sandbox image"
 	@echo "  node dist/cli.js run . --json  # JSON output for agents"
