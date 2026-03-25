@@ -45,7 +45,7 @@ export async function runSecretDetection(repoPath: string): Promise<CheckSetResu
 }
 
 function scanDir(dir: string, root: string, findings: string[]): void {
-  const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".venv", "__pycache__"]);
+  const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".venv", "venv", "test_venv", "env", "__pycache__", "vendor", "site-packages", ".tox", "coverage"]);
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
