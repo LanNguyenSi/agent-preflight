@@ -94,6 +94,7 @@ describe('Contract Tests - JSON Output Stability', () => {
   it('should have stable confidence calculation', async () => {
     const config = {
       checks: {
+        gitState: true,
         lint: true,
         typecheck: true,
         audit: true,
@@ -109,7 +110,7 @@ describe('Contract Tests - JSON Output Stability', () => {
     // Confidence should be deterministic (same input = same output)
     // Allow small floating-point variance
     expect(Math.abs(result1.confidence - result2.confidence)).toBeLessThan(0.01);
-  }, 30000); // Running the same full preflight twice can exceed 15s on slower environments
+  }, 60000); // Running the same full preflight twice including git state checks
 
   it('should maintain backward-compatible limitation messages', async () => {
     const config = {

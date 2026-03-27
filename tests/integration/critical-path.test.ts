@@ -84,6 +84,8 @@ describe('Critical Path Integration Tests', () => {
     expect(result.limitations).toBeInstanceOf(Array);
     expect(result.durationMs).toBeGreaterThan(0);
     expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(result.checks.some((check) => check.name === 'protected-branch')).toBe(true);
+    expect(result.checks.some((check) => check.name === 'clean-worktree')).toBe(true);
   });
 
   it('should respect config file from repository', async () => {

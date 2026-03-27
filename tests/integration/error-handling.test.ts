@@ -86,6 +86,7 @@ describe('Error Handling Integration Tests', () => {
   it('should handle concurrent preflight runs safely', async () => {
     const config = {
       checks: {
+        gitState: true,
         lint: true,
         typecheck: true,
       },
@@ -106,7 +107,7 @@ describe('Error Handling Integration Tests', () => {
       expect(result).toBeDefined();
       expect(result.checks).toBeInstanceOf(Array);
     });
-  }, 15000); // Increase timeout to 15 seconds for concurrent runs
+  }, 45000); // Increase timeout for concurrent runs with git state checks
 
   it('should handle disabled checks without errors', async () => {
     const config = {

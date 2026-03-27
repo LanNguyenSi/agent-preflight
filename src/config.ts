@@ -25,6 +25,7 @@ export function loadConfig(repoPath: string): PreflightConfig {
 export function defaultConfig(): PreflightConfig {
   return {
     checks: {
+      gitState: true,
       lint: true,
       typecheck: true,
       test: true,
@@ -33,6 +34,7 @@ export function defaultConfig(): PreflightConfig {
       commitConvention: true,
       secretDetection: true,
     },
+    protectedBranches: ["main", "master"],
     commitConvention: "conventional",
     workingDir: ".",
     actFlags: [...DEFAULT_ACT_FLAGS],
