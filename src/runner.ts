@@ -21,6 +21,13 @@ export async function runPreflight(
   const { runCommitConventionCheck } = await import("./checks/commits.js");
   const { runCiSimulation } = await import("./checks/ci.js");
   const { runCustomChecks } = await import("./checks/custom.js");
+  const { runGitStateChecks } = await import("./checks/git.js");
+
+  if (config.checks?.gitState !== false) {
+    const result = await runGitStateChecks(targetPath, config);
+    checks.push(...result.checks);
+    limitations.push(...result.limitations);
+  }
 
   if (config.checks?.lint !== false) {
     const result = await runLintChecks(targetPath, config);

@@ -20,6 +20,7 @@ Runs a hybrid set of checks before you push:
 
 | Check | What it catches | Tool | Speed |
 |-------|----------------|------|-------|
+| Git state | Dirty worktrees and pushes from protected branches | git | fast |
 | Lint | Code quality issues | eslint / ruff / pint / phpcs / repo-native scripts | fast |
 | Typecheck | Type issues and broken builds | tsc / mypy / phpstan / psalm / mvn compile / gradle classes | fast |
 | Test | Broken test suites | npm test / pytest / phpunit / mvn test / gradle test | medium |
@@ -29,6 +30,8 @@ Runs a hybrid set of checks before you push:
 | CI simulation | Workflow failures before push | act (optional) | slow |
 
 Returns structured JSON with a confidence score (0-1) and explicit limitations so agents know what was and was not validated.
+
+`clean-worktree` is treated as a blocker because local changes can make the result diverge from what will actually be pushed. `protected-branch` is reported as a warning because some repositories still use direct-push workflows.
 
 ## Installation
 
@@ -162,6 +165,7 @@ Create `.preflight.json` in your repo root:
 {
   "workingDir": ".",
   "checks": {
+    "gitState": true,
     "lint": true,
     "typecheck": true,
     "test": true,
@@ -170,6 +174,7 @@ Create `.preflight.json` in your repo root:
     "commitConvention": true,
     "secretDetection": true
   },
+  "protectedBranches": ["main", "master"],
   "commands": {
     "lint": ["npm run lint"],
     "typecheck": ["npx tsc --noEmit"],
@@ -241,6 +246,21 @@ For repo-specific extras that cannot be inferred safely, use `.preflight.json`:
 - Gradle: runs `classes testClasses` before Java compile/test checks
 
 This is intentionally conservative. It only runs when the project files make the setup step unambiguous. For more specialized setups, use explicit `commands.*` overrides in `.preflight.json`.
+
+## Git Hygiene
+
+By default `agent-preflight` also inspects repository state:
+
+- `protected-branch`: warns when `HEAD` is on one of the configured protected branches
+- `clean-worktree`: fails when tracked or untracked local changes are present
+
+You can tune the protected branch list in `.preflight.json`:
+
+```json
+{
+  "protectedBranches": ["main", "master", "develop"]
+}
+```
 
 ## Skill Templates
 

@@ -20,6 +20,7 @@ export interface CheckResult {
 }
 
 export type CheckKind =
+  | "git-state"
   | "lint"
   | "typecheck"
   | "test"
@@ -31,6 +32,7 @@ export type CheckKind =
 
 export interface PreflightConfig {
   checks?: {
+    gitState?: boolean;
     lint?: boolean;
     typecheck?: boolean;
     test?: boolean;
@@ -39,6 +41,7 @@ export interface PreflightConfig {
     commitConvention?: boolean;
     secretDetection?: boolean;
   };
+  protectedBranches?: string[];
   actFlags?: string[];
   commitConvention?: "conventional" | "none";
   workingDir?: string;
