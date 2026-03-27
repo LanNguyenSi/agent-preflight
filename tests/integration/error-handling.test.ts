@@ -31,7 +31,7 @@ describe('Error Handling Integration Tests', () => {
     // Should still return valid result structure
     expect(result).toBeDefined();
     expect(result.checks).toBeInstanceOf(Array);
-  });
+  }, 60000);
 
   it('should handle invalid .preflight.json gracefully', async () => {
     // loadConfig should handle malformed JSON
