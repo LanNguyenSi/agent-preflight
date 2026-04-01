@@ -70,6 +70,7 @@ After a source install or bundle install, `preflight` and `preflight-sandbox` ar
 preflight run
 preflight run ./my-project
 preflight run ./my-project --json
+preflight run ./my-project --setup
 preflight run --ci-simulation
 ```
 
@@ -81,6 +82,7 @@ Inspired by [git-batch-cli](https://github.com/LanNguyenSi/git-batch-cli):
 preflight batch ~/git
 preflight batch ~/git --only "frost-*"
 preflight batch ~/git --exclude "*-playground"
+preflight batch ~/git --setup
 preflight batch ~/git --json
 ```
 
@@ -102,7 +104,7 @@ preflight sandbox
 preflight sandbox --print
 
 # Allow act inside the container to talk to the host Docker daemon
-preflight sandbox --docker-socket --ci-simulation
+preflight sandbox --docker-socket --ci-simulation --setup
 
 # Force a rebuild explicitly
 preflight sandbox --build
@@ -174,6 +176,9 @@ Create `.preflight.json` in your repo root:
     "commitConvention": true,
     "secretDetection": true
   },
+  "setup": {
+    "enabled": false
+  },
   "protectedBranches": ["main", "master"],
   "commands": {
     "lint": ["npm run lint"],
@@ -237,7 +242,18 @@ For repo-specific extras that cannot be inferred safely, use `.preflight.json`:
 
 ### Setup phase
 
-`agent-preflight` now includes a conservative setup phase before checks:
+`agent-preflight` includes an optional conservative setup phase before checks.
+Enable it with `--setup` or in `.preflight.json`:
+
+```json
+{
+  "setup": {
+    "enabled": true
+  }
+}
+```
+
+When enabled, it can run:
 
 - Node: runs `npm ci` when `package-lock.json` exists and `node_modules/` is missing
 - Python: creates `.preflight-venv` and installs `requirements.txt` when present
@@ -245,7 +261,12 @@ For repo-specific extras that cannot be inferred safely, use `.preflight.json`:
 - Maven: runs dependency warmup before Java compile/test checks
 - Gradle: runs `classes testClasses` before Java compile/test checks
 
-This is intentionally conservative. It only runs when the project files make the setup step unambiguous. For more specialized setups, use explicit `commands.*` overrides in `.preflight.json`.
+This remains intentionally conservative. It only runs when the project files make the setup step unambiguous. For more specialized setups, use explicit `commands.*` overrides in `.preflight.json`.
+
+### Behavior notes
+
+- Dependency/bootstrap setup is opt-in. Use `--setup` or set `"setup": { "enabled": true }` in `.preflight.json` if you want `agent-preflight` to prepare missing dependencies before running checks.
+- Secret detection scans real `.env` files such as `.env` and `.env.local`. Keep example values in template files like `.env.example` or `.env.template`.
 
 ## Git Hygiene
 

@@ -37,6 +37,7 @@ export interface SandboxCommandOptions {
   dockerSocket?: boolean;
   image?: string;
   json?: boolean;
+  setup?: boolean;
   ciSimulation?: boolean;
   noAudit?: boolean;
   noSecrets?: boolean;
@@ -161,6 +162,7 @@ export function buildSandboxPreflightArgs(options: SandboxCommandOptions): strin
   const args = ["run", "/workspace"];
 
   if (options.json) args.push("--json");
+  if (options.setup) args.push("--setup");
   if (options.ciSimulation) args.push("--ci-simulation");
   if (options.noAudit) args.push("--no-audit");
   if (options.noSecrets) args.push("--no-secrets");

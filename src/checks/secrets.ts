@@ -21,7 +21,7 @@ const PLACEHOLDER_PATTERNS = [
   /<your[_\s]/i,
 ];
 
-const IGNORE_FILES = [".env", ".env.local", ".env.example", ".env.test", "*.test.ts", "*.spec.ts"];
+const IGNORE_FILES = [".env.example", ".env.sample", ".env.template", "*.test.ts", "*.spec.ts"];
 
 export async function runSecretDetection(repoPath: string): Promise<CheckSetResult> {
   const start = Date.now();

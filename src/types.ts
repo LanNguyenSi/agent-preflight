@@ -45,6 +45,9 @@ export interface PreflightConfig {
   actFlags?: string[];
   commitConvention?: "conventional" | "none";
   workingDir?: string;
+  setup?: {
+    enabled?: boolean;
+  };
   commands?: {
     lint?: string[];
     typecheck?: string[];

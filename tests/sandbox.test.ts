@@ -26,6 +26,7 @@ describe("sandbox helpers", () => {
     expect(
       buildSandboxPreflightArgs({
         json: true,
+        setup: true,
         ciSimulation: true,
         noAudit: true,
         noSecrets: true,
@@ -34,6 +35,7 @@ describe("sandbox helpers", () => {
       "run",
       "/workspace",
       "--json",
+      "--setup",
       "--ci-simulation",
       "--no-audit",
       "--no-secrets",

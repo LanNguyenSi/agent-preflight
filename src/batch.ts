@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { PreflightConfig, PreflightResult } from "./types.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, mergeConfig } from "./config.js";
 import { runPreflight } from "./runner.js";
 
 export interface BatchOptions {
@@ -50,7 +50,9 @@ export async function runBatch(
   for (const repoPath of repos) {
     const name = path.basename(repoPath);
     try {
-      const config = { ...loadConfig(repoPath), ...configOverride };
+      const config = configOverride
+        ? mergeConfig(loadConfig(repoPath), configOverride)
+        : loadConfig(repoPath);
       const result = await runPreflight(repoPath, config);
       results.push({ repo: name, path: repoPath, result });
     } catch (err) {
@@ -71,7 +73,16 @@ export async function runBatch(
 }
 
 function matchGlob(name: string, pattern: string): boolean {
-  // Simple glob: support * wildcard
-  const regex = new RegExp("^" + pattern.replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+  const regex = new RegExp(
+    "^" +
+    escapeRegExp(pattern)
+      .replace(/\\\*/g, ".*")
+      .replace(/\\\?/g, ".") +
+    "$"
+  );
   return regex.test(name);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
