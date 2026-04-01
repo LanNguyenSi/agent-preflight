@@ -5,6 +5,7 @@ import { loadConfig } from "./config.js";
 import { runPreflight } from "./runner.js";
 import { runBatch } from "./batch.js";
 import { runSandbox } from "./sandbox.js";
+import type { PreflightConfig } from "./types.js";
 
 const program = new Command();
 
@@ -17,6 +18,7 @@ program
   .command("run [repoPath]")
   .description("Run preflight checks on a repository")
   .option("--json", "Output raw JSON (default: pretty summary)")
+  .option("--setup", "Enable conservative dependency/setup bootstrap before checks")
   .option("--ci-simulation", "Enable act-based CI simulation (requires act)")
   .option("--no-audit", "Skip dependency audit")
   .option("--no-secrets", "Skip secret detection")
@@ -24,6 +26,7 @@ program
     const resolvedPath = path.resolve(repoPath ?? process.cwd());
     const config = loadConfig(resolvedPath);
 
+    if (opts.setup) config.setup = { ...config.setup, enabled: true };
     if (opts.ciSimulation) config.checks = { ...config.checks, ciSimulation: true };
     if (opts.noAudit) config.checks = { ...config.checks, audit: false };
     if (opts.noSecrets) config.checks = { ...config.checks, secretDetection: false };
@@ -67,14 +70,16 @@ program
   .option("--only <pattern>", "Only include repos matching glob pattern (e.g. frost-*)")
   .option("--exclude <pattern>", "Exclude repos matching glob pattern")
   .option("--json", "Output raw JSON")
+  .option("--setup", "Enable conservative dependency/setup bootstrap before checks")
   .option("--no-audit", "Skip dependency audit for all repos")
   .option("--no-secrets", "Skip secret detection for all repos")
   .action(async (root: string | undefined, opts) => {
     const resolvedRoot = path.resolve(root ?? process.cwd());
-    const configOverride: Record<string, unknown> = {};
+    const configOverride: Partial<PreflightConfig> = {};
 
-    if (opts.noAudit) configOverride.checks = { audit: false };
-    if (opts.noSecrets) configOverride.checks = { ...(configOverride.checks as object ?? {}), secretDetection: false };
+    if (opts.setup) configOverride.setup = { enabled: true };
+    if (opts.noAudit) configOverride.checks = { ...configOverride.checks, audit: false };
+    if (opts.noSecrets) configOverride.checks = { ...configOverride.checks, secretDetection: false };
 
     const batchResult = await runBatch(
       resolvedRoot,
@@ -115,6 +120,7 @@ program
   .option("--docker-socket", "Mount /var/run/docker.sock so act can talk to the host daemon")
   .option("--image <image>", "Override the image to run")
   .option("--json", "Output raw JSON from the preflight run")
+  .option("--setup", "Enable conservative dependency/setup bootstrap before checks")
   .option("--ci-simulation", "Enable act-based CI simulation inside the container")
   .option("--no-audit", "Skip dependency audit")
   .option("--no-secrets", "Skip secret detection")

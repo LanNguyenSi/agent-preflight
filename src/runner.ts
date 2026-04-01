@@ -10,7 +10,9 @@ export async function runPreflight(
   const start = Date.now();
   const checks: CheckResult[] = [];
   const { targetPath, limitations } = resolveTargetPath(repoPath, config.workingDir);
-  limitations.push(...await ensureProjectSetup(targetPath));
+  if (config.setup?.enabled === true) {
+    limitations.push(...await ensureProjectSetup(targetPath));
+  }
 
   // Import check runners dynamically to keep dependencies optional
   const { runLintChecks } = await import("./checks/lint.js");
@@ -113,7 +115,7 @@ function computeConfidence(checks: CheckResult[], limitations: string[]): number
     .filter((c) => c.status === "pass")
     .reduce((sum, c) => sum + c.confidenceContribution, 0);
 
-  let base = passedWeight / totalWeight;
+  const base = passedWeight / totalWeight;
 
   // Deduct for each limitation (they represent unknown territory)
   const limitationPenalty = Math.min(limitations.length * 0.03, 0.2);

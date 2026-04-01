@@ -55,6 +55,7 @@ describe("profile configuration", () => {
     expect(config.commands?.test).toEqual(["true"]);
     expect(config.actFlags).toEqual(["--platform", "ubuntu-latest=catthehacker/ubuntu:act-latest"]);
     expect(config.sandbox?.aptPackages).toEqual([]);
+    expect(config.setup?.enabled).toBe(false);
   });
 
   it("merges sandbox package overrides from .preflight.json", () => {
@@ -134,6 +135,9 @@ exit 1
     );
 
     const result = await runPreflight(repoPath, {
+      setup: {
+        enabled: true,
+      },
       checks: {
         lint: false,
         typecheck: false,
@@ -147,6 +151,58 @@ exit 1
 
     expect(fs.existsSync(path.join(repoPath, "node_modules", ".install-complete"))).toBe(true);
     expect(result.checks.find((check) => check.name === "npm-test")?.status).toBe("pass");
+  });
+
+  it("does not run setup steps unless explicitly enabled", async () => {
+    const repoPath = makeTempDir("preflight-node-no-setup-");
+    const binDir = path.join(repoPath, ".bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    process.env.PATH = `${binDir}:${originalPath}`;
+
+    fs.writeFileSync(
+      path.join(repoPath, "package.json"),
+      JSON.stringify({
+        name: "node-app",
+        version: "1.0.0",
+        scripts: {
+          test: "echo ok",
+        },
+      })
+    );
+    fs.writeFileSync(path.join(repoPath, "package-lock.json"), "{}");
+
+    makeExecutable(
+      binDir,
+      "npm",
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "ci" ]]; then
+  mkdir -p node_modules/.bin
+  touch node_modules/.install-complete
+  exit 0
+fi
+if [[ "$1" == "run" && "$2" == "test" ]]; then
+  [[ -f node_modules/.install-complete ]]
+  exit 0
+fi
+exit 1
+`
+    );
+
+    const result = await runPreflight(repoPath, {
+      checks: {
+        lint: false,
+        typecheck: false,
+        test: true,
+        audit: false,
+        secretDetection: false,
+        commitConvention: false,
+        ciSimulation: false,
+      },
+    });
+
+    expect(fs.existsSync(path.join(repoPath, "node_modules", ".install-complete"))).toBe(false);
+    expect(result.checks.find((check) => check.name === "npm-test")?.status).toBe("fail");
   });
 
   it("resolves workingDir before running checks", async () => {
@@ -235,6 +291,9 @@ exit 1
     );
 
     const result = await runPreflight(repoPath, {
+      setup: {
+        enabled: true,
+      },
       checks: {
         lint: false,
         typecheck: false,
@@ -283,6 +342,9 @@ exit 1
     );
 
     const result = await runPreflight(repoPath, {
+      setup: {
+        enabled: true,
+      },
       checks: {
         lint: false,
         typecheck: false,
@@ -320,6 +382,9 @@ exit 1
     );
 
     const result = await runPreflight(repoPath, {
+      setup: {
+        enabled: true,
+      },
       checks: {
         lint: false,
         typecheck: true,

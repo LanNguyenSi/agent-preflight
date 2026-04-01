@@ -37,6 +37,9 @@ export function defaultConfig(): PreflightConfig {
     protectedBranches: ["main", "master"],
     commitConvention: "conventional",
     workingDir: ".",
+    setup: {
+      enabled: false,
+    },
     actFlags: [...DEFAULT_ACT_FLAGS],
     commands: {},
     sandbox: {
@@ -47,7 +50,7 @@ export function defaultConfig(): PreflightConfig {
   };
 }
 
-function mergeConfig(
+export function mergeConfig(
   baseConfig: PreflightConfig,
   overrideConfig: Partial<PreflightConfig>
 ): PreflightConfig {
@@ -57,6 +60,10 @@ function mergeConfig(
     checks: {
       ...baseConfig.checks,
       ...overrideConfig.checks,
+    },
+    setup: {
+      ...baseConfig.setup,
+      ...overrideConfig.setup,
     },
     commands: {
       ...baseConfig.commands,
