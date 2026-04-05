@@ -28,6 +28,7 @@ export type CheckKind =
   | "ci-simulation"
   | "commit-convention"
   | "secret-detection"
+  | "tdd"
   | "custom";
 
 export interface PreflightConfig {
@@ -40,7 +41,9 @@ export interface PreflightConfig {
     ciSimulation?: boolean;
     commitConvention?: boolean;
     secretDetection?: boolean;
+    tdd?: boolean;
   };
+  tddExceptions?: string[];
   protectedBranches?: string[];
   actFlags?: string[];
   commitConvention?: "conventional" | "none";
