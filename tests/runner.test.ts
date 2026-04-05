@@ -35,7 +35,7 @@ describe("runPreflight", () => {
 
   it("is not ready when there are blockers", async () => {
     const config = defaultConfig();
-    config.checks = { gitState: false, lint: false, typecheck: false, test: false, audit: false, ciSimulation: false, commitConvention: false, secretDetection: false };
+    config.checks = { gitState: false, lint: false, typecheck: false, test: false, audit: false, ciSimulation: false, commitConvention: false, secretDetection: false, tdd: false };
 
     const result = await runPreflight(path.resolve(__dirname, ".."), config);
 
@@ -47,7 +47,7 @@ describe("runPreflight", () => {
 describe("confidence scoring", () => {
   it("penalises results with many limitations", async () => {
     const config = defaultConfig();
-    config.checks = { gitState: false, lint: false, typecheck: false, test: false, audit: false, ciSimulation: false, commitConvention: false, secretDetection: false };
+    config.checks = { gitState: false, lint: false, typecheck: false, test: false, audit: false, ciSimulation: false, commitConvention: false, secretDetection: false, tdd: false };
 
     const result = await runPreflight(path.resolve(__dirname, ".."), config);
     // All checks skipped → many limitations → low confidence

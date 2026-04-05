@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -16,6 +16,15 @@ function initRepo(files: Record<string, string>) {
     fs.mkdirSync(path.dirname(full), { recursive: true });
     fs.writeFileSync(full, content);
   }
+}
+
+/** Initialize a real git repo with user config (needed in CI where no global git identity exists) */
+async function initGitRepo() {
+  const { execa } = await import("execa");
+  fs.rmSync(path.join(tmpDir, ".git"), { recursive: true });
+  await execa("git", ["init"], { cwd: tmpDir });
+  await execa("git", ["config", "user.email", "test@test.com"], { cwd: tmpDir });
+  await execa("git", ["config", "user.name", "Test"], { cwd: tmpDir });
 }
 
 afterEach(() => {
@@ -39,8 +48,7 @@ describe("runTddCheck", () => {
 
     // Create a real git repo so git diff works
     const { execa } = await import("execa");
-    fs.rmSync(path.join(tmpDir, ".git"), { recursive: true });
-    await execa("git", ["init"], { cwd: tmpDir });
+    await initGitRepo();
     await execa("git", ["add", "."], { cwd: tmpDir });
     await execa("git", ["commit", "-m", "init", "--no-gpg-sign"], { cwd: tmpDir });
 
@@ -58,9 +66,7 @@ describe("runTddCheck", () => {
   it("passes when source file has test counterpart", async () => {
     initRepo({});
     const { execa } = await import("execa");
-    fs.rmSync(path.join(tmpDir, ".git"), { recursive: true });
-    await execa("git", ["init"], { cwd: tmpDir });
-    await execa("git", ["add", "."], { cwd: tmpDir });
+    await initGitRepo();
     await execa("git", ["commit", "-m", "init", "--allow-empty", "--no-gpg-sign"], { cwd: tmpDir });
 
     fs.mkdirSync(path.join(tmpDir, "src"), { recursive: true });
@@ -76,8 +82,7 @@ describe("runTddCheck", () => {
   it("skips exception files like index.ts", async () => {
     initRepo({});
     const { execa } = await import("execa");
-    fs.rmSync(path.join(tmpDir, ".git"), { recursive: true });
-    await execa("git", ["init"], { cwd: tmpDir });
+    await initGitRepo();
     await execa("git", ["commit", "-m", "init", "--allow-empty", "--no-gpg-sign"], { cwd: tmpDir });
 
     fs.mkdirSync(path.join(tmpDir, "src"), { recursive: true });
@@ -95,8 +100,7 @@ describe("runTddCheck", () => {
   it("supports configurable exceptions", async () => {
     initRepo({});
     const { execa } = await import("execa");
-    fs.rmSync(path.join(tmpDir, ".git"), { recursive: true });
-    await execa("git", ["init"], { cwd: tmpDir });
+    await initGitRepo();
     await execa("git", ["commit", "-m", "init", "--allow-empty", "--no-gpg-sign"], { cwd: tmpDir });
 
     fs.mkdirSync(path.join(tmpDir, "src"), { recursive: true });
@@ -112,8 +116,7 @@ describe("runTddCheck", () => {
   it("finds tests in __tests__ directory", async () => {
     initRepo({});
     const { execa } = await import("execa");
-    fs.rmSync(path.join(tmpDir, ".git"), { recursive: true });
-    await execa("git", ["init"], { cwd: tmpDir });
+    await initGitRepo();
     await execa("git", ["commit", "-m", "init", "--allow-empty", "--no-gpg-sign"], { cwd: tmpDir });
 
     fs.mkdirSync(path.join(tmpDir, "src/__tests__"), { recursive: true });
