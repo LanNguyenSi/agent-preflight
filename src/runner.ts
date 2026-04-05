@@ -67,6 +67,13 @@ export async function runPreflight(
     limitations.push(...result.limitations);
   }
 
+  if (config.checks?.tdd !== false) {
+    const { runTddCheck } = await import("./checks/tdd.js");
+    const result = await runTddCheck(targetPath, config);
+    checks.push(...result.checks);
+    limitations.push(...result.limitations);
+  }
+
   if (config.checks?.ciSimulation === true) {
     const result = await runCiSimulation(targetPath, config.actFlags ?? []);
     checks.push(...result.checks);
