@@ -27,7 +27,22 @@ export async function runTypecheckChecks(
   const checks: CheckResult[] = [];
   const limitations: string[] = [];
 
-  if (hasNodeProject(context) && context.hasTsconfig) {
+  if (hasNodeProject(context) && context.packageJson?.scripts?.typecheck) {
+    const result = await runShellCheck({
+      repoPath,
+      name: "npm-typecheck",
+      kind: "typecheck",
+      command: "npm run typecheck",
+      weight: 0.2,
+      failureMessage: "npm typecheck failed",
+    });
+    if (result.check) {
+      checks.push(result.check);
+    }
+    if (result.limitation) {
+      limitations.push(result.limitation);
+    }
+  } else if (hasNodeProject(context) && context.hasTsconfig) {
     const result = await runShellCheck({
       repoPath,
       name: "tsc",
