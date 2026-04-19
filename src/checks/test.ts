@@ -49,6 +49,7 @@ export async function runTestChecks(
           command: "npm run test",
           weight: 0.2,
           failureMessage: "npm test failed",
+          missingLimitation: "npm not installed; Node test check skipped",
           timeoutMs: 300_000,
         });
         if (result.check) {

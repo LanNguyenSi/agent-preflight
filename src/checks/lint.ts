@@ -38,6 +38,7 @@ export async function runLintChecks(
         command: "npm run lint",
         weight: 0.15,
         failureMessage: "npm lint failed",
+        missingLimitation: "npm not installed; Node lint check skipped",
       });
       if (result.check) {
         checks.push(result.check);
