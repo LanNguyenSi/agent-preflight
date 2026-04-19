@@ -218,6 +218,24 @@ Examples:
 
 If no custom commands are configured, agent-preflight auto-detects common Node, Python, PHP and Java manifests and chooses reasonable defaults.
 
+### Monorepos and npm workspaces
+
+For npm/yarn/pnpm workspace layouts where the root has no `tsconfig.json` or `.eslintrc` (the per-package configs live under `packages/*` or `apps/*`), declare `scripts.typecheck` and `scripts.lint` in the root `package.json` that fan out to the workspaces — agent-preflight will prefer these over root-level tool detection:
+
+```json
+{
+  "name": "my-monorepo",
+  "private": true,
+  "workspaces": ["backend", "frontend", "mcp-server"],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
+  }
+}
+```
+
+This way a per-package type error surfaces as a real `fail`, not a silent `limitation`. For pnpm use `pnpm -r typecheck`; for yarn, `yarn workspaces foreach run typecheck`. Use `commands.*` in `.preflight.json` if you need a different invocation.
+
 ### Sandbox overrides
 
 `preflight sandbox` derives its image profile from the target repo:
