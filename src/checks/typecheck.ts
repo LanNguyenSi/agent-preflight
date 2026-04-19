@@ -35,6 +35,7 @@ export async function runTypecheckChecks(
       command: "npm run typecheck",
       weight: 0.2,
       failureMessage: "npm typecheck failed",
+      missingLimitation: "npm not installed; Node typecheck skipped",
     });
     if (result.check) {
       checks.push(result.check);

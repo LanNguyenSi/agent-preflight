@@ -27,15 +27,15 @@ export async function runAuditChecks(
   const limitations: string[] = [];
 
   if (hasNodeProject(context)) {
-    const start = Date.now();
-    const { exitCode, stdout } = await execa(
-      "bash",
-      ["-lc", "npm audit --json"],
-      { cwd: repoPath, reject: false }
-    );
-    if (exitCode === 127) {
+    if (!(await commandExists("npm", repoPath))) {
       limitations.push("npm not installed; Node audit skipped");
     } else {
+      const start = Date.now();
+      const { exitCode, stdout } = await execa(
+        "bash",
+        ["-lc", "npm audit --json"],
+        { cwd: repoPath, reject: false }
+      );
       let criticalCount = 0;
       try {
         const parsed = JSON.parse(stdout);

@@ -146,9 +146,33 @@ interface ShellCheckRunResult {
   limitation?: string;
 }
 
+// Invariant: when `missingLimitation` is set, we first check that the primary
+// binary of the command is resolvable. Only then do we execute. This keeps the
+// limitation path reserved for "the tool really isn't installed" and prevents
+// misclassifying an exit-127 that bubbled up from a nested wrapper script
+// (e.g. `npm run lint` where a workspace's eslint binary is non-executable)
+// as "npm not installed". Without the pre-check, any 127 would silently be
+// swallowed into `limitations[]` and `ready:true` would be returned even
+// though the check actually failed.
+//
+// Caveats:
+// - The primary is extracted as the first whitespace-separated token. Callers
+//   MUST NOT use env-variable prefixes (`FOO=bar cmd`) or shell indirection
+//   (`bash -c "..."`) in `command`; the pre-check would look up the wrong
+//   token.
+// - `command -v` treats tokens containing `/` (e.g. `./mvnw`,
+//   `vendor/bin/phpstan`) as filename tests rather than PATH lookups, so
+//   relative paths are resolved against `repoPath` (the execa cwd).
 export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCheckRunResult> {
   const start = Date.now();
   const env = buildCommandEnv(options.repoPath);
+
+  if (options.missingLimitation) {
+    const primary = options.command.trim().split(/\s+/)[0];
+    if (primary && !(await commandExists(primary, options.repoPath))) {
+      return { limitation: options.missingLimitation };
+    }
+  }
 
   try {
     const { exitCode, all } = await execa(
@@ -162,12 +186,6 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
         env,
       }
     );
-
-    if (exitCode === 127 && options.missingLimitation) {
-      return {
-        limitation: options.missingLimitation,
-      };
-    }
 
     return {
       check: {
