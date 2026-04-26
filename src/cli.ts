@@ -5,6 +5,7 @@ import { loadConfig } from "./config.js";
 import { runPreflight } from "./runner.js";
 import { runBatch } from "./batch.js";
 import { runSandbox } from "./sandbox.js";
+import { VERSION } from "./version.js";
 import type { PreflightConfig } from "./types.js";
 
 const program = new Command();
@@ -12,7 +13,7 @@ const program = new Command();
 program
   .name("preflight")
   .description("CI preflight validation for AI agents")
-  .version("0.1.0");
+  .version(VERSION);
 
 program
   .command("run [repoPath]")
