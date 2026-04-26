@@ -47,8 +47,10 @@ source ~/.bashrc
 ### npm
 
 ```bash
-npm install -g agent-preflight
+npm install -g @lannguyensi/agent-preflight
 ```
+
+The published npm package is scoped (`@lannguyensi/agent-preflight`) but the binary it installs is still `preflight` and the project name is `agent-preflight` — the scope is only an npm-namespace artefact (npm's typo-squatting protection blocks the unscoped name).
 
 ### From a release bundle
 
