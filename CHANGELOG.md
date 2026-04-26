@@ -60,9 +60,11 @@ compatibility until v1.0.0.
 
 ### Distribution
 
-- npm package: `agent-preflight` (this release is the first publish).
-  Install with `npm install -g agent-preflight` or run via
-  `npx agent-preflight`.
+- npm package: `@lannguyensi/agent-preflight` (scoped — npm's
+  typo-squatting protection blocks the unscoped name; binary stays
+  `preflight`). This release is the first publish.
+  Install with `npm install -g @lannguyensi/agent-preflight` or run
+  via `npx @lannguyensi/agent-preflight`.
 - GitHub Release bundles: `.tar.gz` source bundles with `.sha256`
   checksums for offline / air-gapped install.
 - Docker image (Node 20 + Python + PHP + Java + `act` preinstalled)
