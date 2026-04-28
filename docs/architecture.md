@@ -1,152 +1,90 @@
-# Architecture: agent-preflight
+# Architecture
 
-## Overview
+`agent-preflight` is a TypeScript CLI built on top of [`commander`](https://www.npmjs.com/package/commander) and [`execa`](https://www.npmjs.com/package/execa). One binary (`preflight`), three subcommands (`run`, `batch`, `sandbox`), and a set of independent check modules behind them. No daemon, no server, no shared state.
 
-agent-preflight is a CLI tool implemented in **python** using the **typer** framework.
-It follows a command-based architecture where each subcommand is an isolated unit with its own
-argument parsing, validation, and execution logic.
-
-## Principles
-
-1. **Single responsibility per command**: Each command file owns one subcommand and nothing else.
-2. **Fail fast with clear messages**: Validate inputs at parse time; emit actionable error messages to stderr.
-3. **Exit codes are part of the interface**: Always exit with a meaningful code (see Exit Codes below).
-4. **Stdout for data, stderr for diagnostics**: Program output goes to stdout; logs, warnings, and errors go to stderr.
-5. **Composable with other tools**: Support `--output json` on commands that produce structured data.
-6. **Config is optional**: The tool must work with no config file present; config only overrides defaults.
-
-## System Structure
+## Top-level layout
 
 ```
-agent-preflight/
-├── src/
-│   ├── commands/         # One module per subcommand
-│   │   ├── run.py
-│   │   └── config.py
-│   ├── config/           # Config file loading, validation, env var merging
-│   │   └── loader.py
-│   └── main.py
-│       # Entrypoint: registers commands, sets global flags
-├── tests/
-│   ├── commands/         # Tests mirroring src/commands
-│   └── config/
-└── docs/
+src/
+  cli.ts              # commander entry, parses flags, dispatches subcommands
+  config.ts           # loads .preflight.json, applies defaults
+  runner.ts           # orchestrates a single repo, computes confidence
+  batch.ts            # walks a root directory, runs runner per repo
+  sandbox.ts          # builds the docker plan, runs preflight in a container
+  types.ts            # PreflightConfig, PreflightResult, CheckResult, CheckKind
+  version.ts          # injected at build time
+  checks/
+    git.ts            # clean-worktree, protected-branch
+    lint.ts
+    typecheck.ts
+    test.ts
+    audit.ts
+    secrets.ts
+    commits.ts        # commit convention
+    tdd.ts            # changed-file vs test-file pairing
+    ci.ts             # act-based CI simulation
+    custom.ts         # user-defined shell checks
+    shared.ts         # project detection, runner helpers, setup phase
 ```
 
-## Key Subsystems
+Tests live under `tests/` and mirror the `src/` layout. Build output goes to `dist/`.
 
-### 1. Command Parsing (typer)
+## How a single run works
 
-Commands are defined as Python functions decorated with `@app.command()`. Typer derives
-argument names, types, and help text from function signatures and type annotations.
+`preflight run [repoPath]` flows through these steps:
 
-```python
-# src/commands/run.py
-import typer
+1. `cli.ts` parses flags, resolves the target path to an absolute path, calls `loadConfig`.
+2. `config.ts` reads `.preflight.json` if present and merges it with defaults from `types.ts`. Missing files are not an error; the tool works without config.
+3. `runner.ts` dynamically imports each enabled check module. Imports are dynamic so a missing optional dependency in one check never breaks the others.
+4. Each check returns a `CheckSetResult` of `{ checks, limitations }`. The runner pushes them into a flat list, picks blockers (`fail`) and warnings (`warn`), deduplicates limitations, and computes the confidence score.
+5. `cli.ts` formats the result. `--json` prints `JSON.stringify(result, null, 2)`. The default formatter renders the icon, the score, the blockers, the warnings, and the limitations.
+6. Exit code is `0` when `ready` is true, otherwise `1`.
 
-def run(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without changes"),
-    output: str = typer.Option("text", "--output", "-o", help="Output format"),
-) -> None:
-    """Execute the primary action."""
-    ...
+The shape of `PreflightResult` is the contract:
+
+```ts
+interface PreflightResult {
+  ready: boolean;
+  confidence: number;          // 0..1
+  checks: CheckResult[];
+  blockers: string[];
+  warnings: string[];
+  limitations: string[];
+  durationMs: number;
+  timestamp: string;
+}
 ```
 
-The root app is created in `src/main.py` and subcommand apps are added with `app.add_typer()`.
+## act integration
 
-### 2. Config Loading
+`act` runs GitHub Actions workflows locally inside Docker. `checks/ci.ts` shells out to it, wires `actFlags` from `.preflight.json` (defaulting to `--platform ubuntu-latest=catthehacker/ubuntu:act-latest`), and treats each workflow result as its own check entry weighted at `0.25`. CI simulation is opt-in (`--ci-simulation` or `checks.ciSimulation: true`) because it is the slowest check and depends on the host having Docker plus a usable `act` binary.
 
-Config is loaded in layers, with later layers overriding earlier ones:
+In sandbox mode the act invocation runs inside the container. `--docker-socket` mounts `/var/run/docker.sock` so `act` inside the container can reach the host daemon and start workflow steps.
 
-```
-1. Compiled-in defaults
-2. Config file (~/.config/agent-preflight/config.yaml)
-3. Environment variables (AGENT_PREFLIGHT_*)
-4. CLI flags passed at runtime
-```
+## Sandbox
 
-The config loader lives in `src/config/`. It is responsible for:
+`preflight sandbox [repoPath]` builds an image fingerprint from the target repo's manifests, in `sandbox.ts`:
 
-- Locating the config file (respects `--config` flag and `XDG_CONFIG_HOME`)
-- Parsing the YAML file into a typed struct/dataclass
-- Merging environment variable overrides
-- Returning a validated config object to each command
+- Node and TypeScript: `package.json`, `tsconfig.json`
+- Python: `pyproject.toml`, `setup.py`, `requirements.txt`
+- PHP: `composer.json`, plus `ext-*` requirements mapped to apt packages
+- Symfony: `symfony.lock`, `bin/console`, or `symfony/*` Composer packages
+- Java: Maven (`pom.xml`) and Gradle (`build.gradle`, `build.gradle.kts`) manifests
 
-Commands receive config as a parameter; they do not read it directly. This keeps commands
-testable without touching the filesystem.
+The fingerprint determines the local image tag (default `agent-preflight:local`), which lets switching between repos pick up different prepared images automatically. `.preflight.json` extras (`sandbox.aptPackages`, `sandbox.pipPackages`) are merged into the build. `--print` shows the resolved docker command without running it. `--build` and `--pull` force the image to refresh.
 
-Config file path resolution order:
-1. Value of `--config` flag
-2. `$AGENT_PREFLIGHT_CONFIG` environment variable
-3. `$XDG_CONFIG_HOME/agent-preflight/config.yaml`
-4. `~/.config/agent-preflight/config.yaml`
+## Batch mode
 
-### 3. Output Formatting
+`preflight batch [root]` walks the immediate children of `root`, picks the ones that are git repos, and runs the single-repo path against each. `--only` and `--exclude` accept glob patterns (matched against the directory name). Output aggregates into a per-repo summary plus counts (`ready`, `notReady`, `skipped`). Inspired by [`git-batch-cli`](https://github.com/LanNguyenSi/git-batch-cli).
 
-Commands should never write directly to stdout with unstructured print statements.
-Instead, they call a shared output layer:
+## Setup phase
 
-- **`output text`**: Human-readable, with optional color (disabled if `NO_COLOR` is set or `--no-color` is passed, or if stdout is not a TTY)
-- **`output json`**: Machine-readable JSON, always without color
-- **`output yaml`**: Machine-readable YAML, always without color
+Opt-in via `--setup` or `setup.enabled: true`. `checks/shared.ts` runs only the unambiguous dependency-bootstrap commands per stack (`npm ci` when `package-lock.json` exists, `composer install` when `vendor/` is missing, etc.). Any setup work appends an entry to `limitations` so the agent can see what was prepared automatically. See [checks.md](./checks.md#setup-phase) for the full list.
 
-The output module respects:
+## Module boundaries
 
-- `NO_COLOR` environment variable (per [no-color.org](https://no-color.org))
-- `--no-color` flag
-- TTY detection: disable color when stdout is piped
+Each `checks/<name>.ts` exports a single `runX(targetPath, config)` function returning `CheckSetResult`. They never read the filesystem or shell out outside their own scope, never mutate the runner's state directly, and never import from each other except through `shared.ts`. This is the property that lets the runner add or remove a check without touching the others.
 
-### 4. Error Handling and Exit Codes
+## CI for this repo
 
-All errors are caught at the top-level command runner and translated to appropriate exit codes.
-Commands signal failure by raising/returning an error - they never call `os.exit()` directly.
-
-#### Exit Code Reference
-
-| Code | Meaning |
-|------|---------|
-| `0` | Success |
-| `1` | General / unspecified error |
-| `2` | Invalid arguments or usage error |
-| `3` | Configuration error (bad config file, missing required setting) |
-| `4` | Runtime error (external service unavailable, permission denied) |
-| `5` | Not found (resource the command expected does not exist) |
-
-Error messages follow the pattern: `error: <what went wrong>. <how to fix it>.`
-
-Good: `error: config file not found at ~/.config/agent-preflight/config.yaml. Run 'agent-preflight config init' to create it.`
-Bad: `FileNotFoundError: [Errno 2] No such file or directory`
-
-### 5. Logging and Verbosity
-
-Diagnostic output is gated by a verbosity level:
-
-- **Default**: warnings and errors only
-- **`--verbose`**: informational messages, command timing
-- **`--debug`**: debug-level traces (when applicable)
-
-Structured log lines go to stderr and never to stdout.
-
-## CI/CD Architecture
-
-The pipeline runs on GitHub Actions (`.github/workflows/ci.yml`):
-
-1. **lint** - ruff, mypy
-2. **test** - pytest with coverage
-3. **build** - `pip build` to verify package is installable
-4. **publish** - twine upload on tagged releases
-
-## Testing Strategy
-
-Approach: **unit-tests**
-
-Each command module has a corresponding test file. Tests invoke command functions directly
-with controlled inputs - they do not spawn subprocess invocations.
-
-- Commands are tested with mocked config and mocked I/O
-- Config loader is tested with temporary files
-- Output formatter is tested for both text and JSON modes
-
-## Decisions
-
-See [ADR log](adrs/) for architectural decisions and their rationale.
+GitHub Actions workflows live under `.github/workflows/`. The pipeline runs the same lint, typecheck, and test commands the tool itself runs on its target. Release bundles are produced with `make release-bundle`, which writes `out/release/agent-preflight-v<version>-bundle.tar.gz` plus an SHA256.
