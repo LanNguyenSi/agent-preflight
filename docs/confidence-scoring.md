@@ -28,12 +28,13 @@ If no checks run, the score is 0.
 | Check | Weight |
 |-------|-------:|
 | Lint | 0.15 |
-| Typecheck | 0.15 |
-| Test | 0.15 |
+| Typecheck | 0.20 |
+| Test | 0.20 |
 | Dependency audit | 0.15 |
 | CI simulation (per workflow result) | 0.25 |
 | Secret detection | 0.10 |
 | TDD signal (warn or pass) | 0.05 to 0.10 |
+| Custom checks | 0.10 |
 | Git state, clean worktree | 0.05 |
 | Git state, protected branch | 0.05 |
 | Commit convention | 0.05 |
