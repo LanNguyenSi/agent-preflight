@@ -75,7 +75,7 @@ The fingerprint determines the local image tag (default `agent-preflight:local`)
 
 ## Batch mode
 
-`preflight batch [root]` walks the immediate children of `root`, picks the ones that are git repos, and runs the single-repo path against each. `--only` and `--exclude` accept glob patterns (matched against the directory name). Output aggregates into a per-repo summary plus counts (`ready`, `notReady`, `skipped`). Inspired by [`git-batch-cli`](https://github.com/LanNguyenSi/git-batch-cli).
+`preflight batch [root]` walks the immediate children of `root`, picks the ones that are git repos, and runs the single-repo path against each. `--only` and `--exclude` accept glob patterns (matched against the directory name). Output aggregates into a per-repo summary plus counts (`ready`, `notReady`, `skipped`). Inspired by [`git-batch-cli`](https://github.com/LanNguyenSi/agent-dx/tree/master/packages/git-batch-cli).
 
 ## Setup phase
 

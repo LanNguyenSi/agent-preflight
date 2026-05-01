@@ -88,7 +88,7 @@ preflight sandbox --print                  # show the docker command
 preflight sandbox --docker-socket --ci-simulation
 ```
 
-`preflight batch` is inspired by [git-batch-cli](https://github.com/LanNguyenSi/git-batch-cli) and runs the single-repo path against every git repo under the given root.
+`preflight batch` is inspired by [`git-batch-cli`](https://github.com/LanNguyenSi/agent-dx/tree/master/packages/git-batch-cli) and runs the single-repo path against every git repo under the given root.
 
 ## Configuration
 
