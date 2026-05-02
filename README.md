@@ -69,6 +69,7 @@ Or as JSON for an agent:
 | Understand the score, weights, and thresholds | [docs/confidence-scoring.md](docs/confidence-scoring.md) |
 | See how the runner, act integration, and sandbox fit together | [docs/architecture.md](docs/architecture.md) |
 | Wire it into agent-tasks as a claim gate | [docs/integration.md](docs/integration.md) |
+| Use it from a Claude Code / opencode hook layer | [`harness`](https://github.com/LanNguyenSi/harness), the canonical hook-wiring layer that fires `preflight run` deterministically on `SessionStart` / `PreToolUse` and gates further work on its ledger output ([architecture §5](https://github.com/LanNguyenSi/harness/blob/master/docs/ARCHITECTURE.md), [Appendix A](https://github.com/LanNguyenSi/harness/blob/master/docs/ARCHITECTURE.md)) |
 
 ## Common commands
 
