@@ -49,6 +49,12 @@ The same JSON object can be posted into a task note or attached to a PR body so 
 
 Step 1 is what `agent-preflight` adds. The remote CI in step 4 stays as the source of truth, but step 1 makes "push, wait, fix, repeat" a rare path instead of the default.
 
+## With harness
+
+[`harness`](https://github.com/LanNguyenSi/harness) is the canonical Claude Code / opencode hook-wiring layer that consumes `agent-preflight`. Its `~/.claude/hooks/git-preflight.sh` is a thin wrapper around `preflight run "$PWD" --json` that records the result to the evidence ledger as `preflight:${REPO}`; harness Phase 4 then ships a `preflight-before-investigation` policy that gates `PreToolUse Bash ^git (status|log|diff|branch)` on `requires: { ledger_tag: "preflight:${REPO}", within: 1h }`. That is the founding-incident block (the 2026-04-23 stale-checkout incident that motivated harness).
+
+agent-preflight stays harness-agnostic; the integration is one-way (harness depends on `preflight`, not the reverse). Canonical script shape and the worked policy live in [harness's ARCHITECTURE.md](https://github.com/LanNguyenSi/harness/blob/master/docs/ARCHITECTURE.md) (§5 + Appendix A).
+
 ## With other harnesses
 
 `agent-preflight` is harness-agnostic. The CLI exit code (`0` for ready, `1` otherwise) is enough for any agent runtime that can read shell exit codes. The `--json` output is enough for any runtime that can parse JSON. There is no Claude-specific or harness-specific path through the tool.
