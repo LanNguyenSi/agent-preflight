@@ -1,0 +1,20 @@
+name: Feature request
+description: Propose a new check, score, or workflow surface
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Use case
+      description: What problem does this solve? Who feels the pain today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Sketch the check, flag, or scoring change.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
