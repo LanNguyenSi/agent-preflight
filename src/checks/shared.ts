@@ -139,6 +139,18 @@ interface ShellCheckOptions {
   failureStatus?: "fail" | "warn";
   timeoutMs?: number;
   missingLimitation?: string;
+  // When `command` is a thin wrapper that invokes another tool inside
+  // (e.g. `npm run lint` -> `eslint src/`, `composer run test` -> `phpunit`),
+  // the primary-binary pre-check sees the wrapper as installed and the run
+  // proceeds. If the inner tool is missing, the wrapper still exits non-zero
+  // but the cause is "the inner tool isn't installed", not "the code has
+  // violations". Setting this flag enables a post-hoc check on stdout/stderr
+  // for the specific patterns that indicate the inner tool was the problem
+  // (sh "command not found" / "Permission denied", npm "code 127" / "ENOENT"),
+  // and reclassifies the check as a `limitation` instead of a `fail`.
+  // Reserved for wrapper invocations; do NOT set on direct binary calls,
+  // because a legitimate non-zero exit could carry a misleading string.
+  treatToolNotFoundAsLimitation?: boolean;
 }
 
 interface ShellCheckRunResult {
@@ -187,6 +199,15 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
       }
     );
 
+    if (
+      exitCode !== 0 &&
+      options.treatToolNotFoundAsLimitation &&
+      options.missingLimitation &&
+      looksLikeMissingTool(all)
+    ) {
+      return { limitation: options.missingLimitation };
+    }
+
     return {
       check: {
         name: options.name,
@@ -218,6 +239,34 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
       },
     };
   }
+}
+
+// Patterns emitted when a shell directly reports "this binary is missing
+// or not executable" inside a wrapper invocation. Used by `runShellCheck`
+// when the caller opted into `treatToolNotFoundAsLimitation`. Kept narrow
+// on purpose: only the shell's own error lines count, so a legitimate
+// non-zero exit (deliberate `exit 127`, lint violations, npm error code
+// envelope without an underlying sh failure) stays a fail.
+//
+// - `: command not found`: POSIX sh, dash, bash error on missing PATH entry.
+// - `: Permission denied`: bash error when a found file is not executable
+//   (seen e.g. with non-executable workspace `node_modules/.bin/eslint`).
+//
+// Real-world npm-wrapped missing-tool failures always include one of these
+// lines in their output before npm prints its own error envelope, so we do
+// not need to match `npm error code 127` or similar wrapper-emitted lines
+// (which would also match a deliberate `exit 127` in a workspace script).
+// See `tests/workspace.test.ts` for the contract preserved here.
+//
+// Anchor each match to end-of-line and require the colon-space prefix so a
+// lint violation that mentions "command not found" as content does not
+// trigger the heuristic.
+function looksLikeMissingTool(output: string | undefined): boolean {
+  if (!output) return false;
+  return output.split("\n").some((line) =>
+    /:\s*command not found\s*$/i.test(line) ||
+    /:\s*Permission denied\s*$/i.test(line)
+  );
 }
 
 export async function commandExists(command: string, repoPath: string): Promise<boolean> {

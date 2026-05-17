@@ -38,7 +38,8 @@ export async function runLintChecks(
         command: "npm run lint",
         weight: 0.15,
         failureMessage: "npm lint failed",
-        missingLimitation: "npm not installed; Node lint check skipped",
+        missingLimitation: "npm script `lint` invokes a tool that is not installed; Node lint check skipped",
+        treatToolNotFoundAsLimitation: true,
       });
       if (result.check) {
         checks.push(result.check);
@@ -108,7 +109,8 @@ export async function runLintChecks(
         command: "composer run lint",
         weight: 0.15,
         failureMessage: "composer lint failed",
-        missingLimitation: "composer not installed; PHP lint check skipped",
+        missingLimitation: "composer script `lint` invokes a tool that is not installed; PHP lint check skipped",
+        treatToolNotFoundAsLimitation: true,
       });
       if (result.check) {
         checks.push(result.check);

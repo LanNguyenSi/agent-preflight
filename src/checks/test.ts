@@ -49,7 +49,8 @@ export async function runTestChecks(
           command: "npm run test",
           weight: 0.2,
           failureMessage: "npm test failed",
-          missingLimitation: "npm not installed; Node test check skipped",
+          missingLimitation: "npm script `test` invokes a tool that is not installed; Node test check skipped",
+          treatToolNotFoundAsLimitation: true,
           timeoutMs: 300_000,
         });
         if (result.check) {
@@ -93,7 +94,8 @@ export async function runTestChecks(
         command: "composer run test",
         weight: 0.2,
         failureMessage: "composer test failed",
-        missingLimitation: "composer not installed; PHP test check skipped",
+        missingLimitation: "composer script `test` invokes a tool that is not installed; PHP test check skipped",
+        treatToolNotFoundAsLimitation: true,
         timeoutMs: 300_000,
       });
       if (result.check) {
