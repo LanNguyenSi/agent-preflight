@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-05-17
+
+### Fixed
+
+- **Wrapper-script "tool not installed" is now a limitation, not a fail**
+  (PR #27). `npm run lint` / `npm run test` / `npm run typecheck` (and the
+  analogous `composer run ...` invocations) previously surfaced as real
+  blockers when the underlying tool (eslint, vitest, tsc, phpstan) was
+  not installed, even though the missing toolchain is a setup issue and
+  not a code issue. The new opt-in `treatToolNotFoundAsLimitation` on
+  `runShellCheck` reclassifies these as limitations based on the specific
+  shell error patterns (`: command not found`, `: Permission denied`);
+  deliberate non-zero exits (including the existing workspace-script
+  `exit 127` contract) remain real fails. Seven new test cases in
+  `tests/runShellCheck.test.ts` cover the branches.
+
+### Docs
+
+- Open source surface added: LICENSE, CODE_OF_CONDUCT, CONTRIBUTING,
+  SECURITY, plus issue + PR templates (PR #26).
+- README cross-links harness as the canonical hook-wiring consumer of
+  agent-preflight (PR #25).
+- `git-batch-cli` inspiration link redirected to its new home in
+  `agent-dx` (PR #24).
+- README "60-second hook" rewrite + supporting prose moved into `docs/`
+  (PR #23).
+
 ## [0.1.0] - 2026-04-26
 
 First public release. Pre-1.0: the configuration schema, CLI flags,
@@ -14,7 +41,7 @@ compatibility until v1.0.0.
 ### Added
 
 - **Hybrid local CI checks**: git state, lint, typecheck, test,
-  dependency audit, secret detection, commits hygiene — runs in a
+  dependency audit, secret detection, commits hygiene, runs in a
   few seconds against the working tree.
 - **Confidence scoring** in JSON output for downstream agents to
   decide whether to proceed.
@@ -60,7 +87,7 @@ compatibility until v1.0.0.
 
 ### Distribution
 
-- npm package: `@lannguyensi/agent-preflight` (scoped — npm's
+- npm package: `@lannguyensi/agent-preflight` (scoped; npm's
   typo-squatting protection blocks the unscoped name; binary stays
   `preflight`). This release is the first publish.
   Install with `npm install -g @lannguyensi/agent-preflight` or run
