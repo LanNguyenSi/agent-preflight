@@ -23,6 +23,23 @@ const PLACEHOLDER_PATTERNS = [
 
 const IGNORE_FILES = [".env.example", ".env.sample", ".env.template", "*.test.ts", "*.spec.ts"];
 
+// Framework build / cache dirs (added 2026-05-18): bundlers emit hashed
+// identifiers that match the SECRET_PATTERNS heuristics (notably
+// `secret/token = "<long hash>"`), producing false positives that block
+// preflight on every Next.js / Nuxt / SvelteKit / Gatsby / Parcel /
+// Turborepo project. These dirs are always gitignored and rebuildable,
+// so a secret that only lives inside them never reaches the remote —
+// which is the contract this gate is protecting. (A `NEXT_PUBLIC_*` or
+// SvelteKit `PUBLIC_*` value baked into a bundle is a separate concern,
+// not a leak prevented by detecting it in the gitignored build output.)
+// `.cache` is intentionally broad — Gatsby, Parcel, Hugo, and various
+// per-tool caches all live there; all are rebuildable.
+const SKIP_DIRS = new Set([
+  "node_modules", ".git", "dist", ".venv", "venv", "test_venv", "env",
+  "__pycache__", "vendor", "site-packages", ".tox", "coverage",
+  ".next", ".nuxt", ".svelte-kit", ".cache", ".parcel-cache", ".turbo",
+]);
+
 export async function runSecretDetection(repoPath: string): Promise<CheckSetResult> {
   const start = Date.now();
   const findings: string[] = [];
@@ -45,7 +62,6 @@ export async function runSecretDetection(repoPath: string): Promise<CheckSetResu
 }
 
 function scanDir(dir: string, root: string, findings: string[]): void {
-  const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".venv", "venv", "test_venv", "env", "__pycache__", "vendor", "site-packages", ".tox", "coverage"]);
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });

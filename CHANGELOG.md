@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] - 2026-05-18
+
+### Fixed
+
+- **Secret detection no longer false-positives in framework build dirs.**
+  Bundler output (Next.js, Nuxt, SvelteKit, Gatsby/Parcel cache,
+  Turborepo cache) routinely contains hashed identifier strings that
+  match the `secret/token` heuristic, blocking preflight on every
+  project that has run `next build` / `npm run dev` locally. `SKIP_DIRS`
+  now also excludes `.next`, `.nuxt`, `.svelte-kit`, `.cache`,
+  `.parcel-cache`, `.turbo`. These are always gitignored and
+  rebuildable, so a secret that only lives inside them never reaches
+  the remote, which is the contract this gate is protecting. Two new
+  test cases in `tests/secrets.test.ts` cover the skip (including a
+  nested `apps/web/.next/...` case for recursion depth) plus a
+  mirror-image source control that asserts the same string in a non-
+  skipped path still trips the detector.
+
 ## [0.1.1] - 2026-05-17
 
 ### Fixed
