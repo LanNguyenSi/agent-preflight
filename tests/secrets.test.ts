@@ -41,13 +41,24 @@ describe("runSecretDetection", () => {
     expect(result.checks[0]?.status).toBe("pass");
   });
 
-  it("skips framework build dirs (.next, .nuxt, .svelte-kit, .cache, .turbo)", async () => {
+  it("skips framework build dirs (.next, .nuxt, .svelte-kit, .cache, .parcel-cache, .turbo)", async () => {
     // Bundlers emit hashed identifier strings that trip SECRET_PATTERNS.
     // The detector must not flag files inside these gitignored, always-
-    // rebuildable artifact directories.
+    // rebuildable artifact directories. Includes a nested case
+    // (apps/web/.next/...) to lock in that the skip applies at every
+    // recursion depth, not just the repo root.
     const repoPath = makeTempDir("preflight-secrets-build-dirs-");
     const fakeSecret = 'secret: "abcdefghijklmnopqrstuvwxyz123456"\n';
-    for (const dir of [".next/server/chunks", ".nuxt", ".svelte-kit/output", ".cache", ".turbo"]) {
+    const dirs = [
+      path.join(".next", "server", "chunks"),
+      ".nuxt",
+      path.join(".svelte-kit", "output"),
+      ".cache",
+      ".parcel-cache",
+      ".turbo",
+      path.join("apps", "web", ".next"),
+    ];
+    for (const dir of dirs) {
       const full = path.join(repoPath, dir);
       fs.mkdirSync(full, { recursive: true });
       fs.writeFileSync(path.join(full, "bundled.js"), fakeSecret);
@@ -74,6 +85,6 @@ describe("runSecretDetection", () => {
     const result = await runSecretDetection(repoPath);
 
     expect(result.checks[0]?.status).toBe("fail");
-    expect(result.checks[0]?.details).toContain("src/leaked.js");
+    expect(result.checks[0]?.details).toContain(path.join("src", "leaked.js"));
   });
 });

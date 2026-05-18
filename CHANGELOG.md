@@ -14,12 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Turborepo cache) routinely contains hashed identifier strings that
   match the `secret/token` heuristic, blocking preflight on every
   project that has run `next build` / `npm run dev` locally. `SKIP_DIRS`
-  now also excludes `.next`, `.nuxt`, `.svelte-kit`, `.cache`, `.turbo`.
-  These are always gitignored and rebuildable; if a real secret ever
-  lands in a build artifact it also lives in the source it was bundled
-  from, where the scanner still sees it. Two new test cases in
-  `tests/secrets.test.ts` cover the skip plus a mirror-image source
-  control.
+  now also excludes `.next`, `.nuxt`, `.svelte-kit`, `.cache`,
+  `.parcel-cache`, `.turbo`. These are always gitignored and
+  rebuildable, so a secret that only lives inside them never reaches
+  the remote, which is the contract this gate is protecting. Two new
+  test cases in `tests/secrets.test.ts` cover the skip (including a
+  nested `apps/web/.next/...` case for recursion depth) plus a
+  mirror-image source control that asserts the same string in a non-
+  skipped path still trips the detector.
 
 ## [0.1.1] - 2026-05-17
 
