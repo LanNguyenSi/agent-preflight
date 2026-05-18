@@ -45,7 +45,19 @@ export async function runSecretDetection(repoPath: string): Promise<CheckSetResu
 }
 
 function scanDir(dir: string, root: string, findings: string[]): void {
-  const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".venv", "venv", "test_venv", "env", "__pycache__", "vendor", "site-packages", ".tox", "coverage"]);
+  // Framework build / cache dirs added 2026-05-18: bundlers emit hashed
+  // identifiers that match the SECRET_PATTERNS heuristics (notably
+  // `secret/token = "<long hash>"`), producing false positives that
+  // block preflight on every Next.js / Nuxt / SvelteKit / Gatsby /
+  // Turborepo project. These dirs are always gitignored and rebuildable;
+  // skipping them is strictly the right call. If a real secret ever
+  // lands in a build artifact it also lives in the source it was
+  // bundled from, where the scanner still sees it.
+  const SKIP_DIRS = new Set([
+    "node_modules", ".git", "dist", ".venv", "venv", "test_venv", "env",
+    "__pycache__", "vendor", "site-packages", ".tox", "coverage",
+    ".next", ".nuxt", ".svelte-kit", ".cache", ".turbo",
+  ]);
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
