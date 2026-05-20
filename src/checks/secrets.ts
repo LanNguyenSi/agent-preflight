@@ -55,9 +55,10 @@ interface Finding {
 }
 
 /**
- * Secret detection with git-aware severity (harness/0dce3880 follow-up,
- * agent-tasks 6c717d8d). A finding is a hard blocker (`fail`) only when
- * the secret can actually reach the remote:
+ * Secret detection with git-aware, diff-scoped severity (agent-tasks
+ * 6c717d8d + 1b93636a). A finding is a hard blocker (`fail`) only when
+ * the secret can actually reach the remote AND belongs to the change
+ * being pushed:
  *
  *   - Not a git repository (or git unavailable): the git→remote leak
  *     model does not apply, so every finding is a non-blocking `warn`.
@@ -66,7 +67,20 @@ interface Finding {
  *   - A file that is gitignored AND untracked: it cannot be pushed, so
  *     `warn`. (`git check-ignore` without `--no-index` reports exactly
  *     this set — a tracked file is never listed even if a rule matches.)
- *   - Anything else (tracked, or untracked-but-not-ignored): `fail`.
+ *   - A committable file (tracked, or untracked-but-not-ignored) that
+ *     the current branch CHANGED — relative to its merge-base with the
+ *     default/upstream branch, plus working-tree edits and new untracked
+ *     files: `fail`. This is a secret the current push introduces.
+ *   - A committable file the current branch did NOT touch: `warn`. The
+ *     secret is pre-existing and real, but it is not this push's
+ *     regression, so it should not block an unrelated change.
+ *
+ * `config.secretDetectionStrict: true` opts out of the diff-scoping —
+ * every committable finding is `fail` regardless of whether the branch
+ * touched it. The same strict behaviour is the fail-safe fallback when
+ * the merge-base cannot be resolved (detached/orphan branch, no
+ * upstream and no default branch), so a finding is never silently
+ * downgraded on an inconclusive diff.
  *
  * Findings matching `config.secretAllowlist` or carrying an inline
  * `pragma: allowlist secret` comment are suppressed entirely.
@@ -93,6 +107,21 @@ export async function runSecretDetection(
     );
   }
 
+  // Diff scope: the set of files the current branch changed (vs. its
+  // merge-base with the default/upstream branch) plus new untracked
+  // files. `null` means the base could not be resolved — the caller
+  // then fails safe by treating every committable finding as blocking.
+  const strict = config.secretDetectionStrict === true;
+  let changedFiles: Set<string> | null = null;
+  if (gitAvailable && !strict && findings.length > 0) {
+    changedFiles = await resolveChangedFiles(repoPath);
+    if (changedFiles === null) {
+      limitations.push(
+        "secret-detection: could not resolve a diff base; every committable finding treated as blocking",
+      );
+    }
+  }
+
   const blocking: Finding[] = [];
   const warning: Finding[] = [];
   for (const f of findings) {
@@ -102,9 +131,14 @@ export async function runSecretDetection(
       warning.push(f);
     } else if (ignoredUntracked.has(f.file)) {
       warning.push(f);
-    } else {
-      // Tracked, or untracked-but-not-ignored: it can reach the remote.
+    } else if (strict || changedFiles === null || changedFiles.has(f.file)) {
+      // Committable AND introduced/touched by this change (or strict
+      // mode, or an inconclusive diff base): a secret this push adds.
       blocking.push(f);
+    } else {
+      // Committable but pre-existing — the current branch never touched
+      // this file, so the secret is real but not this push's regression.
+      warning.push(f);
     }
   }
 
@@ -113,12 +147,12 @@ export async function runSecretDetection(
 
   let message: string | undefined;
   if (blocking.length > 0) {
-    message = `${blocking.length} potential secret(s) in tracked / committable file(s)`;
+    message = `${blocking.length} potential secret(s) introduced by this change`;
     if (warning.length > 0) {
       message += ` (+${warning.length} non-blocking)`;
     }
   } else if (warning.length > 0) {
-    message = `${warning.length} potential secret(s) in non-blocking location(s) (gitignored, docs, or non-git)`;
+    message = `${warning.length} potential secret(s) in non-blocking location(s) (pre-existing, gitignored, docs, or non-git)`;
   }
 
   const details = [
@@ -172,6 +206,74 @@ async function classifyIgnored(
     // git binary missing (ENOENT) or spawn failure.
     return { gitAvailable: false, ignoredUntracked: new Set() };
   }
+}
+
+/** Run a git command; return stdout on a clean exit, `null` on any failure. */
+async function runGit(repoPath: string, args: string[]): Promise<string | null> {
+  try {
+    const res = await execa("git", args, { cwd: repoPath, reject: false });
+    return res.exitCode === 0 ? res.stdout : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the commit to diff the current branch against: the merge-base
+ * with the upstream tracking branch, else `origin/HEAD`'s target, else a
+ * common default branch. Returns the merge-base SHA, or `null` when none
+ * resolves (orphan/detached branch, no upstream, no default branch) so
+ * the caller can fail safe instead of scoping against nothing.
+ */
+async function resolveDiffBase(repoPath: string): Promise<string | null> {
+  const candidates: string[] = [];
+  const upstream = await runGit(repoPath, [
+    "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}",
+  ]);
+  if (upstream) candidates.push(upstream.trim());
+  const originHead = await runGit(repoPath, ["rev-parse", "--abbrev-ref", "origin/HEAD"]);
+  if (originHead) candidates.push(originHead.trim());
+  candidates.push("origin/main", "origin/master", "main", "master");
+
+  for (const ref of candidates) {
+    if (!ref) continue;
+    const mb = await runGit(repoPath, ["merge-base", "HEAD", ref]);
+    if (mb && mb.trim().length > 0) return mb.trim();
+  }
+  return null;
+}
+
+/**
+ * The set of repo-relative paths the current branch has changed: tracked
+ * files that differ from the merge-base (committed-on-branch edits AND
+ * uncommitted working-tree edits, both captured by `git diff <base>`),
+ * plus new untracked-and-unignored files. Paths are forward-slash
+ * normalised to line up with `Finding.file`. `null` when the diff base
+ * is unresolvable — the caller treats that as "scope unknown".
+ */
+async function resolveChangedFiles(repoPath: string): Promise<Set<string> | null> {
+  const base = await resolveDiffBase(repoPath);
+  if (base === null) return null;
+
+  const changed = new Set<string>();
+  // `git diff --name-only <base>` (no `..HEAD`) compares the base to the
+  // working tree, so it covers both committed-on-branch and uncommitted
+  // edits in one call. Output is already repo-relative, forward-slash.
+  const diff = await runGit(repoPath, ["diff", "--name-only", base]);
+  if (diff === null) return null;
+  for (const line of diff.split("\n")) {
+    const p = line.trim();
+    if (p) changed.add(p);
+  }
+  // New files not yet tracked (and not gitignored) are part of this change.
+  const others = await runGit(repoPath, ["ls-files", "--others", "--exclude-standard"]);
+  if (others !== null) {
+    for (const line of others.split("\n")) {
+      const p = line.trim();
+      if (p) changed.add(p);
+    }
+  }
+  return changed;
 }
 
 /**

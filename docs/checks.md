@@ -12,7 +12,7 @@ Every check `agent-preflight` can run, what it verifies, and when it fires. Each
 | Typecheck | `typecheck` | Type errors and broken builds | `tsc --noEmit`, `mypy`, `phpstan`, `psalm`, `mvn compile`, `gradle classes` | `fail` on type errors |
 | Test | `test` | Broken test suites | `npm test`, `pytest`, `phpunit`, `mvn test`, `gradle test` | `fail` when tests fail |
 | Dependency audit | `audit` | Known CVEs in dependencies | `npm audit --json`, `pip-audit`, `composer audit` | `fail` on high-severity findings |
-| Secret detection | `secret-detection` | API keys, tokens, private keys in source files | regex pattern scan, git-aware severity | `fail` for a tracked/committable file; `warn` for gitignored, docs, or non-git |
+| Secret detection | `secret-detection` | API keys, tokens, private keys in source files | regex scan, git-aware + diff-scoped severity | `fail` only when the current change introduced the secret; `warn` for pre-existing, gitignored, docs, or non-git |
 | Commit convention | `commit-convention` | Recent commit messages that do not follow conventional commits | `git log` | `warn` only |
 | TDD signal | `tdd` | Source files changed in the last commit without a paired test file | `git diff HEAD~1..HEAD`, filesystem scan | `warn` to nudge, never blocks |
 | CI simulation (opt-in) | `ci-simulation` | Workflow failures before push | `act` against `.github/workflows/` | `fail` when act exits non-zero |
@@ -110,7 +110,7 @@ The setup phase is intentionally conservative. It only runs when the project fil
 ## Behavior notes
 
 - Dependency bootstrap is opt-in. The runner never touches `node_modules/`, `vendor/`, or virtualenvs unless `--setup` is passed.
-- Secret detection is git-aware. A hit is a `fail` blocker only when the file can actually reach the remote — i.e. it is tracked, or untracked but not gitignored. A hit in a gitignored-and-untracked file (a `.env` holding real credentials is the normal, correct state), in a `.md` documentation file, or in a directory that is not a git repository is a non-blocking `warn`. Keep example values in template files like `.env.example` or `.env.template`.
+- Secret detection is git-aware and diff-scoped. A hit is a `fail` blocker only when the secret can reach the remote **and** the current change introduced it — the file is committable (tracked, or untracked-but-not-ignored) **and** the current branch changed it, measured against the merge-base with the upstream / default branch (uncommitted edits and new untracked files included). A hit in a gitignored-and-untracked file (a `.env` holding real credentials is the normal, correct state), in a `.md` documentation file, in a directory that is not a git repository, or in a tracked file the branch never touched is a non-blocking `warn`. When the merge-base cannot be resolved the check fails safe and treats every committable finding as blocking. Set `"secretDetectionStrict": true` to drop the diff-scoping and block on every committable finding. Keep example values in template files like `.env.example` or `.env.template`.
 - To suppress an intentional finding (a demo/example key), either list it in `secretAllowlist` in `.preflight.json` — entries are a repo-relative path, a `path:line` pair, or a `*`-glob — or put a `pragma: allowlist secret` comment on the line:
 
   ```json

@@ -52,6 +52,13 @@ export interface PreflightConfig {
    * an alternative to listing it here.
    */
   secretAllowlist?: string[];
+  /**
+   * When true, every secret-detection finding in a committable file is a
+   * `fail` blocker regardless of whether the current branch touched that
+   * file. The default (false) is diff-scoped: a secret in a file the
+   * branch did not change is reported as a non-blocking `warn`.
+   */
+  secretDetectionStrict?: boolean;
   protectedBranches?: string[];
   actFlags?: string[];
   commitConvention?: "conventional" | "none";
