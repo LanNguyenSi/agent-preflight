@@ -56,7 +56,7 @@ export async function runPreflight(
   }
 
   if (config.checks?.secretDetection !== false) {
-    const result = await runSecretDetection(targetPath);
+    const result = await runSecretDetection(targetPath, config);
     checks.push(...result.checks);
     limitations.push(...result.limitations);
   }

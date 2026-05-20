@@ -44,6 +44,14 @@ export interface PreflightConfig {
     tdd?: boolean;
   };
   tddExceptions?: string[];
+  /**
+   * Operator-reviewed secret-detection findings to suppress. Each entry
+   * is a repo-root-relative path (suppresses the whole file), a
+   * `path:line` pair (suppresses one finding), or a `*`-glob matching
+   * either. An inline `pragma: allowlist secret` comment on the line is
+   * an alternative to listing it here.
+   */
+  secretAllowlist?: string[];
   protectedBranches?: string[];
   actFlags?: string[];
   commitConvention?: "conventional" | "none";
