@@ -224,8 +224,16 @@ async function runGit(repoPath: string, args: string[]): Promise<string | null> 
  * common default branch. Returns the merge-base SHA, or `null` when none
  * resolves (orphan/detached branch, no upstream, no default branch) so
  * the caller can fail safe instead of scoping against nothing.
+ *
+ * A candidate whose merge-base equals HEAD is rejected: that means the
+ * branch has not diverged from the ref (you are on the ref itself, or
+ * strictly behind it), so `git diff <HEAD>` would miss every committed
+ * change and the diff scope would be meaningless. Skipping it makes the
+ * caller fail safe — e.g. a secret committed straight onto a local
+ * `main` with no upstream stays a hard blocker.
  */
 async function resolveDiffBase(repoPath: string): Promise<string | null> {
+  const headSha = (await runGit(repoPath, ["rev-parse", "HEAD"]))?.trim() ?? null;
   const candidates: string[] = [];
   const upstream = await runGit(repoPath, [
     "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}",
@@ -237,8 +245,10 @@ async function resolveDiffBase(repoPath: string): Promise<string | null> {
 
   for (const ref of candidates) {
     if (!ref) continue;
-    const mb = await runGit(repoPath, ["merge-base", "HEAD", ref]);
-    if (mb && mb.trim().length > 0) return mb.trim();
+    const mb = (await runGit(repoPath, ["merge-base", "HEAD", ref]))?.trim();
+    if (!mb) continue;
+    if (headSha !== null && mb === headSha) continue; // branch has not diverged
+    return mb;
   }
   return null;
 }
@@ -258,15 +268,20 @@ async function resolveChangedFiles(repoPath: string): Promise<Set<string> | null
   const changed = new Set<string>();
   // `git diff --name-only <base>` (no `..HEAD`) compares the base to the
   // working tree, so it covers both committed-on-branch and uncommitted
-  // edits in one call. Output is already repo-relative, forward-slash.
-  const diff = await runGit(repoPath, ["diff", "--name-only", base]);
+  // edits in one call. `-c core.quotePath=false` keeps non-ASCII paths
+  // verbatim so they line up with `Finding.file`.
+  const diff = await runGit(repoPath, [
+    "-c", "core.quotePath=false", "diff", "--name-only", base,
+  ]);
   if (diff === null) return null;
   for (const line of diff.split("\n")) {
     const p = line.trim();
     if (p) changed.add(p);
   }
   // New files not yet tracked (and not gitignored) are part of this change.
-  const others = await runGit(repoPath, ["ls-files", "--others", "--exclude-standard"]);
+  const others = await runGit(repoPath, [
+    "-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard",
+  ]);
   if (others !== null) {
     for (const line of others.split("\n")) {
       const p = line.trim();

@@ -114,5 +114,8 @@ The setup phase is intentionally conservative. It only runs when the project fil
 - To suppress an intentional finding (a demo/example key), either list it in `secretAllowlist` in `.preflight.json` — entries are a repo-relative path, a `path:line` pair, or a `*`-glob — or put a `pragma: allowlist secret` comment on the line:
 
   ```json
-  { "secretAllowlist": ["demo/playground.ts", "fixtures/*", "src/config.ts:42"] }
+  {
+    "secretAllowlist": ["demo/playground.ts", "fixtures/*", "src/config.ts:42"],
+    "secretDetectionStrict": false
+  }
   ```

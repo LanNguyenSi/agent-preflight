@@ -284,7 +284,11 @@ describe("runSecretDetection — diff-scoped severity", () => {
     fs.writeFileSync(path.join(repoPath, "app.js"), "export const x = 1;\n");
     gitCommit(repoPath, "base");
     gitCheckoutNewBranch(repoPath, "feature");
-    // Uncommitted edit — still part of what would be pushed.
+    // Diverge the feature branch so the merge-base is the base commit
+    // (not HEAD) — the diff scope is then a real fork-point comparison.
+    fs.writeFileSync(path.join(repoPath, "other.js"), "export const y = 1;\n");
+    gitCommit(repoPath, "feature work");
+    // Uncommitted edit — `git diff <base>` (base-vs-worktree) catches it.
     fs.writeFileSync(path.join(repoPath, "app.js"), `const secret = "${REAL_SECRET}";\n`);
 
     const result = await runSecretDetection(repoPath);
@@ -297,8 +301,25 @@ describe("runSecretDetection — diff-scoped severity", () => {
     gitInit(repoPath);
     fs.writeFileSync(path.join(repoPath, "app.js"), "export const x = 1;\n");
     gitCommit(repoPath, "base");
+    gitCheckoutNewBranch(repoPath, "feature");
+    fs.writeFileSync(path.join(repoPath, "other.js"), "export const y = 1;\n");
+    gitCommit(repoPath, "feature work");
     // A brand-new untracked, unignored file is part of this change.
     fs.writeFileSync(path.join(repoPath, "new.js"), `const secret = "${REAL_SECRET}";\n`);
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+  });
+
+  it("fails safe on the default branch with no upstream (merge-base is HEAD)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-onmain-");
+    gitInit(repoPath);
+    // A secret committed straight onto main, no feature branch, no
+    // upstream: `merge-base HEAD main` == HEAD, so the diff scope is
+    // meaningless. The check must fail safe, not downgrade to warn.
+    fs.writeFileSync(path.join(repoPath, "app.js"), `const secret = "${REAL_SECRET}";\n`);
+    gitCommit(repoPath, "commit a secret straight onto main");
 
     const result = await runSecretDetection(repoPath);
 
