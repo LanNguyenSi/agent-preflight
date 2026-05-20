@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-20
+
 ### Changed
 
 - **Secret detection is now git-aware: a hit blocks only when the secret can actually reach the remote** (agent-tasks 6c717d8d). Previously any pattern hit produced `status: "fail"` (a hard blocker) regardless of git status, so a gitignored `.env` holding real credentials — the normal, correct state — blocked preflight, and a secret in an unrelated pre-existing file blocked a change that never touched it. The check now classifies each finding: a file that is gitignored AND untracked, or a `.md` documentation file, or any finding when the directory is not a git repository, is reported as a non-blocking `warn`; only a tracked or untracked-but-not-ignored file (one that can be committed and pushed) is a `fail`. The gitignored-and-untracked set is resolved with a single `git check-ignore --stdin` call over the finding files — `check-ignore` without `--no-index` never lists a tracked file, so it returns exactly the "cannot leak via git" set. A genuine secret committed to a tracked source file still fails.
