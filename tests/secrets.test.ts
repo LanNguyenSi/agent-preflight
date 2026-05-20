@@ -63,6 +63,23 @@ describe("runSecretDetection — git-aware severity", () => {
     expect(result.checks[0]?.details?.[0]).toContain(".env:1");
   });
 
+  it("fails on a secret in a TRACKED file even when a .gitignore rule matches it", async () => {
+    // The load-bearing guarantee: `git check-ignore` (without --no-index)
+    // never lists a tracked file, so a secret force-added into an
+    // otherwise-gitignored file is still a hard blocker. This is the
+    // precise regression a switch to `--no-index` would introduce.
+    const repoPath = makeTempDir("preflight-secrets-tracked-ignored-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, ".gitignore"), ".env\n");
+    fs.writeFileSync(path.join(repoPath, ".env"), `API_KEY="${REAL_SECRET}"\n`);
+    // -f: force-add a file that a .gitignore rule would otherwise exclude.
+    execFileSync("git", ["add", "-f", ".env"], { cwd: repoPath, stdio: "ignore" });
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+  });
+
   it("warns (not fails) when the directory is not a git repository", async () => {
     const repoPath = makeTempDir("preflight-secrets-nongit-");
     fs.writeFileSync(path.join(repoPath, ".env"), `API_KEY="${REAL_SECRET}"\n`);
