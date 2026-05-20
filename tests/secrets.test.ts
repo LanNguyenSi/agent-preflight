@@ -223,3 +223,122 @@ describe("runSecretDetection — existing behaviour preserved", () => {
     expect(result.checks[0]?.details).toEqual([]);
   });
 });
+
+describe("runSecretDetection — diff-scoped severity", () => {
+  /** Stage everything and commit with a fixed identity (no global config). */
+  function gitCommit(dir: string, message: string): void {
+    execFileSync("git", ["add", "-A"], { cwd: dir, stdio: "ignore" });
+    execFileSync(
+      "git",
+      [
+        "-c", "user.email=preflight-test@example.com",
+        "-c", "user.name=preflight-test",
+        "commit", "-q", "-m", message,
+      ],
+      { cwd: dir, stdio: "ignore" },
+    );
+  }
+
+  function gitCheckoutNewBranch(dir: string, name: string): void {
+    execFileSync("git", ["checkout", "-q", "-b", name], { cwd: dir, stdio: "ignore" });
+  }
+
+  it("warns on a pre-existing secret in a file the branch never touched", async () => {
+    const repoPath = makeTempDir("preflight-secrets-preexisting-");
+    gitInit(repoPath);
+    // Base commit on main: legacy.js already carries a secret.
+    fs.writeFileSync(path.join(repoPath, "legacy.js"), `const secret = "${REAL_SECRET}";\n`);
+    fs.writeFileSync(path.join(repoPath, "app.js"), "export const x = 1;\n");
+    gitCommit(repoPath, "base");
+    // Feature branch changes only app.js — legacy.js is untouched.
+    gitCheckoutNewBranch(repoPath, "feature");
+    fs.writeFileSync(path.join(repoPath, "app.js"), "export const x = 2;\n");
+    gitCommit(repoPath, "unrelated change");
+
+    const result = await runSecretDetection(repoPath);
+
+    // The secret is real and tracked, but this branch did not introduce
+    // or touch it — it must not block an unrelated change.
+    expect(result.checks[0]?.status).toBe("warn");
+  });
+
+  it("fails on a secret in a file the branch changed", async () => {
+    const repoPath = makeTempDir("preflight-secrets-changed-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "app.js"), "export const x = 1;\n");
+    gitCommit(repoPath, "base");
+    gitCheckoutNewBranch(repoPath, "feature");
+    // This branch edits app.js and the edit adds a secret.
+    fs.writeFileSync(path.join(repoPath, "app.js"), `const secret = "${REAL_SECRET}";\n`);
+    gitCommit(repoPath, "add feature (with a secret)");
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("app.js:1");
+  });
+
+  it("fails on a secret added in an uncommitted working-tree edit", async () => {
+    const repoPath = makeTempDir("preflight-secrets-worktree-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "app.js"), "export const x = 1;\n");
+    gitCommit(repoPath, "base");
+    gitCheckoutNewBranch(repoPath, "feature");
+    // Diverge the feature branch so the merge-base is the base commit
+    // (not HEAD) — the diff scope is then a real fork-point comparison.
+    fs.writeFileSync(path.join(repoPath, "other.js"), "export const y = 1;\n");
+    gitCommit(repoPath, "feature work");
+    // Uncommitted edit — `git diff <base>` (base-vs-worktree) catches it.
+    fs.writeFileSync(path.join(repoPath, "app.js"), `const secret = "${REAL_SECRET}";\n`);
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+  });
+
+  it("fails on a secret in a new untracked file", async () => {
+    const repoPath = makeTempDir("preflight-secrets-newfile-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "app.js"), "export const x = 1;\n");
+    gitCommit(repoPath, "base");
+    gitCheckoutNewBranch(repoPath, "feature");
+    fs.writeFileSync(path.join(repoPath, "other.js"), "export const y = 1;\n");
+    gitCommit(repoPath, "feature work");
+    // A brand-new untracked, unignored file is part of this change.
+    fs.writeFileSync(path.join(repoPath, "new.js"), `const secret = "${REAL_SECRET}";\n`);
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+  });
+
+  it("fails safe on the default branch with no upstream (merge-base is HEAD)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-onmain-");
+    gitInit(repoPath);
+    // A secret committed straight onto main, no feature branch, no
+    // upstream: `merge-base HEAD main` == HEAD, so the diff scope is
+    // meaningless. The check must fail safe, not downgrade to warn.
+    fs.writeFileSync(path.join(repoPath, "app.js"), `const secret = "${REAL_SECRET}";\n`);
+    gitCommit(repoPath, "commit a secret straight onto main");
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+  });
+
+  it("secretDetectionStrict re-blocks a pre-existing untouched finding", async () => {
+    const repoPath = makeTempDir("preflight-secrets-strict-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "legacy.js"), `const secret = "${REAL_SECRET}";\n`);
+    fs.writeFileSync(path.join(repoPath, "app.js"), "export const x = 1;\n");
+    gitCommit(repoPath, "base");
+    gitCheckoutNewBranch(repoPath, "feature");
+    fs.writeFileSync(path.join(repoPath, "app.js"), "export const x = 2;\n");
+    gitCommit(repoPath, "unrelated change");
+
+    const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+    // Strict mode opts out of diff-scoping: every committable finding fails.
+    expect(result.checks[0]?.status).toBe("fail");
+  });
+});
