@@ -310,6 +310,8 @@ describe("runSecretDetection — diff-scoped severity", () => {
     const result = await runSecretDetection(repoPath);
 
     expect(result.checks[0]?.status).toBe("fail");
+    // Default diff-scoped mode: a blocking finding IS in a changed file.
+    expect(result.checks[0]?.message).toContain("introduced by this change");
   });
 
   it("fails safe on the default branch with no upstream (merge-base is HEAD)", async () => {
@@ -340,5 +342,9 @@ describe("runSecretDetection — diff-scoped severity", () => {
 
     // Strict mode opts out of diff-scoping: every committable finding fails.
     expect(result.checks[0]?.status).toBe("fail");
+    // The finding is pre-existing, not introduced by this branch, so the
+    // message uses neutral wording rather than "introduced by this change".
+    expect(result.checks[0]?.message).toContain("in committable file(s)");
+    expect(result.checks[0]?.message).not.toContain("introduced by this change");
   });
 });
