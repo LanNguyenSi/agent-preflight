@@ -147,7 +147,15 @@ export async function runSecretDetection(
 
   let message: string | undefined;
   if (blocking.length > 0) {
-    message = `${blocking.length} potential secret(s) introduced by this change`;
+    // The diff-scoped "introduced by this change" wording is only honest
+    // when every blocking finding sits in a file this branch changed.
+    // Strict mode and an unresolved diff base (`changedFiles === null`)
+    // both push pre-existing findings into `blocking`, so fall back to
+    // neutral wording in those cases.
+    const diffScoped = !strict && changedFiles !== null;
+    message = diffScoped
+      ? `${blocking.length} potential secret(s) introduced by this change`
+      : `${blocking.length} potential secret(s) in committable file(s)`;
     if (warning.length > 0) {
       message += ` (+${warning.length} non-blocking)`;
     }
