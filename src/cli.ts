@@ -7,7 +7,7 @@ import { runBatch } from "./batch.js";
 import { runSandbox } from "./sandbox.js";
 import { VERSION } from "./version.js";
 import type { PreflightConfig } from "./types.js";
-import { getHeadSha, writeVerdict, evaluateGate, verdictPath, type Verdict } from "./verdict.js";
+import { getHeadSha, writeVerdict, evaluateGate, verdictPath, sanitizeVerdictId, type Verdict } from "./verdict.js";
 
 const program = new Command();
 
@@ -137,6 +137,16 @@ program
   )
   .option("--json", "Output raw JSON")
   .action(async (id: string, repoPath: string | undefined, opts) => {
+    // Validate the id up front so an empty / dot-only id fails fast with a
+    // clean message instead of running the whole battery and then throwing
+    // a raw stack trace from writeVerdict.
+    try {
+      sanitizeVerdictId(id);
+    } catch (err) {
+      console.error(`preflight verdict: ${(err as Error).message}`);
+      process.exit(1);
+    }
+
     const resolvedPath = path.resolve(repoPath ?? process.cwd());
 
     const head = await getHeadSha(resolvedPath);
