@@ -70,6 +70,7 @@ Or as JSON for an agent:
 | See how the runner, act integration, and sandbox fit together | [docs/architecture.md](docs/architecture.md) |
 | Wire it into agent-tasks as a claim gate | [docs/integration.md](docs/integration.md) |
 | Use it from a Claude Code / opencode hook layer | [`harness`](https://github.com/LanNguyenSi/harness), the canonical hook-wiring layer that fires `preflight run` deterministically on `SessionStart` / `PreToolUse` and gates further work on its ledger output ([architecture §5](https://github.com/LanNguyenSi/harness/blob/master/docs/ARCHITECTURE.md), [Appendix A](https://github.com/LanNguyenSi/harness/blob/master/docs/ARCHITECTURE.md)) |
+| Gate "done" on a verified, HEAD-pinned result so an agent cannot self-attest completion | [docs/solution-acceptance-gate.md](docs/solution-acceptance-gate.md) |
 
 ## Common commands
 
@@ -87,6 +88,9 @@ preflight batch ~/git --exclude "*-playground"
 preflight sandbox                          # run inside a docker image
 preflight sandbox --print                  # show the docker command
 preflight sandbox --docker-socket --ci-simulation
+
+preflight verdict <task-id>                # record a HEAD-pinned acceptance verdict
+preflight gate <task-id>                    # pass only if a ready verdict exists at HEAD (exit 2 = deny)
 ```
 
 `preflight batch` is inspired by [`git-batch-cli`](https://github.com/LanNguyenSi/agent-dx/tree/master/packages/git-batch-cli) and runs the single-repo path against every git repo under the given root.

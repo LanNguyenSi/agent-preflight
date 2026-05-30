@@ -7,6 +7,7 @@ import { runBatch } from "./batch.js";
 import { runSandbox } from "./sandbox.js";
 import { VERSION } from "./version.js";
 import type { PreflightConfig } from "./types.js";
+import { getHeadSha, writeVerdict, evaluateGate, verdictPath, sanitizeVerdictId, type Verdict } from "./verdict.js";
 
 const program = new Command();
 
@@ -127,6 +128,90 @@ program
   .option("--no-secrets", "Skip secret detection")
   .action(async (repoPath: string | undefined, opts) => {
     await runSandbox(repoPath, opts);
+  });
+
+program
+  .command("verdict <id> [repoPath]")
+  .description(
+    "Run preflight and record a HEAD-pinned solution-acceptance verdict for <id> (exit 1 if not ready)"
+  )
+  .option("--json", "Output raw JSON")
+  .action(async (id: string, repoPath: string | undefined, opts) => {
+    // Validate the id up front so an empty / dot-only id fails fast with a
+    // clean message instead of running the whole battery and then throwing
+    // a raw stack trace from writeVerdict.
+    try {
+      sanitizeVerdictId(id);
+    } catch (err) {
+      console.error(`preflight verdict: ${(err as Error).message}`);
+      process.exit(1);
+    }
+
+    const resolvedPath = path.resolve(repoPath ?? process.cwd());
+
+    const head = await getHeadSha(resolvedPath);
+    if (!head) {
+      console.error(
+        "preflight verdict: cannot resolve a committed git HEAD. The solution-acceptance gate requires a git repository with at least one commit."
+      );
+      process.exit(1);
+    }
+
+    // The check set comes from committed .preflight.json, NOT from CLI flags,
+    // so an agent cannot weaken the gate at call time (anti-hacking contract #2).
+    const config = loadConfig(resolvedPath);
+    const result = await runPreflight(resolvedPath, config);
+
+    const verdict: Verdict = {
+      id,
+      head,
+      ready: result.ready,
+      confidence: result.confidence,
+      blockers: result.blockers,
+      timestamp: new Date().toISOString(),
+      preflightVersion: VERSION,
+    };
+    const markerPath = writeVerdict(verdict);
+
+    if (opts.json) {
+      console.log(JSON.stringify({ verdict, markerPath }, null, 2));
+      process.exit(result.ready ? 0 : 1);
+    }
+
+    const icon = result.ready ? "✅" : "❌";
+    const conf = Math.round(result.confidence * 100);
+    console.log(
+      `\n${icon} verdict[${id}]: ${result.ready ? "READY" : "NOT READY"} @ ${head.slice(0, 7)} (confidence: ${conf}%)`
+    );
+    if (!result.ready) {
+      console.log("Blockers:");
+      result.blockers.forEach((b) => console.log(`  ✗ ${b}`));
+    }
+    console.log(`marker: ${markerPath}\n`);
+    process.exit(result.ready ? 0 : 1);
+  });
+
+program
+  .command("gate <id> [repoPath]")
+  .description(
+    "Pass only if a ready verdict for <id> exists at the current HEAD (exit 0 = pass, 2 = deny)"
+  )
+  .option("--json", "Output raw JSON")
+  .action(async (id: string, repoPath: string | undefined, opts) => {
+    const resolvedPath = path.resolve(repoPath ?? process.cwd());
+    const head = await getHeadSha(resolvedPath);
+    const result = evaluateGate(id, head);
+
+    if (opts.json) {
+      console.log(JSON.stringify({ ...result, markerPath: verdictPath(id) }, null, 2));
+      process.exit(result.allowed ? 0 : 2);
+    }
+
+    const icon = result.allowed ? "✅" : "⛔";
+    console.log(
+      `\n${icon} gate[${id}]: ${result.allowed ? "PASS" : "DENY"} — ${result.reason}\n`
+    );
+    process.exit(result.allowed ? 0 : 2);
   });
 
 program.parseAsync();
