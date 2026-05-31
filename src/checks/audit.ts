@@ -37,17 +37,23 @@ export async function runAuditChecks(
         { cwd: repoPath, reject: false }
       );
       let criticalCount = 0;
+      let highCount = 0;
       try {
         const parsed = JSON.parse(stdout);
         criticalCount = parsed?.metadata?.vulnerabilities?.critical ?? 0;
+        highCount = parsed?.metadata?.vulnerabilities?.high ?? 0;
       } catch {
         // ignore parse failures and treat the command exit as the source of truth
       }
+      const blockingCount = criticalCount + highCount;
       checks.push({
         name: "npm-audit",
         kind: "audit",
-        status: exitCode === 0 ? "pass" : criticalCount > 0 ? "fail" : "warn",
-        message: criticalCount > 0 ? `${criticalCount} critical vulnerabilities found` : undefined,
+        status: exitCode === 0 ? "pass" : blockingCount > 0 ? "fail" : "warn",
+        message:
+          blockingCount > 0
+            ? `${criticalCount} critical, ${highCount} high vulnerabilities found`
+            : undefined,
         durationMs: Date.now() - start,
         confidenceContribution: 0.15,
       });
