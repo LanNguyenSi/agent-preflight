@@ -104,6 +104,55 @@ describe("runSecretDetection — git-aware severity", () => {
     // Doc example tokens are overwhelmingly placeholders → never a blocker.
     expect(result.checks[0]?.status).toBe("warn");
   });
+
+  it("still detects a real secret when trailing line text contains placeholder words (#32)", async () => {
+    // The old line-wide `(?!.*(?:example|here|todo))` negative lookahead let
+    // a genuine secret through whenever a comment later on the line happened
+    // to contain one of those words. Placeholder filtering is now scoped to
+    // the matched value, so trailing prose can no longer suppress a hit.
+    const repoPath = makeTempDir("preflight-secrets-trailing-");
+    gitInit(repoPath);
+    fs.writeFileSync(
+      path.join(repoPath, "src.ts"),
+      `const apiKey = "${REAL_SECRET}"; // example value, fill in here, todo\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src.ts:1");
+  });
+
+  it("detects a private key in a .key file (extension denylist, not allowlist) (#34)", async () => {
+    // .key is not on the old text-extension allowlist, so the file was never
+    // even read. The scanner is now a binary-extension denylist: every
+    // non-binary file is scanned, so credential formats are covered.
+    const repoPath = makeTempDir("preflight-secrets-keyfile-");
+    gitInit(repoPath);
+    fs.writeFileSync(
+      path.join(repoPath, "server.key"),
+      "-----BEGIN PRIVATE KEY-----\nMIIabcdefghijklmnopqrstuvwxyz0123456789\n-----END PRIVATE KEY-----\n",
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("server.key:1");
+  });
+
+  it("scans extensionless credential files such as id_rsa (#34)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-idrsa-");
+    gitInit(repoPath);
+    fs.writeFileSync(
+      path.join(repoPath, "id_rsa"),
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIabcdefghijklmnopqrstuvwxyz0123456789\n-----END RSA PRIVATE KEY-----\n",
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("id_rsa:1");
+  });
 });
 
 describe("runSecretDetection — allowlist", () => {
@@ -294,6 +343,33 @@ describe("runSecretDetection — diff-scoped severity", () => {
     const result = await runSecretDetection(repoPath);
 
     expect(result.checks[0]?.status).toBe("fail");
+  });
+
+  it("fails on a newly-committed secret when the target is a subdirectory (#33)", async () => {
+    // `git diff --name-only` (without `--relative`) emits repo-root-relative
+    // paths, but `Finding.file` and `ls-files --others` are relative to the
+    // working dir. When the working dir is a subdirectory the diff paths
+    // carry a leading subdir prefix that never matches a finding, so every
+    // committable secret was silently downgraded to a warn. `--relative`
+    // scopes the diff output to the working dir so they line up again.
+    const repoPath = makeTempDir("preflight-secrets-subdir-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "service"));
+    fs.writeFileSync(path.join(repoPath, "service", "app.js"), "export const x = 1;\n");
+    gitCommit(repoPath, "base");
+    gitCheckoutNewBranch(repoPath, "feature");
+    // The branch commits a secret inside the subdirectory.
+    fs.writeFileSync(
+      path.join(repoPath, "service", "app.js"),
+      `const secret = "${REAL_SECRET}";\n`,
+    );
+    gitCommit(repoPath, "add secret in subdir");
+
+    // Detection scoped to the subdirectory (workingDir = subdir).
+    const result = await runSecretDetection(path.join(repoPath, "service"));
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("app.js:1");
   });
 
   it("fails on a secret in a new untracked file", async () => {
