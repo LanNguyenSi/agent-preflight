@@ -5,10 +5,16 @@ import { CheckResult, PreflightConfig } from "../types.js";
 
 interface CheckSetResult { checks: CheckResult[]; limitations: string[]; }
 
+// NOTE: no line-wide `(?!.*(?:...))` negative lookahead here. A trailing
+// "example"/"here"/"todo" anywhere on the line must NOT suppress a real
+// secret earlier on it (that lookahead was a scanner bypass). Example /
+// placeholder values are instead filtered by the value-scoped
+// PLACEHOLDER_PATTERNS check against the *matched text* in scanDir, plus
+// the diff-scoped / `.md` / gitignored severity tiering.
 const SECRET_PATTERNS = [
-  /(?:api[_-]?key|apikey)\s*[:=]\s*["']?[a-zA-Z0-9_-]{20,}["']?(?!.*(?:your_|example|placeholder|here|xxx|todo|dummy))/i,
-  /(?:password|passwd|pwd)\s*[:=]\s*["'][^"']{8,}["'](?!.*(?:your_|example|placeholder|here|xxx))/i,
-  /(?:secret|token)\s*[:=]\s*["'][a-zA-Z0-9_-]{20,}["'](?!.*(?:your_|example|placeholder|here|xxx))/i,
+  /(?:api[_-]?key|apikey)\s*[:=]\s*["']?[a-zA-Z0-9_-]{20,}["']?/i,
+  /(?:password|passwd|pwd)\s*[:=]\s*["'][^"']{8,}["']/i,
+  /(?:secret|token)\s*[:=]\s*["'][a-zA-Z0-9_-]{20,}["']/i,
   /ghp_[a-zA-Z0-9]{36}/,
   /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
 ];
@@ -277,9 +283,14 @@ async function resolveChangedFiles(repoPath: string): Promise<Set<string> | null
   // `git diff --name-only <base>` (no `..HEAD`) compares the base to the
   // working tree, so it covers both committed-on-branch and uncommitted
   // edits in one call. `-c core.quotePath=false` keeps non-ASCII paths
-  // verbatim so they line up with `Finding.file`.
+  // verbatim so they line up with `Finding.file`. `--relative` scopes the
+  // output to `repoPath` (the working dir) and makes paths relative to it,
+  // so when `repoPath` is a subdirectory of the git root the diff paths
+  // line up with `Finding.file` and `ls-files --others` (both already
+  // cwd-relative) instead of carrying a leading subdir prefix that would
+  // never match and silently downgrade every finding to a warning.
   const diff = await runGit(repoPath, [
-    "-c", "core.quotePath=false", "diff", "--name-only", base,
+    "-c", "core.quotePath=false", "diff", "--name-only", "--relative", base,
   ]);
   if (diff === null) return null;
   for (const line of diff.split("\n")) {
@@ -341,6 +352,7 @@ function scanDir(dir: string, root: string, findings: Finding[]): void {
     } else if (entry.isFile() && isTextFile(entry.name) && !isIgnored(entry.name)) {
       let content: string;
       try {
+        if (fs.statSync(fullPath).size > MAX_SCAN_BYTES) continue; // skip large blobs
         content = fs.readFileSync(fullPath, "utf-8");
       } catch {
         continue; // ignore read errors
@@ -366,8 +378,41 @@ function scanDir(dir: string, root: string, findings: Finding[]): void {
   }
 }
 
+// Known-binary / generated-artifact extensions we never scan. The scanner
+// is a denylist, not an allowlist: every other file (including uncommon
+// credential formats like .pem/.key/.crt/.pfx/.tf/.properties and
+// extensionless keys such as id_rsa) is scanned, so a new credential
+// format is covered by default instead of slipping through an allowlist
+// gap. Scanning these binary blobs as UTF-8 only yields garbage + false
+// positives, and credentials are not stored in them.
+const SKIP_EXTENSIONS = new Set([
+  // images
+  "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "tiff", "svg",
+  // archives / compressed
+  "zip", "gz", "tar", "tgz", "bz2", "xz", "7z", "rar",
+  // documents / media
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+  "mp3", "mp4", "wav", "avi", "mov", "mkv", "webm", "ogg", "flac",
+  // fonts
+  "woff", "woff2", "ttf", "eot", "otf",
+  // compiled / binary
+  "exe", "dll", "so", "dylib", "bin", "o", "a", "class", "jar", "war",
+  "wasm", "node", "pyc", "pyo", "obj",
+  // generated / data blobs
+  "lock", "map", "db", "sqlite",
+]);
+
+// Skip very large files: they are almost always data/binary blobs, and
+// reading them into memory to regex-scan as text is wasteful.
+const MAX_SCAN_BYTES = 2 * 1024 * 1024; // 2 MiB
+
+// Extensionless credential filenames (e.g. SSH keys) are scanned even
+// though they have no extension; the `ext === ""` branch below covers
+// these along with other extensionless text files (Dockerfile, LICENSE).
 function isTextFile(name: string): boolean {
-  return /\.(ts|js|json|env|yaml|yml|toml|py|sh|md)$/.test(name);
+  const ext = path.extname(name).slice(1).toLowerCase();
+  if (ext === "") return true; // extensionless (id_rsa, Dockerfile, LICENSE, ...)
+  return !SKIP_EXTENSIONS.has(ext);
 }
 
 function isIgnored(name: string): boolean {
