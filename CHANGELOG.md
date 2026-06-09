@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-09
+
+Security release closing the 2026-05-30 audit findings. The headline is a fail-closed fix to preflight's own audit and secret checks: high-severity CVEs and several secret patterns were silently downgraded to warnings. No new features (the solution-acceptance gate explored in PR #34 was reverted in PR #35 and is not part of this release).
+
+### Fixed
+
+- **`npm-audit` now fails on HIGH-severity CVEs, not just critical** (PR #36). The check counted only the `critical` bucket, so HIGH CVEs were downgraded to a non-blocking warning even though `npm audit` exits non-zero, contradicting the documented contract in `docs/checks.md` (audit fails on high-severity findings). It now reads the `high` bucket too and fails when `critical + high` is non-zero. The parse-failure path is preserved: a registry or parse error leaves both counts at 0 and stays a warning.
+- **Secret detection closes three gaps** (PR #38). The line-wide negative lookaheads are dropped from `SECRET_PATTERNS`, so a trailing `example` / `here` / `todo` no longer suppresses a real secret (placeholder filtering stays scoped to the matched value via `PLACEHOLDER_PATTERNS`). The diff-base invocation gains `--relative` so diff paths line up with findings when run from a subdirectory (previously findings were silently downgraded to warnings). The text-extension allowlist is inverted to a binary-extension denylist, so every non-binary file is scanned, including `.pem` / `.key` / `.crt` and extensionless `id_rsa`, with a 2 MiB size cap.
+- **Neutral strict-mode wording for the secret-detection blocking message** (PR #33). The message hardcoded "introduced by this change", which is wrong under `secretDetectionStrict: true` where the blocking set also includes pre-existing findings in untouched files.
+
+### Changed
+
+- **Removed stale planforge / scaffoldkit bootstrap artifacts** (PR #37).
+
 ## [0.2.0] - 2026-05-20
 
 ### Changed
