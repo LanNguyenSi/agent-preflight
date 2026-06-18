@@ -8,7 +8,7 @@ Every check `agent-preflight` can run, what it verifies, and when it fires. Each
 |-------|------|-----------------|-------------|------------------|
 | Git state, clean worktree | `git-state` | Tracked or untracked local changes that would diverge from what gets pushed | `git status --porcelain` | `fail` (blocker) when dirty |
 | Git state, protected branch | `git-state` | Pushing directly to `main`, `master`, or other configured branches | `git rev-parse --abbrev-ref HEAD` | `warn`, since some workflows allow direct push |
-| Lint | `lint` | Code-quality issues | `eslint`, `ruff`, `pint`, `phpcs`, `mvn checkstyle`, plus `package.json` `scripts.lint` and other repo-native scripts | `fail` on lint errors |
+| Lint | `lint` | Code-quality issues | `eslint`, `ruff`, `pint`, `phpcs`, plus `package.json` `scripts.lint` and other repo-native scripts (Java has no default linter; set `commands.lint`) | `fail` on lint errors |
 | Typecheck | `typecheck` | Type errors and broken builds | `tsc --noEmit`, `mypy`, `phpstan`, `psalm`, `mvn compile`, `gradle classes` | `fail` on type errors |
 | Test | `test` | Broken test suites | `npm test`, `pytest`, `phpunit`, `mvn test`, `gradle test` | `fail` when tests fail |
 | Dependency audit | `audit` | Known CVEs in dependencies | `npm audit --json`, `pip-audit`, `composer audit` | `fail` on high-severity findings |
@@ -32,8 +32,7 @@ If no `commands.*` entries are configured, the runner walks the repo root for kn
 
 - Node, TypeScript: `package.json`, `tsconfig.json`
 - Python: `pyproject.toml`, `setup.py`, `requirements.txt`
-- PHP: `composer.json`
-- Symfony: `symfony.lock`, `bin/console`, or `symfony/*` Composer packages
+- PHP: `composer.json` (Symfony repos use this generic PHP path; the check runners have no Symfony-specific branch, so Symfony is only detected for sandbox image profiles, see [architecture.md](./architecture.md#sandbox))
 - Java: Maven (`pom.xml`) or Gradle (`build.gradle`, `build.gradle.kts`) manifests
 
 Unknown stacks emit a `limitation` rather than a `fail`, so the runner still produces a score. See [confidence-scoring.md](./confidence-scoring.md) for how skips and limitations affect the result.

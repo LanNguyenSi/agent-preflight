@@ -20,12 +20,12 @@ These rules govern how the tool behaves from a user perspective. All contributor
 
 ### Exit Codes
 
-Always use the canonical exit codes from [docs/architecture.md](architecture.md#exit-codes).
+Use the canonical exit codes documented in [docs/architecture.md](architecture.md#exit-codes).
 
-- Exit `0` on success, even if there is nothing to do
-- Exit `2` for usage errors (wrong argument types, mutually exclusive flags)
-- Exit `1` for all other failures if no more specific code applies
-- Never call `sys.exit()` / `os.Exit()` inside command logic - propagate errors to the top-level handler
+- Exit `0` when the run is ready (no blocking failures), even if every check was skipped
+- Exit `1` when the run is not ready (`run`), or when any repo is not ready (`batch`)
+- Usage errors (unknown flags or commands) are handled by `commander`, which prints to stderr and exits non-zero; the tool does not define a separate usage-error code
+- Drive the exit from the top-level handler in `cli.ts` (`process.exit(result.ready ? 0 : 1)`); do not scatter `process.exit()` calls through the check modules
 
 ### stdout vs stderr
 
@@ -37,7 +37,7 @@ Always use the canonical exit codes from [docs/architecture.md](architecture.md#
 This makes the tool composable:
 
 ```bash
-agent-preflight run --output json | jq '.items[]'
+preflight run . --json | jq '.checks[]'
 ```
 
 ### Error Messages
@@ -51,18 +51,25 @@ error: <what went wrong>. <how to fix it>.
 Examples:
 
 ```
-error: required argument TARGET was not provided. Run 'agent-preflight run --help' to see usage.
-error: config key 'output_format' has invalid value 'xml'. Allowed values: text, json, yaml.
-error: could not read file at path '/tmp/data.csv': no such file or directory.
+error: unknown option '--output'. Run 'preflight run --help' to see the available flags.
+error: could not parse .preflight.json: unexpected token at line 4. Fix the JSON and re-run.
+error: target path '/tmp/missing-repo' does not exist. Pass a path to an existing repository.
 ```
 
-Never expose raw exception traces to the user by default. Use `--debug` to show stack traces.
+Never expose raw exception traces to the user by default.
+
+### Structured Output
+
+`run`, `batch`, and `sandbox` accept a single `--json` flag that prints the raw result object (the `PreflightResult`, or the batch summary) as pretty-printed JSON on stdout; without it they print a human-readable summary. There is no `--output` / `-o` selector and no `text` or `yaml` variants. The `--json` schema (`ready`, `confidence`, `checks`, `blockers`, `warnings`, `limitations`, `durationMs`, `timestamp`) must remain stable across releases.
+
+## Planned / not yet implemented
+
+The conventions below are aspirational. The current `commander`-based CLI implements only `--json`, `--setup`, `--ci-simulation`, `--no-audit`, and `--no-secrets` (plus `--only` / `--exclude` on `batch` and the image flags on `sandbox`). None of the flags or behaviors in this section exist yet; treat them as the target shape if and when the surface grows, not as current behavior.
 
 ### Color Output
 
 - Use color to aid readability, not to convey meaning alone (accessibility)
-- Always respect `NO_COLOR=1` (see [no-color.org](https://no-color.org))
-- Always respect `--no-color` flag
+- Respect `NO_COLOR=1` (see [no-color.org](https://no-color.org)) and a `--no-color` flag
 - Disable color automatically when stdout/stderr is not a TTY (i.e., when piped)
 - Suggested palette: red for errors, yellow for warnings, green for success, cyan for labels
 
@@ -72,24 +79,12 @@ For operations that may take more than one second:
 
 - Show a spinner or progress bar on stderr
 - Clear the progress indicator before printing final output to stdout
-- Disable progress indicators when `--quiet` is passed or when not a TTY
+- Disable progress indicators when not a TTY (or behind a `--quiet` flag)
 - Never mix progress output into stdout
-
-### Output Formats
-
-Commands that produce structured data must support `--output` / `-o`:
-
-| Value | Description |
-|-------|-------------|
-| `text` | Human-readable, may include color and formatting |
-| `json` | Newline-terminated JSON object or array, no color |
-| `yaml` | YAML document, no color |
-
-Default is `text`. When `--output json` is used, the schema must remain stable across releases.
 
 ### --dry-run
 
-Commands that mutate state must support `--dry-run`:
+If a state-mutating command is ever added, it should support `--dry-run`:
 
 - Print what would happen, prefixed with `[dry-run]` on stderr
 - Exit `0` without making any changes
@@ -97,9 +92,9 @@ Commands that mutate state must support `--dry-run`:
 
 ### Interactive vs Non-interactive
 
-- The tool must function fully in non-interactive mode (no TTY, no stdin)
+- The tool must function fully in non-interactive mode (no TTY, no stdin); it already does
 - Never prompt for input unless stdin is a TTY and no flag was provided
-- Prompts must have a `--yes` / `--no` flag equivalent for scripting
+- Any future prompt must have a flag equivalent for scripting
 
 ## Versioning
 
@@ -165,7 +160,7 @@ Use conventional commit format:
 feat(run): add --format flag for structured output
 fix(config): handle missing config dir gracefully
 docs(architecture): document exit code table
-chore(deps): update typer to latest
+chore(deps): update commander to latest
 ```
 
 ### PR Description
@@ -179,30 +174,26 @@ Include:
 
 ## Testing Expectations
 
-Strategy: **unit-tests**
+Strategy: **unit-tests** with [Vitest](https://vitest.dev/).
 
 ### Unit Test Rules
 
-- Every command module has a corresponding test file in `tests/commands/`
-- Config loader is tested in `tests/config/`
-- Test function naming: `test_<command>_<scenario>_<expected_outcome>`
-- Tests must not touch the filesystem except through temp directories (`tmp_path` in pytest, `t.TempDir()` in Go)
-- Tests must not make network calls
-- Tests must not depend on environment variables unless explicitly set in the test
-- Aim for >80% branch coverage on `src/commands/` and `src/config/`
+- Tests live as flat `*.test.ts` files in `tests/` (e.g. `tests/runner.test.ts`, `tests/secrets.test.ts`, `tests/git-state.test.ts`), with `tests/integration/` and `tests/contract/` for cross-module and contract suites. There are no `tests/commands/` or `tests/config/` directories; the config loader is the single file `src/config.ts`, exercised by `tests/runner.test.ts` and the integration suites.
+- Use Vitest `describe` / `it` blocks with descriptive names.
+- Tests must not touch the filesystem except through temp directories (`fs.mkdtempSync(path.join(os.tmpdir(), ...))`).
+- Tests must not make network calls.
+- Tests must not depend on environment variables unless explicitly set in the test.
+- Run the suite with `npm test` (`vitest run`); collect coverage with `npx vitest run --coverage` (provided by `@vitest/coverage-v8`). Aim for branch coverage of the check runners (`src/checks/`) and `runner.ts`; there is no enforced threshold gate.
 
 ### Test Naming
 
-```
-test_<command>_<scenario>_<expected_result>
-```
+Name `describe` blocks after the unit under test and `it` blocks after the scenario and expected outcome:
 
-Examples:
-
-```
-test_run_missing_required_arg_exits_2
-test_config_set_invalid_key_prints_error
-test_version_outputs_json_when_requested
+```ts
+describe("runPreflight", () => {
+  it("marks the repo not ready when a check fails", () => { /* ... */ });
+  it("reports confidence 0 when no checks run", () => { /* ... */ });
+});
 ```
 
 ## Architecture Decision Records (ADRs)
@@ -247,7 +238,7 @@ This project is configured for AI-assisted development. Read `AI_CONTEXT.md` bef
 ### For AI Agents
 
 - Read `AI_CONTEXT.md` before starting any task
-- Follow the command module pattern exactly - do not invent new file layouts
+- Follow the check module pattern exactly (each `checks/<name>.ts` exports one `runX` returning `CheckSetResult`) - do not invent new file layouts
 - Use the exit code table from architecture.md for all error paths
 - Write `--help` text for every new flag and command
 - Match the test naming convention

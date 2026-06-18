@@ -90,8 +90,8 @@ compatibility until v1.0.0.
   few seconds against the working tree.
 - **Confidence scoring** in JSON output for downstream agents to
   decide whether to proceed.
-- **Optional `act`-based CI simulation** that replays GitHub
-  Actions workflows locally before pushing.
+- **Optional `act`-based CI simulation** that dry-runs GitHub
+  Actions workflows locally (`act --dryrun`) before pushing.
 - **Sandbox installer** + release bundle pipeline. The
   `release-bundle` Make target produces tarballs + SHA256 checksums
   that are attached to GitHub Releases by `release.yml`.
