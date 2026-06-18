@@ -31,7 +31,7 @@ If no checks run, the score is 0.
 | Typecheck | 0.20 |
 | Test | 0.20 |
 | Dependency audit | 0.15 |
-| CI simulation (per workflow result) | 0.25 |
+| CI simulation (single `act --dryrun` check) | 0.25 |
 | Secret detection | 0.10 |
 | TDD signal (warn or pass) | 0.05 to 0.10 |
 | Custom checks | 0.10 |
@@ -39,7 +39,7 @@ If no checks run, the score is 0.
 | Git state, protected branch | 0.05 |
 | Commit convention | 0.05 |
 
-CI simulation carries the highest single weight because running the actual workflow with `act` validates more of the pipeline than any individual check.
+CI simulation carries the highest single weight because the `act --dryrun` plan validation spans the entire workflow set (jobs, steps, and runner images) rather than a single tool, even though it only checks the plan and does not execute the steps.
 
 ## Why deterministic, not LLM-scored
 

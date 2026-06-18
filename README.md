@@ -4,7 +4,7 @@ Validate your repo locally before pushing, with a confidence score an agent can 
 
 > Planned with [agent-planforge](https://github.com/LanNguyenSi/agent-planforge), generated with [scaffoldkit](https://github.com/LanNguyenSi/scaffoldkit), guided by [agent-engineering-playbook](https://github.com/LanNguyenSi/agent-engineering-playbook)
 
-agent-preflight runs lint, typecheck, test, dependency audit, secret detection, commit-convention, and (optionally) a real `act`-driven CI simulation against your working tree, then returns a structured result with a confidence score between 0 and 1. It exists to break the "change, push, wait for CI, fix, repeat" loop that AI agents run into when they cannot tell whether the pipeline will accept their work. Local validation, JSON output, deterministic scoring.
+agent-preflight runs lint, typecheck, test, dependency audit, secret detection, commit-convention, and (optionally) an `act`-based CI dry-run that validates your GitHub Actions workflow plan against your working tree, then returns a structured result with a confidence score between 0 and 1. It exists to break the "change, push, wait for CI, fix, repeat" loop that AI agents run into when they cannot tell whether the pipeline will accept their work. Local validation, JSON output, deterministic scoring.
 
 ## Try it in 60 seconds
 
@@ -77,7 +77,7 @@ Or as JSON for an agent:
 preflight run                              # current dir
 preflight run ./my-project                 # explicit path
 preflight run ./my-project --json          # machine-readable
-preflight run --ci-simulation              # add act-based workflow run
+preflight run --ci-simulation              # add act --dryrun CI plan validation
 preflight run --setup                      # bootstrap deps before checks
 
 preflight batch ~/git                      # every repo under a root
@@ -110,6 +110,10 @@ preflight sandbox --docker-socket --ci-simulation
     "tdd": true
   },
   "protectedBranches": ["main", "master"],
+  "secretDetectionStrict": false,
+  "secretAllowlist": ["fixtures/*", "src/config.ts:42"],
+  "tddExceptions": ["src/generated/**"],
+  "setup": { "enabled": false },
   "commands": {
     "lint": ["npm run lint"],
     "typecheck": ["npx tsc --noEmit"],

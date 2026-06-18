@@ -55,11 +55,23 @@ interface PreflightResult {
 }
 ```
 
+## Exit codes
+
+The exit code is the machine-readable verdict; it is the contract `docs/integration.md` and `docs/ways-of-working.md` rely on.
+
+| Command | Exit `0` | Exit `1` |
+|---------|----------|----------|
+| `preflight run [repoPath]` | `ready` is true (no blocking `fail` checks) | `ready` is false |
+| `preflight batch [root]` | every repo is ready (`notReady` is 0) | one or more repos are not ready |
+| `preflight sandbox [repoPath]` | the in-container `preflight run` exited 0 | the in-container run exited non-zero (or the container failed to start) |
+
+There is no distinct usage-error code: invalid flags or unknown commands are handled by `commander`, which prints the error to stderr and exits non-zero. Confidence is reported in the payload, not the exit code: a low-confidence run can still exit `0` when nothing blocked.
+
 ## act integration
 
-`act` runs GitHub Actions workflows locally inside Docker. `checks/ci.ts` shells out to it, wires `actFlags` from `.preflight.json` (defaulting to `--platform ubuntu-latest=catthehacker/ubuntu:act-latest`), and treats each workflow result as its own check entry weighted at `0.25`. CI simulation is opt-in (`--ci-simulation` or `checks.ciSimulation: true`) because it is the slowest check and depends on the host having Docker plus a usable `act` binary.
+`act` can run GitHub Actions workflows locally inside Docker. `checks/ci.ts` invokes it in `--dryrun` mode (`act --dryrun --json`), which validates the workflow plan (jobs, steps, and runner images) without executing any step. It shells out once, wires `actFlags` from `.preflight.json` (defaulting to `--platform ubuntu-latest=catthehacker/ubuntu:act-latest`), and produces a single aggregated check entry named `act-dry-run` weighted at `0.25`, regardless of how many workflows the repo defines. CI simulation is opt-in (`--ci-simulation` or `checks.ciSimulation: true`) because it is the slowest check and depends on the host having Docker plus a usable `act` binary.
 
-In sandbox mode the act invocation runs inside the container. `--docker-socket` mounts `/var/run/docker.sock` so `act` inside the container can reach the host daemon and start workflow steps.
+In sandbox mode the act invocation runs inside the container. `--docker-socket` mounts `/var/run/docker.sock` so the `act` binary inside the container can reach the host Docker daemon.
 
 ## Sandbox
 
