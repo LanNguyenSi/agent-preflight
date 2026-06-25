@@ -55,6 +55,47 @@ interface PreflightResult {
 }
 ```
 
+### Run pipeline
+
+The diagram traces how `preflight run` flows through config loading, check dispatch, and result formatting, and where `batch` and `sandbox` branch off.
+
+```mermaid
+flowchart LR
+    CLI["cli.ts<br/>parse flags, resolve repo"]
+    CFG["config.ts<br/>load .preflight.json + defaults"]
+    RUNNER["runner.ts<br/>orchestrate, aggregate, compute confidence"]
+
+    subgraph checks["checks/ - dynamically imported by runner.ts"]
+        GIT["git.ts<br/>worktree, branch"]
+        LINT["lint.ts"]
+        TC["typecheck.ts"]
+        TEST["test.ts"]
+        AUD["audit.ts"]
+        SEC["secrets.ts"]
+        COM["commits.ts<br/>commit convention"]
+        TDD["tdd.ts<br/>test pairing"]
+        CI["ci.ts<br/>act dry-run"]
+        CUS["custom.ts<br/>user-defined shells"]
+    end
+
+    OUT["stdout<br/>human summary or --json, exit 0 or 1"]
+    BATCH["batch.ts<br/>per-repo loop"]
+    SAND["sandbox.ts<br/>Docker image + run"]
+
+    CLI -->|"preflight run"| CFG
+    CFG --> RUNNER
+    RUNNER --> GIT & LINT & TC & TEST & AUD & SEC & COM & TDD & CI & CUS
+    GIT & LINT & TC & TEST & AUD & SEC & COM & TDD & CI & CUS -->|"CheckSetResult"| RUNNER
+    RUNNER -->|"PreflightResult"| CLI
+    CLI --> OUT
+
+    CLI -->|"preflight batch"| BATCH
+    BATCH -->|"each git repo"| CFG
+
+    CLI -->|"preflight sandbox"| SAND
+    SAND -->|"docker run preflight run"| RUNNER
+```
+
 ## Exit codes
 
 The exit code is the machine-readable verdict; it is the contract `docs/integration.md` and `docs/ways-of-working.md` rely on.
