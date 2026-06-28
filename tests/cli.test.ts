@@ -1,19 +1,25 @@
 /**
  * Tests for src/cli.ts
  *
- * Covers: option parsing, flag→config mapping, exit-code contract (0=ready, 1=not-ready).
+ * Covers: option parsing, flag→config mapping, exit-code contract (0=ready, 1=not-ready),
+ * and pretty-print branch output (status icon, blockers, warnings, limitations).
  *
- * Strategy: cli.ts guards auto-execution with `require.main === module`, which is
- * false when imported by vitest (vitest itself is the main module). So we import
- * `program` directly and call `program.parseAsync(args, { from: 'user' })` per test.
+ * Strategy: cli.ts exports createProgram() so each test can construct a FRESH
+ * Command instance. Commander retains option state (e.g. --json) between
+ * parseAsync calls on the same instance; sharing a singleton across tests
+ * causes option leaks that silently route all calls through the JSON branch.
+ * A fresh instance per test removes that leak.
+ *
  * All heavy runners (runPreflight, runBatch, runSandbox) are mocked via vi.hoisted
  * so the factories capture the vi.fn() references before any static import runs.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PreflightResult } from "../src/types.js";
+import type { PreflightConfig, PreflightResult } from "../src/types.js";
 
 // ── Stable mock references created before any imports ────────────────────────
-const mockRunPreflight = vi.hoisted(() => vi.fn<[], Promise<PreflightResult>>());
+const mockRunPreflight = vi.hoisted(() =>
+  vi.fn<(repoPath: string, config: PreflightConfig) => Promise<PreflightResult>>()
+);
 const mockRunBatch = vi.hoisted(() => vi.fn());
 const mockRunSandbox = vi.hoisted(() => vi.fn());
 const mockLoadConfig = vi.hoisted(() => vi.fn());
@@ -24,7 +30,7 @@ vi.mock("../src/sandbox.js", () => ({ runSandbox: mockRunSandbox }));
 vi.mock("../src/config.js", () => ({ loadConfig: mockLoadConfig }));
 
 // ── Import after mocks are registered ────────────────────────────────────────
-import { program } from "../src/cli.js";
+import { createProgram } from "../src/cli.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -60,27 +66,35 @@ function makeNotReadyResult(): PreflightResult {
 }
 
 /**
- * Call a CLI command and capture the exit code.
- * Returns a promise that resolves when process.exit is called.
+ * Call a CLI command using a fresh per-test program instance and capture the
+ * exit code and console.log output.
+ *
+ * Returns a promise that resolves when process.exit is called (or parseAsync
+ * completes without calling it).
  */
-async function runCommand(args: string[]): Promise<{ exitCode: number | undefined }> {
+async function runCommand(args: string[]): Promise<{ exitCode: number | undefined; stdout: string }> {
   let capturedCode: number | undefined;
+  const logLines: string[] = [];
 
   const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
     capturedCode = code as number;
     // Throw to stop execution immediately after process.exit is called
     throw new ExitSignal(code as number);
   });
+  const consoleSpy = vi.spyOn(console, "log").mockImplementation((...logArgs: unknown[]) => {
+    logLines.push(logArgs.map(String).join(" "));
+  });
 
   try {
-    await program.parseAsync(args, { from: "user" });
+    await localProgram.parseAsync(args, { from: "user" });
   } catch (err) {
     if (!(err instanceof ExitSignal)) throw err;
   } finally {
     exitSpy.mockRestore();
+    consoleSpy.mockRestore();
   }
 
-  return { exitCode: capturedCode };
+  return { exitCode: capturedCode, stdout: logLines.join("\n") };
 }
 
 class ExitSignal extends Error {
@@ -91,7 +105,13 @@ class ExitSignal extends Error {
 
 // ── Setup / Teardown ──────────────────────────────────────────────────────────
 
+// Fresh Command instance per test: prevents --json (and other option state)
+// from leaking between parseAsync calls on a shared singleton.
+let localProgram: ReturnType<typeof createProgram>;
+
 beforeEach(() => {
+  localProgram = createProgram();
+
   mockLoadConfig.mockReturnValue({
     checks: {
       gitState: true,
@@ -142,6 +162,42 @@ describe("run command — exit-code contract", () => {
     mockRunPreflight.mockResolvedValue(makeNotReadyResult());
     const { exitCode } = await runCommand(["run", "."]);
     expect(exitCode).toBe(1);
+  });
+});
+
+// ── PRETTY-PRINT BRANCH OUTPUT ────────────────────────────────────────────────
+
+describe("run command — pretty-print output", () => {
+  it("renders ready status icon and READY label", async () => {
+    mockRunPreflight.mockResolvedValue(makeResult({ ready: true }));
+    const { exitCode, stdout } = await runCommand(["run", "."]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("✅");
+    expect(stdout).toContain("READY");
+  });
+
+  it("renders not-ready status icon, NOT READY label, and blockers", async () => {
+    mockRunPreflight.mockResolvedValue(makeNotReadyResult());
+    const { exitCode, stdout } = await runCommand(["run", "."]);
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain("❌");
+    expect(stdout).toContain("NOT READY");
+    expect(stdout).toContain("Blockers:");
+    expect(stdout).toContain("lint failed");
+  });
+
+  it("renders warnings when present", async () => {
+    mockRunPreflight.mockResolvedValue(makeResult({ ready: true, warnings: ["minor warning"] }));
+    const { stdout } = await runCommand(["run", "."]);
+    expect(stdout).toContain("Warnings:");
+    expect(stdout).toContain("minor warning");
+  });
+
+  it("renders limitations when present", async () => {
+    mockRunPreflight.mockResolvedValue(makeResult({ ready: true, limitations: ["no ci sim"] }));
+    const { stdout } = await runCommand(["run", "."]);
+    expect(stdout).toContain("Limitations");
+    expect(stdout).toContain("no ci sim");
   });
 });
 

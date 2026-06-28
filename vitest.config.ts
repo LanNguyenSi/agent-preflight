@@ -10,13 +10,14 @@ export default defineConfig({
       provider: "v8",
       include: ["src/**/*.ts"],
       // Thresholds ratcheted to current measured actuals (2026-06-28 baseline):
-      //   statements 76.25 | branches 61.69 | functions 89.25 | lines 76.27
+      //   statements 80.39 | branches 68.88 | functions 95.27 | lines 80.88
       // Set 1-2 points below measured to avoid immediate red while still gating regressions.
+      // functions is set nearer the measured 95 to gate regressions on that axis.
       thresholds: {
-        statements: 75,
-        branches: 60,
-        functions: 88,
-        lines: 75,
+        statements: 79,
+        branches: 67,
+        functions: 93,
+        lines: 79,
       },
     },
   },

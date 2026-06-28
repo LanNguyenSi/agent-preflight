@@ -6,8 +6,10 @@
  *  - plan assembly (field correctness, build/pull command presence)
  *  - build-vs-pull decision (autoBuild flag)
  *  - --docker-socket mounting guard
- *  - Dockerfile-missing error path
- *  - runSandbox --print mode (no docker invocation)
+ *  - Dockerfile-missing error path (vi.spyOn fs.existsSync)
+ *  - docker.sock-absent guard (vi.spyOn fs.existsSync, always exercised)
+ *  - docker-socket positive mount assertion via buildDockerRunCommand
+ *  - runSandbox --print mode (no docker run invocation)
  *  - runSandbox docker-absent error path
  *  - runSandbox success path (exit code propagation)
  *
@@ -35,7 +37,7 @@ vi.mock("child_process", async () => {
   return { ...actual, spawnSync: mockSpawnSync };
 });
 
-import { createSandboxPlan, runSandbox } from "../src/sandbox.js";
+import { buildDockerRunCommand, createSandboxPlan, runSandbox } from "../src/sandbox.js";
 
 // ── Temp dir helpers ──────────────────────────────────────────────────────────
 
@@ -152,50 +154,92 @@ describe("createSandboxPlan — plan assembly", () => {
     expect(plan.buildCommand).toBeUndefined();
   });
 
-  it("runCommand includes --docker-socket mount when --docker-socket is set", async () => {
-    // Create a fake socket file so the guard passes
+  it("runCommand excludes --docker-socket mount when dockerSocket is false", async () => {
     const workspace = makeWorkspace();
-    const fakeSocket = path.join(workspace, "docker.sock");
-    fs.writeFileSync(fakeSocket, "");
-
-    // We need to point DOCKER_SOCKET_PATH at our fake socket. Since it's a
-    // private constant we test via the error path instead: when socket is
-    // absent the plan throws, proving the guard runs.
-    // For the success path, verify via buildDockerRunCommand integration:
-    // we pass dockerSocket:false to avoid the guard, then check command.
     const plan = await createSandboxPlan(workspace, { dockerSocket: false });
     expect(plan.runCommand).not.toContain("/var/run/docker.sock:/var/run/docker.sock");
   });
 
   it("throws when Dockerfile is missing from the package root", async () => {
-    // The Dockerfile check uses the package root (dist/../../). In tests,
-    // __dirname points at dist/ so the real Dockerfile at the repo root IS found.
-    // To trigger the error we use a --image that skips nothing — we instead test
-    // by verifying it doesn't throw with the real Dockerfile present.
     const workspace = makeWorkspace();
-    await expect(createSandboxPlan(workspace, {})).resolves.toMatchObject({
-      workspacePath: workspace,
+    // Intercept fs.existsSync to return false for Dockerfile paths so the guard
+    // at createSandboxPlan fires even though the real repo Dockerfile exists.
+    const originalExistsSync = fs.existsSync;
+    const existsSpy = vi.spyOn(fs, "existsSync").mockImplementation((p) => {
+      if (path.basename(String(p)) === "Dockerfile") {
+        return false;
+      }
+      return originalExistsSync(p);
     });
-    // (No Dockerfile-missing error because the real repo Dockerfile exists)
+
+    try {
+      await expect(createSandboxPlan(workspace, {})).rejects.toThrow(
+        /Sandbox Dockerfile not found/i
+      );
+    } finally {
+      existsSpy.mockRestore();
+    }
   });
 
   it("throws when --docker-socket is requested but /var/run/docker.sock is absent", async () => {
-    // /var/run/docker.sock does not exist in WSL test environment by default
     const workspace = makeWorkspace();
-    // Check if socket really is absent; skip if it exists (e.g. Docker Desktop)
-    if (fs.existsSync("/var/run/docker.sock")) {
-      return; // Docker socket present — can't test this guard here
+    // Always exercise this guard regardless of host environment by mocking
+    // fs.existsSync to return false specifically for the docker socket path.
+    const DOCKER_SOCKET_PATH = "/var/run/docker.sock";
+    const originalExistsSync = fs.existsSync;
+    const existsSpy = vi.spyOn(fs, "existsSync").mockImplementation((p) => {
+      if (String(p) === DOCKER_SOCKET_PATH) {
+        return false;
+      }
+      return originalExistsSync(p);
+    });
+
+    try {
+      await expect(createSandboxPlan(workspace, { dockerSocket: true })).rejects.toThrow(
+        /docker\.sock.*not found|Start Docker|omit --docker-socket/i
+      );
+    } finally {
+      existsSpy.mockRestore();
     }
-    await expect(createSandboxPlan(workspace, { dockerSocket: true })).rejects.toThrow(
-      /docker\.sock.*not found|Start Docker|omit --docker-socket/i
+  });
+});
+
+// ── buildDockerRunCommand (positive docker-socket mount) ─────────────────────
+
+describe("buildDockerRunCommand — docker-socket mount", () => {
+  it("includes /var/run/docker.sock mount when dockerSocket is true", () => {
+    const args = buildDockerRunCommand(
+      {
+        workspacePath: "/tmp/test-workspace",
+        image: "agent-preflight:local",
+        dockerSocket: true,
+        tty: false,
+        homeDir: os.homedir(),
+      },
+      ["run", "/workspace"]
     );
+    expect(args).toContain("/var/run/docker.sock:/var/run/docker.sock");
+  });
+
+  it("excludes docker socket mount when dockerSocket is false", () => {
+    const args = buildDockerRunCommand(
+      {
+        workspacePath: "/tmp/test-workspace",
+        image: "agent-preflight:local",
+        dockerSocket: false,
+        tty: false,
+        homeDir: os.homedir(),
+      },
+      ["run", "/workspace"]
+    );
+    expect(args).not.toContain("/var/run/docker.sock:/var/run/docker.sock");
   });
 });
 
 // ── runSandbox ────────────────────────────────────────────────────────────────
 
 describe("runSandbox — --print mode", () => {
-  it("prints the docker run command and returns without calling docker", async () => {
+  it("prints the docker run command and returns without executing docker run", async () => {
     const workspace = makeWorkspace();
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -204,9 +248,14 @@ describe("runSandbox — --print mode", () => {
     expect(consoleSpy).toHaveBeenCalled();
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("docker");
-    // execa should NOT have been called for any docker operation
-    // (localImageExists calls execa, but print:true means autoBuild check still runs,
-    //  so we only verify no runCommand was executed)
+
+    // Verify no docker run was invoked (localImageExists may call execa for
+    // image inspect, but the run command itself must NOT be executed).
+    const wasDockerRunInvoked = mockExeca.mock.calls.some(
+      (call) => call[0] === "docker" && Array.isArray(call[1]) && call[1][0] === "run"
+    );
+    expect(wasDockerRunInvoked).toBe(false);
+
     consoleSpy.mockRestore();
   });
 });
