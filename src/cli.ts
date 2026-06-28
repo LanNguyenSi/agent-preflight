@@ -29,8 +29,8 @@ program
 
     if (opts.setup) config.setup = { ...config.setup, enabled: true };
     if (opts.ciSimulation) config.checks = { ...config.checks, ciSimulation: true };
-    if (opts.noAudit) config.checks = { ...config.checks, audit: false };
-    if (opts.noSecrets) config.checks = { ...config.checks, secretDetection: false };
+    if (!opts.audit) config.checks = { ...config.checks, audit: false };
+    if (!opts.secrets) config.checks = { ...config.checks, secretDetection: false };
 
     const result = await runPreflight(resolvedPath, config);
 
@@ -79,8 +79,8 @@ program
     const configOverride: Partial<PreflightConfig> = {};
 
     if (opts.setup) configOverride.setup = { enabled: true };
-    if (opts.noAudit) configOverride.checks = { ...configOverride.checks, audit: false };
-    if (opts.noSecrets) configOverride.checks = { ...configOverride.checks, secretDetection: false };
+    if (!opts.audit) configOverride.checks = { ...configOverride.checks, audit: false };
+    if (!opts.secrets) configOverride.checks = { ...configOverride.checks, secretDetection: false };
 
     const batchResult = await runBatch(
       resolvedRoot,
@@ -129,4 +129,14 @@ program
     await runSandbox(repoPath, opts);
   });
 
-program.parseAsync();
+// Export the program for testing so individual tests can call
+// program.parseAsync(args, { from: 'user' }) without auto-execution.
+//
+// require.main === module is the CommonJS idiom: true only when this file is
+// the Node.js entry point (node dist/cli.js …), false when imported by tests
+// or other modules.
+export { program };
+
+if (require.main === module) {
+  void program.parseAsync();
+}
