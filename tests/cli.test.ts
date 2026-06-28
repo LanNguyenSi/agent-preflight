@@ -174,6 +174,7 @@ describe("run command — pretty-print output", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅");
     expect(stdout).toContain("READY");
+    expect(stdout).not.toContain("NOT READY");
   });
 
   it("renders not-ready status icon, NOT READY label, and blockers", async () => {

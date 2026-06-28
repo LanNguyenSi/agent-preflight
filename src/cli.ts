@@ -138,13 +138,14 @@ export function createProgram(): Command {
   return prog;
 }
 
-// Export the program for testing so individual tests can call
-// program.parseAsync(args, { from: 'user' }) without auto-execution.
+// createProgram() is the test seam: tests import it and build a fresh Command
+// per case so commander option state never leaks across parseAsync calls. The
+// singleton below is only the binary entry point.
 //
 // require.main === module is the CommonJS idiom: true only when this file is
 // the Node.js entry point (node dist/cli.js ...), false when imported by tests
 // or other modules.
-export const program = createProgram();
+const program = createProgram();
 
 if (require.main === module) {
   void program.parseAsync();
