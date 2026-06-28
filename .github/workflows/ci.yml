@@ -17,4 +17,5 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npx tsc --noEmit --skipLibCheck
-      - run: npx vitest run
+      - run: npx tsc --noEmit -p tsconfig.test.json
+      - run: npx vitest run --coverage
