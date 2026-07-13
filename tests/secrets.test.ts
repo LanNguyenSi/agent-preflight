@@ -463,7 +463,11 @@ describe("runSecretDetection — default branch with no divergence (agent-tasks 
    * configured, zero divergence) — the precise shape of the dogfood bug
    * (agent-ops-dashboard checked out on `origin/master` untouched).
    */
-  function makeFreshClone(fileName: string, content: string): string {
+  function makeFreshClone(
+    fileName: string,
+    content: string,
+    extraBaseFiles: Record<string, string> = {},
+  ): string {
     const remoteDir = makeTempDir("preflight-secrets-remote-");
     execFileSync("git", ["init", "-q", "--bare", "-b", "master"], {
       cwd: remoteDir,
@@ -473,6 +477,9 @@ describe("runSecretDetection — default branch with no divergence (agent-tasks 
     const seedDir = makeTempDir("preflight-secrets-seed-");
     execFileSync("git", ["init", "-q", "-b", "master"], { cwd: seedDir, stdio: "ignore" });
     fs.writeFileSync(path.join(seedDir, fileName), content);
+    for (const [extraName, extraContent] of Object.entries(extraBaseFiles)) {
+      fs.writeFileSync(path.join(seedDir, extraName), extraContent);
+    }
     commit(seedDir, "base");
     execFileSync("git", ["remote", "add", "origin", remoteDir], {
       cwd: seedDir,
@@ -511,5 +518,38 @@ describe("runSecretDetection — default branch with no divergence (agent-tasks 
 
     expect(result.checks[0]?.status).toBe("fail");
     expect(result.checks[0]?.message).toContain("introduced by this change");
+    // Structural signal, independent of message wording: this must resolve
+    // through the "trusted, not diverged" path (base == HEAD), not fall
+    // back to the unresolvable-diff-base fail-safe.
+    expect(
+      result.limitations.some((l) => l.includes("could not resolve a diff base")),
+    ).toBe(false);
+  });
+
+  it("fails on a NEW untracked-and-unignored secret file on a non-diverged default branch (base == HEAD path)", async () => {
+    const cloneDir = makeFreshClone("app.js", "export const x = 1;\n");
+    // A brand-new file that was never part of the clone's base commit and
+    // carries no .gitignore rule: untracked-and-unignored, so it is part
+    // of "this change" even though the branch itself has not diverged.
+    fs.writeFileSync(path.join(cloneDir, "leaked.js"), `const secret = "${REAL_SECRET}";\n`);
+
+    const result = await runSecretDetection(cloneDir);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("leaked.js:1");
+    expect(
+      result.limitations.some((l) => l.includes("could not resolve a diff base")),
+    ).toBe(false);
+  });
+
+  it("warns (does not over-block) on a GITIGNORED untracked secret file on a non-diverged default branch", async () => {
+    const cloneDir = makeFreshClone("app.js", "export const x = 1;\n", { ".gitignore": ".env\n" });
+    // Untracked AND ignored: cannot leak via git, so it must stay a warn
+    // even though the branch has not diverged from the default branch.
+    fs.writeFileSync(path.join(cloneDir, ".env"), `API_KEY="${REAL_SECRET}"\n`);
+
+    const result = await runSecretDetection(cloneDir);
+
+    expect(result.checks[0]?.status).toBe("warn");
   });
 });

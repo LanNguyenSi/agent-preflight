@@ -241,6 +241,19 @@ interface DiffBaseCandidate {
    * (upstream, `origin/HEAD`, or a resolved `origin/*` branch) rather
    * than a blind local-branch-name guess. See the "not diverged" handling
    * below for why this distinction matters.
+   *
+   * Accepted residual: the upstream candidate (`@{u}`) is trusted on the
+   * assumption that it normally reflects real remote state: a tracking
+   * branch configured against `origin/...`. Git also allows `@{u}` to
+   * resolve to a purely LOCAL branch (e.g. `branch.<name>.remote = "."`,
+   * tracking a sibling local branch with no remote involved at all). In
+   * that exotic configuration a secret committed to the tracked local
+   * branch but never pushed anywhere could be downgraded from `fail` to
+   * `warn` here, same as the "not diverged from the real default branch"
+   * case this trust model is designed for. This is a known, accepted gap
+   * rather than a defect: it requires a deliberately unusual tracking
+   * setup, and `secretDetectionStrict` remains available to opt out of
+   * diff-scoping entirely when that setup is in play.
    */
   trusted: boolean;
 }
