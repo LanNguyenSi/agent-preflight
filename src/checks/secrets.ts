@@ -34,7 +34,9 @@ const PLACEHOLDER_PATTERNS = [
 // contain the phrase. A line carrying it is skipped entirely.
 const ALLOWLIST_PRAGMA = /pragma:\s*allowlist\s+secret/i;
 
-const IGNORE_FILES = [".env.example", ".env.sample", ".env.template", "*.test.ts", "*.spec.ts"];
+const IGNORE_FILES = [
+  ".env.example", ".env.sample", ".env.template", ".env.*.example", "*.test.ts", "*.spec.ts",
+];
 
 // Framework build / cache dirs (added 2026-05-18): bundlers emit hashed
 // identifiers that match the SECRET_PATTERNS heuristics (notably
@@ -232,6 +234,17 @@ async function runGit(repoPath: string, args: string[]): Promise<string | null> 
   }
 }
 
+interface DiffBaseCandidate {
+  ref: string;
+  /**
+   * Whether `ref` is backed by actual remote-tracking configuration
+   * (upstream, `origin/HEAD`, or a resolved `origin/*` branch) rather
+   * than a blind local-branch-name guess. See the "not diverged" handling
+   * below for why this distinction matters.
+   */
+  trusted: boolean;
+}
+
 /**
  * Resolve the commit to diff the current branch against: the merge-base
  * with the upstream tracking branch, else `origin/HEAD`'s target, else a
@@ -239,29 +252,52 @@ async function runGit(repoPath: string, args: string[]): Promise<string | null> 
  * resolves (orphan/detached branch, no upstream, no default branch) so
  * the caller can fail safe instead of scoping against nothing.
  *
- * A candidate whose merge-base equals HEAD is rejected: that means the
- * branch has not diverged from the ref (you are on the ref itself, or
- * strictly behind it), so `git diff <HEAD>` would miss every committed
- * change and the diff scope would be meaningless. Skipping it makes the
- * caller fail safe — e.g. a secret committed straight onto a local
- * `main` with no upstream stays a hard blocker.
+ * A candidate whose merge-base equals HEAD means the branch has not
+ * diverged from the ref (you are on the ref itself, or strictly behind
+ * it). What that implies differs by candidate:
+ *
+ *   - A `trusted` candidate (upstream, `origin/HEAD`, or a resolved
+ *     `origin/main`/`origin/master`) confirms, via actual remote-tracking
+ *     state rather than a guess, that this really is the repo's default
+ *     branch. No divergence there is meaningful: HEAD sits on the default
+ *     branch with nothing committed beyond it, so the SHA (== HEAD) is
+ *     returned as the base. `resolveChangedFiles` then diffs HEAD against
+ *     the working tree, which correctly yields an empty set unless there
+ *     are uncommitted edits (agent-tasks 1ba4a4d1: a freshly cloned repo
+ *     sitting untouched on its default branch must not be scored as
+ *     "diff base unresolvable").
+ *   - An untrusted candidate (the bare local-branch-name fallback `main`
+ *     or `master`) is skipped instead: with no remote-tracking
+ *     confirmation, `mb === headSha` just as plausibly means "this branch
+ *     happens to be named main/master and IS the ref" with no evidence it
+ *     is actually anyone's default branch, e.g. a secret committed
+ *     straight onto a local `main` with no upstream and no origin remote
+ *     must stay a hard blocker, not be waved through as "unchanged".
+ *
+ * If every candidate is either unresolvable or an untrusted non-diverged
+ * guess, `null` is returned so the caller fails safe.
  */
 async function resolveDiffBase(repoPath: string): Promise<string | null> {
   const headSha = (await runGit(repoPath, ["rev-parse", "HEAD"]))?.trim() ?? null;
-  const candidates: string[] = [];
+  const candidates: DiffBaseCandidate[] = [];
   const upstream = await runGit(repoPath, [
     "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}",
   ]);
-  if (upstream) candidates.push(upstream.trim());
+  if (upstream) candidates.push({ ref: upstream.trim(), trusted: true });
   const originHead = await runGit(repoPath, ["rev-parse", "--abbrev-ref", "origin/HEAD"]);
-  if (originHead) candidates.push(originHead.trim());
-  candidates.push("origin/main", "origin/master", "main", "master");
+  if (originHead) candidates.push({ ref: originHead.trim(), trusted: true });
+  candidates.push(
+    { ref: "origin/main", trusted: true },
+    { ref: "origin/master", trusted: true },
+    { ref: "main", trusted: false },
+    { ref: "master", trusted: false },
+  );
 
-  for (const ref of candidates) {
+  for (const { ref, trusted } of candidates) {
     if (!ref) continue;
     const mb = (await runGit(repoPath, ["merge-base", "HEAD", ref]))?.trim();
     if (!mb) continue;
-    if (headSha !== null && mb === headSha) continue; // branch has not diverged
+    if (headSha !== null && mb === headSha && !trusted) continue; // unconfirmed guess: not real divergence signal
     return mb;
   }
   return null;
@@ -415,6 +451,9 @@ function isTextFile(name: string): boolean {
   return !SKIP_EXTENSIONS.has(ext);
 }
 
+// Routed through the same `globToRegExp` used for `secretAllowlist` entries
+// so a `*` can appear anywhere in the pattern (e.g. `.env.*.example`), not
+// just as a leading wildcard.
 function isIgnored(name: string): boolean {
-  return IGNORE_FILES.some(p => p.includes("*") ? name.endsWith(p.replace("*", "")) : name === p);
+  return IGNORE_FILES.some((p) => (p.includes("*") ? globToRegExp(p).test(name) : name === p));
 }

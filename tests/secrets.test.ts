@@ -229,6 +229,19 @@ describe("runSecretDetection — existing behaviour preserved", () => {
     expect(result.checks[0]?.status).toBe("pass");
   });
 
+  it("ignores .env.<name>.example files via glob, not just the exact .env.example name (agent-tasks 1ba4a4d1)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-env-glob-");
+    gitInit(repoPath);
+    fs.writeFileSync(
+      path.join(repoPath, ".env.production.example"),
+      `GITHUB_TOKEN=ghp_${"x".repeat(36)}\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("pass");
+  });
+
   it("filters obvious placeholder values", async () => {
     const repoPath = makeTempDir("preflight-secrets-placeholder-");
     gitInit(repoPath);
@@ -426,5 +439,77 @@ describe("runSecretDetection — diff-scoped severity", () => {
     // message uses neutral wording rather than "introduced by this change".
     expect(result.checks[0]?.message).toContain("in committable file(s)");
     expect(result.checks[0]?.message).not.toContain("introduced by this change");
+  });
+});
+
+describe("runSecretDetection — default branch with no divergence (agent-tasks 1ba4a4d1)", () => {
+  function commit(dir: string, message: string): void {
+    execFileSync("git", ["add", "-A"], { cwd: dir, stdio: "ignore" });
+    execFileSync(
+      "git",
+      [
+        "-c", "user.email=preflight-test@example.com",
+        "-c", "user.name=preflight-test",
+        "commit", "-q", "-m", message,
+      ],
+      { cwd: dir, stdio: "ignore" },
+    );
+  }
+
+  /**
+   * Simulate a real `git clone`: seed a bare "remote" with one commit on
+   * `master`, then clone it into a fresh directory. The clone's local
+   * `master` tracks `origin/master` and sits exactly on it (upstream
+   * configured, zero divergence) — the precise shape of the dogfood bug
+   * (agent-ops-dashboard checked out on `origin/master` untouched).
+   */
+  function makeFreshClone(fileName: string, content: string): string {
+    const remoteDir = makeTempDir("preflight-secrets-remote-");
+    execFileSync("git", ["init", "-q", "--bare", "-b", "master"], {
+      cwd: remoteDir,
+      stdio: "ignore",
+    });
+
+    const seedDir = makeTempDir("preflight-secrets-seed-");
+    execFileSync("git", ["init", "-q", "-b", "master"], { cwd: seedDir, stdio: "ignore" });
+    fs.writeFileSync(path.join(seedDir, fileName), content);
+    commit(seedDir, "base");
+    execFileSync("git", ["remote", "add", "origin", remoteDir], {
+      cwd: seedDir,
+      stdio: "ignore",
+    });
+    execFileSync("git", ["push", "-q", "origin", "master"], { cwd: seedDir, stdio: "ignore" });
+
+    const cloneParent = makeTempDir("preflight-secrets-clone-parent-");
+    const cloneDir = path.join(cloneParent, "clone");
+    execFileSync("git", ["clone", "-q", remoteDir, cloneDir], { stdio: "ignore" });
+    return cloneDir;
+  }
+
+  it("warns (does not fail) on a secret in a committed file when a fresh clone sits untouched on the default branch", async () => {
+    const cloneDir = makeFreshClone("config.js", `const secret = "${REAL_SECRET}";\n`);
+
+    const result = await runSecretDetection(cloneDir);
+
+    // The clone has not diverged from origin/master at all: this is the
+    // correct "empty diff" case, not an unresolvable one. The pre-existing
+    // finding must warn, never fail, and must not fall back to the
+    // fail-safe "could not resolve a diff base" path.
+    expect(result.checks[0]?.status).toBe("warn");
+    expect(
+      result.limitations.some((l) => l.includes("could not resolve a diff base")),
+    ).toBe(false);
+  });
+
+  it("still fails on a secret introduced by an UNCOMMITTED edit while HEAD sits on the default branch", async () => {
+    const cloneDir = makeFreshClone("config.js", "export const x = 1;\n");
+    // Uncommitted edit on the default branch itself (no divergence from
+    // origin/master in terms of commits, but the working tree changed).
+    fs.writeFileSync(path.join(cloneDir, "config.js"), `const secret = "${REAL_SECRET}";\n`);
+
+    const result = await runSecretDetection(cloneDir);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.message).toContain("introduced by this change");
   });
 });
