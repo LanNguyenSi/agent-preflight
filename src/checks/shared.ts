@@ -184,7 +184,6 @@ interface ShellCheckRunResult {
 export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCheckRunResult> {
   const start = Date.now();
   const env = buildCommandEnv(options.repoPath);
-  const logDir = options.logDir ?? defaultLogDir();
 
   if (options.missingLimitation) {
     const primary = options.command.trim().split(/\s+/)[0];
@@ -221,7 +220,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
         kind: options.kind,
         status: exitCode === 0 ? "pass" : options.failureStatus ?? "fail",
         message: exitCode === 0 ? undefined : options.failureMessage,
-        details: exitCode === 0 ? undefined : computeFailureDetails(logDir, options.name, all),
+        details: exitCode === 0 ? undefined : computeFailureDetails(options.logDir, options.name, all),
         durationMs: Date.now() - start,
         confidenceContribution: options.weight,
       },
@@ -240,7 +239,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
         kind: options.kind,
         status: options.failureStatus ?? "fail",
         message: `${options.failureMessage}: ${error.message}`,
-        details: computeFailureDetails(logDir, options.name, error.all),
+        details: computeFailureDetails(options.logDir, options.name, error.all),
         durationMs: Date.now() - start,
         confidenceContribution: options.weight,
       },
@@ -475,7 +474,10 @@ function outputLines(output: string | undefined): string[] | undefined {
 // Default location for the full-output logs written by `computeFailureDetails`
 // when a caller of `runShellCheck` does not override `ShellCheckOptions.logDir`.
 // Kept as a function (not a module-level constant) so it always reflects the
-// current `os.homedir()` rather than a value captured at import time.
+// current `os.homedir()` rather than a value captured at import time — and
+// resolved LAZILY inside persistFailureOutput's try, so even a throwing
+// os.homedir() degrades to the outputLines() fallback instead of escaping
+// the check path (the never-throw invariant covers this seam too).
 function defaultLogDir(): string {
   return path.join(os.homedir(), ".agent-preflight", "logs");
 }
@@ -510,7 +512,7 @@ function parseFailureLines(output: string | undefined): string[] {
 // behavior so a failure in the logging path can never mask or alter the
 // check's own pass/fail result.
 function computeFailureDetails(
-  logDir: string,
+  logDir: string | undefined,
   checkName: string,
   output: string | undefined
 ): string[] | undefined {
@@ -543,14 +545,19 @@ function sanitizeLogFileName(name: string): string {
 // never touched by rotation.
 const OWN_LOG_FILE_PATTERN = /-\d+-\d+\.log$/;
 
-function persistFailureOutput(logDir: string, checkName: string, output: string): string | undefined {
+function persistFailureOutput(
+  logDir: string | undefined,
+  checkName: string,
+  output: string
+): string | undefined {
   try {
-    fs.mkdirSync(logDir, { recursive: true });
+    const dir = logDir ?? defaultLogDir();
+    fs.mkdirSync(dir, { recursive: true });
     logFileSequence += 1;
     const fileName = `${sanitizeLogFileName(checkName)}-${Date.now()}-${logFileSequence}.log`;
-    const filePath = path.join(logDir, fileName);
+    const filePath = path.join(dir, fileName);
     fs.writeFileSync(filePath, output);
-    rotateLogFiles(logDir);
+    rotateLogFiles(dir);
     return filePath;
   } catch {
     // Best-effort: a read-only logDir, a full disk, etc. must never throw
