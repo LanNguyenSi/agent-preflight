@@ -1,5 +1,6 @@
 import { execa } from "execa";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { CheckResult, CheckKind, PreflightConfig } from "../types.js";
 
@@ -151,6 +152,11 @@ interface ShellCheckOptions {
   // Reserved for wrapper invocations; do NOT set on direct binary calls,
   // because a legitimate non-zero exit could carry a misleading string.
   treatToolNotFoundAsLimitation?: boolean;
+  // Directory the full stdout+stderr of a failing check is persisted to
+  // (see `computeFailureDetails`). Defaults to `~/.agent-preflight/logs`
+  // when omitted. Tests MUST override this to a temp directory so they
+  // never write into the real home directory.
+  logDir?: string;
 }
 
 interface ShellCheckRunResult {
@@ -214,7 +220,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
         kind: options.kind,
         status: exitCode === 0 ? "pass" : options.failureStatus ?? "fail",
         message: exitCode === 0 ? undefined : options.failureMessage,
-        details: exitCode === 0 ? undefined : outputLines(all),
+        details: exitCode === 0 ? undefined : computeFailureDetails(options.logDir, options.name, all),
         durationMs: Date.now() - start,
         confidenceContribution: options.weight,
       },
@@ -233,7 +239,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
         kind: options.kind,
         status: options.failureStatus ?? "fail",
         message: `${options.failureMessage}: ${error.message}`,
-        details: outputLines(error.all),
+        details: computeFailureDetails(options.logDir, options.name, error.all),
         durationMs: Date.now() - start,
         confidenceContribution: options.weight,
       },
@@ -463,6 +469,134 @@ function outputLines(output: string | undefined): string[] | undefined {
     .slice(0, 10);
 
   return lines.length > 0 ? lines : undefined;
+}
+
+// Default location for the full-output logs written by `computeFailureDetails`
+// when a caller of `runShellCheck` does not override `ShellCheckOptions.logDir`.
+// Kept as a function (not a module-level constant) so it always reflects the
+// current `os.homedir()` rather than a value captured at import time — and
+// resolved LAZILY inside persistFailureOutput's try, so even a throwing
+// os.homedir() degrades to the outputLines() fallback instead of escaping
+// the check path (the never-throw invariant covers this seam too).
+function defaultLogDir(): string {
+  return path.join(os.homedir(), ".agent-preflight", "logs");
+}
+
+// Lines that vitest/jest emit to call out a failing test, matched against the
+// trimmed line so leading indentation doesn't matter:
+// - "FAIL <file>" / "FAIL <file> > <describe> > <test>" (both frameworks)
+// - "× " / "✗ " (vitest per-test failure marker)
+// - "❯ " (vitest failing-file summary line)
+// - "● " (jest per-test failure bullet)
+// See harness#356: the first details line is pinned to `full output: <path>`
+// and failure lines are pinned to the `FAIL <file> > <testname>` shape, so
+// this pattern intentionally stays narrow rather than trying to detect every
+// possible test-runner output style.
+const FAILURE_LINE_PATTERN = /^(FAIL\s|[×✗❯●])/;
+
+function parseFailureLines(output: string | undefined): string[] {
+  if (!output) {
+    return [];
+  }
+
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && FAILURE_LINE_PATTERN.test(line));
+}
+
+// Builds the `details` array for a failing check: best-effort persistence of
+// the complete `all` output to a log file, followed by the parsed failure
+// lines (or, if none match, the previous first-10-non-empty-lines behavior).
+// Never throws — any fs error degrades to the pre-existing `outputLines`
+// behavior so a failure in the logging path can never mask or alter the
+// check's own pass/fail result.
+function computeFailureDetails(
+  logDir: string | undefined,
+  checkName: string,
+  output: string | undefined
+): string[] | undefined {
+  if (!output) {
+    return outputLines(output);
+  }
+
+  const logPath = persistFailureOutput(logDir, checkName, output);
+  if (!logPath) {
+    return outputLines(output);
+  }
+
+  const failureLines = parseFailureLines(output).slice(0, 10);
+  const bodyLines = failureLines.length > 0 ? failureLines : outputLines(output) ?? [];
+  return [`full output: ${logPath}`, ...bodyLines];
+}
+
+// Monotonically increasing per-process counter appended to log filenames so
+// two failures of the same check within the same millisecond never collide
+// (and silently overwrite each other's log file).
+let logFileSequence = 0;
+
+function sanitizeLogFileName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+// Any file rotation considers "ours" ends in `-<epoch-ms>-<sequence>.log`,
+// matching exactly what `persistFailureOutput` writes below. Files that don't
+// match (e.g. logs dropped into the same directory by another tool) are
+// never touched by rotation.
+const OWN_LOG_FILE_PATTERN = /-\d+-\d+\.log$/;
+
+function persistFailureOutput(
+  logDir: string | undefined,
+  checkName: string,
+  output: string
+): string | undefined {
+  try {
+    const dir = logDir ?? defaultLogDir();
+    fs.mkdirSync(dir, { recursive: true });
+    logFileSequence += 1;
+    const fileName = `${sanitizeLogFileName(checkName)}-${Date.now()}-${logFileSequence}.log`;
+    const filePath = path.join(dir, fileName);
+    fs.writeFileSync(filePath, output);
+    rotateLogFiles(dir);
+    return filePath;
+  } catch {
+    // Best-effort: a read-only logDir, a full disk, etc. must never throw
+    // out of the check path. The caller falls back to the pre-existing
+    // outputLines() behavior when this returns undefined.
+    return undefined;
+  }
+}
+
+const MAX_LOG_FILES = 20;
+
+function rotateLogFiles(logDir: string): void {
+  try {
+    const ownLogFiles = fs
+      .readdirSync(logDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && OWN_LOG_FILE_PATTERN.test(entry.name))
+      .map((entry) => {
+        const filePath = path.join(logDir, entry.name);
+        let mtimeMs = 0;
+        try {
+          mtimeMs = fs.statSync(filePath).mtimeMs;
+        } catch {
+          // Concurrent removal, etc.: treat as oldest rather than aborting.
+        }
+        return { name: entry.name, mtimeMs };
+      })
+      .sort((a, b) => a.mtimeMs - b.mtimeMs);
+
+    const excess = ownLogFiles.length - MAX_LOG_FILES;
+    for (let i = 0; i < excess; i += 1) {
+      try {
+        fs.unlinkSync(path.join(logDir, ownLogFiles[i].name));
+      } catch {
+        // Best-effort; a concurrent delete should not fail the check.
+      }
+    }
+  } catch {
+    // Rotation is best-effort and must never throw out of the check path.
+  }
 }
 
 function buildCommandEnv(repoPath: string): NodeJS.ProcessEnv {

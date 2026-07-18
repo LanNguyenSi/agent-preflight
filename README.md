@@ -134,6 +134,15 @@ preflight sandbox --docker-socket --ci-simulation
 
 If no commands are configured, agent-preflight auto-detects common Node, Python, PHP, and Java manifests and picks reasonable defaults. The full toggle, override, and monorepo guidance lives in [docs/checks.md](docs/checks.md). Sandbox image profiles, apt packages, and act flags are covered in [docs/architecture.md](docs/architecture.md#sandbox).
 
+When a shell-based check fails, its complete stdout+stderr is written
+best-effort to `~/.agent-preflight/logs/<check>-<timestamp>.log` (only the
+20 newest of these logs are kept; unrelated files in that directory are
+never touched), and the check's `details` lead with `full output: <path>`
+plus the parsed vitest/jest failure lines so consumers can name the failing
+tests without re-running the suite. A failed log write silently falls back
+to the previous first-10-lines detail behavior — it never affects the
+check result.
+
 ## Skill templates
 
 Reusable starting points for installing or adapting `agent-preflight` into agent-specific workflows. Source repo: `https://github.com/LanNguyenSi/agent-preflight`. Template path: `templates/skills/<skill-name>`.
