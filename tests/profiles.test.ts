@@ -182,8 +182,11 @@ if [[ "$1" == "ci" ]]; then
   exit 0
 fi
 if [[ "$1" == "run" && "$2" == "test" ]]; then
-  [[ -f node_modules/.install-complete ]]
-  exit 0
+  if [[ -f node_modules/.install-complete ]]; then
+    exit 0
+  else
+    exit 1
+  fi
 fi
 exit 1
 `
@@ -209,6 +212,13 @@ exit 1
     const repoPath = makeTempDir("preflight-working-dir-");
     const workingDir = path.join(repoPath, "apps", "api");
     fs.mkdirSync(workingDir, { recursive: true });
+    // Compare against the realpath of workingDir rather than the raw path:
+    // `pwd` inside the spawned shell reports the OS-canonical cwd, and on
+    // macOS the default tmp dir (os.tmpdir()) lives under /var, which is
+    // itself a symlink to /private/var. realpath is a no-op on platforms
+    // (e.g. Linux CI) where the temp dir isn't behind a symlink, so this
+    // keeps the assertion meaningful everywhere.
+    const resolvedWorkingDir = fs.realpathSync(workingDir);
 
     const result = await runPreflight(repoPath, {
       workingDir: "apps/api",
@@ -224,7 +234,7 @@ exit 1
       customChecks: [
         {
           name: "cwd-check",
-          command: `[ "$(pwd)" = "${workingDir}" ]`,
+          command: `[ "$(pwd)" = "${resolvedWorkingDir}" ]`,
         },
       ],
     });
