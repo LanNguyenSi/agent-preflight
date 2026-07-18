@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-18
+
+### Added
+
+- **Failing shell checks now persist their full stdout+stderr to a log file and lead `details` with parsed failure lines** (PR #45). A failing `runShellCheck` (both the non-zero-exit branch and the timeout/error catch branch) previously truncated `details` to the raw first 10 output lines, discarding the rest — no consumer could recover a failing test's name or the full log, which is exactly the useless one-line diagnosis harness#356 hit on `npm-test`. The complete interleaved output is now written best-effort to `<logDir>/<check>-<epoch-ms>-<sequence>.log` (default `~/.agent-preflight/logs`, injectable per call via the new `ShellCheckOptions.logDir`; a per-process sequence number keeps same-millisecond failures of the same check from colliding), and `details` now lead with `full output: <path>` followed by up to 10 parsed vitest/jest failure lines (`FAIL `, `×`, `✗`, `❯`, `●` markers). When no marker matches or the log write fails, `details` falls back to the previous first-10-lines behavior, so a logging failure can never mask or alter the check's own result. Only the 20 newest logs matching this feature's own `-<epoch-ms>-<sequence>.log` naming are kept (`rotateLogFiles`); files any other tool drops into the same directory are never touched. The pass path, limitation classification, timeout handling, and exit-code semantics are unchanged.
+
+### Fixed
+
+- **Two pre-existing macOS-only failures in `profiles.test.ts`** (PR #45). `does not run setup steps unless explicitly enabled` relied on a bare failing `[[ -f ... ]]` propagating through `set -e` in its fake-npm fixture; bash 3.2.57 (macOS system bash) does not terminate on that construct, so the fixture fell through to exit 0 and the check reported a false pass. `resolves workingDir before running checks` compared the child's reported cwd against the literal `os.tmpdir()` path, which macOS resolves through the `/var` → `/private/var` symlink, so the string comparison always failed. Both fixes are test-only and behavior-preserving (Linux CI was already green); their absence had left this repo's own `preflight` gate reporting `not ready` on a spurious `npm-test` failure.
+
+### Docs
+
+- README documents the new `~/.agent-preflight/logs` persisted-failure-log side effect and its keep-last-20 rotation (PR #45).
+
 ## [0.2.1] - 2026-06-09
 
 Security release closing the 2026-05-30 audit findings. The headline is a fail-closed fix to preflight's own audit and secret checks: high-severity CVEs and several secret patterns were silently downgraded to warnings. No new features (the solution-acceptance gate explored in PR #34 was reverted in PR #35 and is not part of this release).
