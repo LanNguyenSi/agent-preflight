@@ -75,6 +75,22 @@ Three candidates were run over both corpora:
 Both binaries were downloaded to and run from the scratchpad's
 `scanners/` directory, never installed system-wide.
 
+### Limitations
+
+This is a synthetic, small-n investigation, not a benchmark: n=1-2 samples
+per credential class (10 TP files, 4 FP files total). Every hit/miss result
+below is a per-sample outcome, not a measured rate - as the gitleaks
+generic-password result shows, a single class's result can be
+value-dependent (which specific characters the synthetic secret happens to
+contain), so a "HIT" or "MISS" for a class should not be read as an implied
+precision or recall percentage. No real-world corpus (an actual git
+history, a real CI build tree) was scanned; all findings are against the
+two purpose-built synthetic corpora described above. trufflehog's live
+credential-verification path (calling out to the provider API to confirm a
+found credential is still active) was not exercised - `--no-verification`
+was used throughout, so this investigation says nothing about that mode's
+behavior, false-positive rate, or latency.
+
 ## Results
 
 ### True-positive coverage by class
@@ -87,22 +103,28 @@ Both binaries were downloaded to and run from the scratchpad's
 | Stripe secret key (`sk_live_`/`sk_test_`) | MISS | HIT | HIT |
 | Slack bot token (`xoxb-`) | MISS | HIT | MISS |
 | JWT | MISS | HIT | MISS |
-| GCP service-account JSON | HIT (incidental - matches the PEM header embedded in `private_key`) | HIT | HIT |
+| GCP service-account JSON | HIT (incidental - matches the PEM header embedded in `private_key`) | HIT (incidental - same PEM-header match via the `private-key` rule, not a dedicated GCP detector) | HIT (dedicated `GCP` detector, structural - not PEM-dependent) |
 | RSA private key (PEM) | HIT | HIT | HIT |
-| Generic `password = "..."` | HIT | MISS | MISS |
+| Generic `password = "..."` | HIT | MISS (value-dependent - see below) | MISS |
 | Generic `api_key = "..."` | HIT | HIT | MISS |
-| **Classes hit / 10** | **4** | **9** | **6** |
+| **Classes hit / 10** | **5** | **9** | **6** |
 
 Two results are worth calling out because they cut against the intuitive
 "specialized tool wins everywhere" story:
 
-- gitleaks' default ruleset has **no generic password rule** - it missed the
-  plain `password = "..."` assignment entirely, a class the in-tree regex
-  catches by design.
-- trufflehog's detector-based (not entropy-based) design means it has
-  **no generic `password=`/`api_key=` catch-all and no generic JWT
-  detector** - a plain HS256 JWT with no service-specific structure and a
-  Slack `xoxb-` token both went undetected with the default detector set.
+- gitleaks has no dedicated password rule, but its `generic-api-key` rule is
+  charset-based, not keyword-scoped, so it does catch some
+  `password = "..."` assignments incidentally, whenever the value happens to
+  fall inside that rule's character class. Both TP-corpus password values
+  (`tr0ub4dor&3xyz`, `S0m3R3allyG00dPassw0rd!`) contain `&` or `!`, outside
+  that charset, so both MISS here; a follow-up probe over five
+  password-shaped variants found 3 of 5 HIT once the value was
+  charset-conformant (alnum/`-`/`_` only). This is value-dependent, not the
+  clean "no rule for this class" gap the in-tree regex avoids by design.
+- trufflehog's detector-based (not entropy-based) design means it has **no
+  generic `password=`/`api_key=` catch-all** - a Slack `xoxb-` token went
+  undetected with the default detector set, and trufflehog's JWT detector
+  did not fire on a plain HS256 token with no service-specific structure.
   (Trufflehog ships ~800 service-specific detectors; a credential that
   doesn't match one of them structurally is invisible to it by design,
   which is also why its false-positive rate is so low - see below.)
@@ -111,7 +133,7 @@ Two results are worth calling out because they cut against the intuitive
 
 | Corpus file | In-tree regex | gitleaks | trufflehog |
 |---|:---:|:---:|:---:|
-| `01-placeholders.txt` (5 lines) | 1 FP (`password = "example-password-please-change"` slips past `PLACEHOLDER_PATTERNS` - "example" isn't immediately followed by "key") | 0 FP | 0 FP |
+| `01-placeholders.txt` (5 lines) <!-- pragma: allowlist secret --> | 1 FP (`password = "example-password-please-change"` slips past `PLACEHOLDER_PATTERNS` - "example" isn't immediately followed by "key") | 0 FP | 0 FP |
 | `02-next-build-output.js` (hashed build vars) | 3 FP (`token=`, `secret=`, `apiKey=` assigned to long hash-like strings) | 3 FP (all via the `generic-api-key` rule) | 0 FP |
 | `03-lockfile-integrity.txt` (`integrity: sha512-...`) | 0 FP | 0 FP | 0 FP |
 | `04-test-fixture.test.ts` | 0 FP (skipped via `IGNORE_FILES`'s `*.test.ts` pattern) | 0 FP | 0 FP |
@@ -125,11 +147,21 @@ immune to this FP class, it just has no rule for the other FP class
 structural-detector design means it never fires on any of the four FP
 files. Note that in production the `.next`/`.cache`/etc. `SKIP_DIRS`
 entries (added 2026-05-18, after the original FP incident) would already
-keep the in-tree tool from ever seeing a real `.next/` file; a gitleaks or
-trufflehog wrapper would need the equivalent exclude configuration
-(`--gitleaks-ignore-path` / `--exclude-paths`) to match that existing
+keep the in-tree tool from ever seeing a real `.next/` file; a gitleaks
+wrapper would need equivalent exclude configuration to match that existing
 mitigation, since it currently only lives in the in-tree scanner's `scanDir`
-walk, not in an external tool's config.
+walk, not in an external tool's config. Two candidate exclude mechanisms
+were probed here and only one works. `--gitleaks-ignore-path` points
+gitleaks at a `.gitleaksignore` file, but that file's entries are match
+*fingerprints* (the hash gitleaks prints per finding), not paths - pointing
+it at path-like entries (`.next/`, `.next/*`) does not suppress the FPs:
+the same 3 `.next/chunk.js` findings still fire with the ignore file in
+place. `--exclude-paths` is not a gitleaks flag at all - it belongs to
+trufflehog. What actually works, confirmed here: a `.gitleaks.toml` config
+passed via `--config` that sets `[extend] useDefault = true` (keep the
+built-in rules) and adds an `[allowlist] paths = ['(^|/)\.next/',
+'(^|/)\.cache/']` regex exclude - verified 3 findings -> 0 on the same
+`.next`-build-output fixture.
 
 ### Runtime, size, license
 
@@ -137,7 +169,7 @@ walk, not in an external tool's config.
 |---|---|---|---|
 | Runtime over the ~4 KB TP corpus | ~2 ms (in-process, no spawn) | ~210 ms wall (scan itself: 81 ms; rest is process startup) | ~2.0 s wall (scan itself: 9.8 ms; rest is process startup / detector-registry init) |
 | Runtime over this repo's tracked source (~1.4 MB) | not measured (script doesn't replicate `SKIP_DIRS`; would need to walk `node_modules`) | ~280 ms wall (scan itself: 97 ms), 0 leaks found | ~2.3 s wall (scan itself: 87 ms), 0 leaks found |
-| Binary size (darwin-arm64) | n/a (ships as part of the Node package) | 21.3 MB (`gitleaks_8.30.1_darwin_arm64.tar.gz`, sha256 `b40ab0ae...ae6a`) | 169.7 MB (`trufflehog_3.97.0_darwin_arm64.tar.gz`, sha256 `ad0a99bd...c5c`) - 8x gitleaks |
+| Binary size (darwin-arm64) | n/a (ships as part of the Node package) | 7.9 MB archive / 21.3 MB extracted (`gitleaks_8.30.1_darwin_arm64.tar.gz`, sha256 `b40ab0ae...b6a5`) | 70.2 MB archive / 169.7 MB extracted (`trufflehog_3.97.0_darwin_arm64.tar.gz`, sha256 `ad0a99bd...c5c`) - roughly 8x (extracted) to 9x (archive) gitleaks |
 | License | project's own (MIT, `agent-preflight`) | MIT | **AGPL-3.0** (confirmed from the extracted `LICENSE` file: "GNU AFFERO GENERAL PUBLIC LICENSE Version 3") |
 
 On the license: AGPL is a copyleft license that attaches to *modifying and
@@ -162,9 +194,11 @@ unconditionally.
 **1. Replace** - swap `SECRET_PATTERNS` for a gitleaks or trufflehog
 subprocess wrapper, external dependency, fail-open if the binary is missing.
 
-- Pro: gitleaks nearly doubles class coverage measured here (9/10 vs. 4/10)
-  and has a materially lower FP rate than the raw in-tree regexes (3 vs. 4
-  in this corpus). trufflehog has the cleanest FP rate of the three (0) but
+- Pro: gitleaks materially increases class coverage measured here (9/10 vs.
+  5/10, ~1.8x) and has a lower raw FP count than the in-tree regexes (3 vs.
+  4 in this corpus - see the Recommendation below for why that raw
+  comparison isn't the full precision picture). trufflehog has the cleanest
+  FP rate of the three (0) but
   the weakest generic-pattern coverage (6/10, worse than gitleaks on JWT,
   Slack, and both generic-assignment classes).
 - Con: this is the one path the task brief already flags as fail-open by
@@ -200,21 +234,33 @@ gaps and FP classes explicitly (this document, plus a `docs/checks.md`
 cross-reference), no new dependency.
 
 - Pro: no work, no new dependency, no fail-open surface added anywhere.
-- Con: the measured 4/10 class coverage and the reproduced `.next`-style FP
+- Con: the measured 5/10 class coverage and the reproduced `.next`-style FP
   leave real gaps in place indefinitely. AWS keys, GCP service-account JSON
   (only caught here incidentally via the private-key regex, not by design -
   a GCP JSON blob without an embedded PEM header would slip through
-  entirely), Stripe keys, Slack tokens, and JWTs stay undetected by design,
-  not by measured tradeoff.
+  entirely, and switching to gitleaks does **not** close this specific gap
+  either: gitleaks' GCP hit is the same PEM-dependent incidental match, not
+  a dedicated detector - re-running gitleaks against the corpus fixture with
+  the `private_key` field redacted produced 0 findings; only trufflehog's
+  dedicated `GCP` detector catches the PEM-less case), Stripe keys, Slack
+  tokens, and JWTs stay undetected by design, not by measured tradeoff.
 
 ## Recommendation
 
 **Augment (path 2).** The measurement supports the task brief's initial
 lean, but not unconditionally: gitleaks measurably outperforms the in-tree
-regexes on class coverage (9/10 vs. 4/10) and even on precision (3 FPs vs.
-4), so path 3's "no work" option leaves a real, measured gap on the table
-rather than a merely theoretical one. But path 1's fail-open-by-necessity
-is a regression on this specific tool's core promise - a check whose entire
+regexes on class coverage (9/10 vs. 5/10). Precision is not as clean a
+tie-breaker as coverage: raw FP counts favor gitleaks (3 vs. 4 in this
+corpus), but that comparison is not apples-to-apples - in production the
+in-tree tool already excludes `.next`/`.cache`/etc. via `SKIP_DIRS`, so its
+production-equivalent FP count on this corpus is 1 (only the placeholder
+edge case), not 4, while gitleaks, run without the equivalent exclude
+config, stays at 3. Under that fairer comparison precision favors the
+in-tree tool (1 vs. 3), not gitleaks. So the case for path 2 rests on
+coverage, not precision: path 3's "no work" option leaves a real, measured
+coverage gap on the table rather than a merely theoretical one. But path 1's
+fail-open-by-necessity is a regression on this specific tool's core promise
+- a check whose entire
 design pitch is git-aware `fail`-blocking must not silently downgrade to
 "nothing ran" when a binary is absent from `PATH`. Path 2 lets an operator
 buy gitleaks' materially better coverage without weakening the default for
@@ -231,27 +277,43 @@ follow-up:
   existing `secretAllowlist` / `secretDetectionStrict` fields in `src/types.ts`.
 - When `scanner: "gitleaks"` is set: locate `gitleaks` on `PATH` (or a
   configurable `commands.gitleaksPath`, matching the `commands.*` override
-  convention `docs/checks.md` already documents), run `gitleaks detect
-  --no-git -f json`, and merge its findings into the existing `Finding[]`
-  pipeline so the current diff-scoped / `.md` / gitignored severity logic in
+  convention `docs/checks.md` already documents), run `gitleaks dir <path>
+  -f json` (the `dir` subcommand - aliases `dir`/`file`/`directory` - is
+  gitleaks' current non-git directory scan entry point; the `gitleaks
+  detect --no-git` form used during this investigation still works in
+  8.30.1 but is undocumented/hidden from `--help`, so build against `dir`),
+  and merge its findings into the existing `Finding[]` pipeline so the
+  current diff-scoped / `.md` / gitignored severity logic in
   `runSecretDetection` applies uniformly.
 - Missing `gitleaks` binary in opt-in mode is a `limitation` (documented
   degraded run, matching the existing `limitations` pattern), not a
   crash - this is opt-in, so document the exact wording an operator sees.
-- Reuse the `.next`/`.cache`/etc. `SKIP_DIRS` list as gitleaks
-  `--gitleaks-ignore-path` exclude entries (or an equivalent generated
-  `.gitleaksignore`), so the external scanner inherits the FP mitigation the
-  in-tree walk already has, instead of reintroducing the original
-  2026-05-18 `.next/` false positives via a different code path.
+- Reuse the `.next`/`.cache`/etc. `SKIP_DIRS` list to generate a
+  `.gitleaks.toml` config passed via `--config` (`[extend] useDefault =
+  true` plus an `[allowlist] paths = [...]` regex exclude per `SKIP_DIRS`
+  entry), not a `.gitleaksignore` file - `.gitleaksignore` entries are match
+  fingerprints, not paths, and do not suppress path-based FPs (verified in
+  this investigation; see [Results](#results)). This gives the external
+  scanner the same FP mitigation the in-tree walk's `scanDir` already has,
+  instead of reintroducing the original 2026-05-18 `.next/` false positives
+  via a different code path.
+- Residual gap in the recommended option: opting into gitleaks does not
+  close the GCP service-account gap either. gitleaks' GCP "hit" is the same
+  PEM-dependent `private-key` rule match the in-tree regex makes, not a
+  dedicated detector - a GCP service-account JSON without an embedded PEM
+  block slips past both. Only trufflehog's dedicated `GCP` detector catches
+  that case (see the trufflehog recommendation below), so this specific gap
+  persists under the recommended path 2 unless the follow-up owner also
+  reconsiders trufflehog for that reason specifically.
 - trufflehog is not recommended as the opt-in target given the measured
-  8x binary size and ~10x fixed startup cost versus gitleaks, for weaker
+  8-9x binary size and ~10x fixed startup cost versus gitleaks, for weaker
   generic-pattern coverage in this corpus; gitleaks is the stronger
   opt-in default. This is a judgment call worth re-checking if the
   follow-up task owner wants trufflehog's specific service-detector breadth
   (e.g. verified-credential checking against live APIs) for a use case this
   investigation didn't test.
 - Add integration tests exercising the new config path with a temp
-  `.gitleaksignore`/corpus fixture (skip cleanly when `gitleaks` is not on
+  `.gitleaks.toml`/corpus fixture (skip cleanly when `gitleaks` is not on
   `PATH`, matching the existing "tool not installed" skip pattern used by
   the other checks per `docs/checks.md`).
 - Update `docs/checks.md`'s secret-detection row and behavior notes once the
