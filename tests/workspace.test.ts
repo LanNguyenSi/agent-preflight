@@ -7,10 +7,12 @@ import { execSync } from "child_process";
 
 describe("npm workspace support", () => {
   let repoPath: string;
+  let logDir: string;
 
   beforeAll(async () => {
     repoPath = path.join(os.tmpdir(), `preflight-workspace-${Date.now()}`);
     await fs.mkdir(repoPath, { recursive: true });
+    logDir = path.join(repoPath, ".preflight-test-logs");
 
     await fs.writeFile(
       path.join(repoPath, "package.json"),
@@ -63,6 +65,7 @@ describe("npm workspace support", () => {
         ciSimulation: false,
         tdd: false,
       },
+      logDir,
     });
 
     const typecheck = result.checks.find((c) => c.kind === "typecheck");
@@ -112,6 +115,7 @@ describe("npm workspace support", () => {
           ciSimulation: false,
           tdd: false,
         },
+        logDir,
       });
 
       const testCheck = result.checks.find((c) => c.kind === "test");
@@ -164,6 +168,7 @@ describe("npm workspace support", () => {
           ciSimulation: false,
           tdd: false,
         },
+        logDir,
       });
 
       const lint = result.checks.find((c) => c.kind === "lint");

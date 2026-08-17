@@ -5,6 +5,11 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    // Structural guard (task 086ac782): fails the whole run if any test
+    // wrote into the real ~/.agent-preflight/logs instead of an overridden
+    // logDir. See the docblock in the guard file itself for why this is a
+    // globalSetup rather than a per-file setupFiles stub or pin test.
+    globalSetup: ["tests/setup/no-real-home-writes.globalSetup.ts"],
     testTimeout: 30_000, // integration tests with lint/audit checks can take >5s on CI
     // 19 of the 22 test files call runPreflight('.'), which spawns this repo's
     // real `npm run lint` / `tsc` as child processes. On CI's 2-core
