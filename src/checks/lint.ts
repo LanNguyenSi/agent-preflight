@@ -22,7 +22,7 @@ export async function runLintChecks(
 ): Promise<CheckSetResult> {
   const configuredCommands = getConfiguredCommands(config, "lint");
   if (configuredCommands.length > 0) {
-    return runConfiguredCommands(repoPath, "lint", configuredCommands, 0.15);
+    return runConfiguredCommands(repoPath, "lint", configuredCommands, 0.15, config.logDir);
   }
 
   const context = createProjectContext(repoPath);
@@ -40,6 +40,7 @@ export async function runLintChecks(
         failureMessage: "npm lint failed",
         missingLimitation: "npm script `lint` invokes a tool that is not installed; Node lint check skipped",
         treatToolNotFoundAsLimitation: true,
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);
@@ -56,6 +57,7 @@ export async function runLintChecks(
         weight: 0.15,
         failureMessage: "eslint failed",
         missingLimitation: "npx not installed; Node lint check skipped",
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);
@@ -69,6 +71,7 @@ export async function runLintChecks(
         weight: 0.15,
         failureMessage: "TypeScript lint fallback failed",
         missingLimitation: "tsc not available; TypeScript lint fallback skipped",
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);
@@ -91,6 +94,7 @@ export async function runLintChecks(
         weight: 0.15,
         failureMessage: "ruff failed",
         missingLimitation: "ruff not installed; Python lint check skipped",
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);
@@ -111,6 +115,7 @@ export async function runLintChecks(
         failureMessage: "composer lint failed",
         missingLimitation: "composer script `lint` invokes a tool that is not installed; PHP lint check skipped",
         treatToolNotFoundAsLimitation: true,
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);
@@ -124,6 +129,7 @@ export async function runLintChecks(
         weight: 0.15,
         failureMessage: "pint failed",
         missingLimitation: "pint not installed; PHP lint check skipped",
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);
@@ -136,6 +142,7 @@ export async function runLintChecks(
         command: "vendor/bin/phpcs",
         weight: 0.15,
         failureMessage: "phpcs failed",
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);

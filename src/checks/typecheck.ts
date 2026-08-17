@@ -20,7 +20,7 @@ export async function runTypecheckChecks(
 ): Promise<CheckSetResult> {
   const configuredCommands = getConfiguredCommands(config, "typecheck");
   if (configuredCommands.length > 0) {
-    return runConfiguredCommands(repoPath, "typecheck", configuredCommands, 0.2);
+    return runConfiguredCommands(repoPath, "typecheck", configuredCommands, 0.2, config.logDir);
   }
 
   const context = createProjectContext(repoPath);
@@ -37,6 +37,7 @@ export async function runTypecheckChecks(
       failureMessage: "npm typecheck failed",
       missingLimitation: "npm script `typecheck` invokes a tool that is not installed; Node typecheck skipped",
       treatToolNotFoundAsLimitation: true,
+      logDir: config.logDir,
     });
     if (result.check) {
       checks.push(result.check);
@@ -53,6 +54,7 @@ export async function runTypecheckChecks(
       weight: 0.2,
       failureMessage: "TypeScript type errors found",
       missingLimitation: "tsc not available; TypeScript check skipped",
+      logDir: config.logDir,
     });
     if (result.check) {
       checks.push(result.check);
@@ -74,6 +76,7 @@ export async function runTypecheckChecks(
         weight: 0.2,
         failureMessage: "mypy found type issues",
         missingLimitation: "mypy not installed; Python typecheck skipped",
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);
@@ -93,6 +96,7 @@ export async function runTypecheckChecks(
         weight: 0.2,
         failureMessage: "phpstan found type issues",
         missingLimitation: "phpstan not installed; PHP typecheck skipped",
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);
@@ -106,6 +110,7 @@ export async function runTypecheckChecks(
         weight: 0.2,
         failureMessage: "psalm found type issues",
         missingLimitation: "psalm not installed; PHP typecheck skipped",
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);
@@ -135,6 +140,7 @@ export async function runTypecheckChecks(
         weight: 0.2,
         failureMessage: "Java compile check failed",
         missingLimitation: "Maven/Gradle not installed; Java typecheck skipped",
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);

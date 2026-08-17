@@ -79,6 +79,18 @@ Every check can be turned off in `.preflight.json`:
 
 CLI flags `--no-audit`, `--no-secrets`, and `--ci-simulation` override the file for one run.
 
+### Failure log directory override
+
+`logDir` in `.preflight.json` overrides where a failing lint/typecheck/test/audit/custom check's complete stdout+stderr is persisted, in place of the default `~/.agent-preflight/logs`:
+
+```json
+{
+  "logDir": ".preflight-logs"
+}
+```
+
+A relative value resolves against the repo root (not `workingDir`, not `process.cwd()`); a leading `~/` expands to the home directory; an absolute path is used as-is. If the chosen directory lives inside the repo, add it to `.gitignore` — an un-ignored `logDir` fills the working tree with untracked log files and trips the `clean-worktree` check on the next run. See the README "Configuration" section for the on-disk filename format and rotation behavior.
+
 ## Custom checks
 
 Custom checks let you wire in anything else as a shell command:

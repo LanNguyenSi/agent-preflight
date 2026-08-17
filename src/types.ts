@@ -60,6 +60,16 @@ export interface PreflightConfig {
    */
   secretDetectionStrict?: boolean;
   protectedBranches?: string[];
+  /**
+   * Directory the complete stdout+stderr of a failing shell-based check
+   * (lint, typecheck, test, audit, custom) is persisted to, overriding the
+   * default `~/.agent-preflight/logs`. A relative path is resolved against
+   * the repo root (the `repoPath` passed to `runPreflight`/`runBatch`), not
+   * `workingDir` and not `process.cwd()`. Only the 20 newest of this
+   * feature's own log files are kept; unrelated files in the directory are
+   * left alone. See README "Configuration" for the on-disk log format.
+   */
+  logDir?: string;
   actFlags?: string[];
   commitConvention?: "conventional" | "none";
   workingDir?: string;

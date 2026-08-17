@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`PreflightConfig.logDir`** (task 016425e6, follow-up to the 0.3.0 fail-log feature / PR #45). Wired through every check runner that persists failure logs (lint, typecheck, test, audit, custom), so operators can override the default `~/.agent-preflight/logs` per repo via `.preflight.json`. A relative value resolves against the repo root, not `workingDir` and not `process.cwd()`; a leading `~/` expands to the home directory.
+
+### Changed
+
+- **Fail-log hardening: pid in filename, name-key rotation sort, stricter failure-marker matching** (task 016425e6, follow-up to the 0.3.0 fail-log feature / PR #45). The persisted-failure-log filename now includes `process.pid` (`<check>-<epoch-ms>-<pid>-<sequence>.log`) so two different `preflight` processes failing the same check in the same millisecond no longer collide — the previous scheme was only collision-free within a single process. `rotateLogFiles` now sorts by the filename's own `(epochMs, pid, sequence)` key instead of `statSync` mtime, which is both deterministic (no more races with other tools touching mtimes) and avoids a stat syscall per log file. `FAILURE_LINE_PATTERN`'s bullet markers (`×`, `✗`, `❯`, `●`) now require trailing whitespace, narrowing accidental matches on glyphs glued to unrelated text; this only affects which lines are highlighted in the informational `details` array on an already-failing check; it never touches `ready`, `confidence`, or pass/fail status.
+- **Legacy pre-pid log filenames (`<check>-<epoch-ms>-<sequence>.log`, written by agent-preflight <0.4.0) are drained by rotation again, not orphaned.** The stricter own-file pattern above stopped matching that older two-segment shape, so any log left over from before this change would sit in the directory forever instead of aging out through the normal 20-file cap. Rotation now also recognizes the legacy shape, sorting it in by a synthetic `[epochMs, 0, 0]` key alongside current-format files. This is a one-time drain: once a legacy file rotates out, nothing writes that shape again.
+- **`OWN_LOG_FILE_PATTERN` / `LEGACY_LOG_FILE_PATTERN` now require a 13-plus-digit epoch group** (task 016425e6, fail-log hardening review). The prior width-unbounded `\d+` matched any dash-number-count shape, so a foreign file dropped into the log directory by another tool, e.g. `nginx-2026-08-17.log` or `backup-2026-08.log`, was misclassified as this feature's own and became eligible for silent deletion by rotation. Real `Date.now()` values are 13 digits for the lifetime of this feature, so the guard rejects short numeric groups like a calendar year or month while accepting every genuine epoch-ms timestamp.
+
 ## [0.3.0] - 2026-07-18
 
 ### Added

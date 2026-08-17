@@ -103,7 +103,8 @@ export async function runConfiguredCommands(
   repoPath: string,
   kind: CheckKind,
   commands: string[],
-  weight: number
+  weight: number,
+  logDir?: string
 ): Promise<CheckSetResult> {
   const checks: CheckResult[] = [];
   const limitations: string[] = [];
@@ -117,6 +118,7 @@ export async function runConfiguredCommands(
       weight,
       failureMessage: `${kind} command failed`,
       timeoutMs: kind === "test" ? 300_000 : undefined,
+      logDir,
     });
 
     if (result.check) {
@@ -492,7 +494,27 @@ function defaultLogDir(): string {
 // and failure lines are pinned to the `FAIL <file> > <testname>` shape, so
 // this pattern intentionally stays narrow rather than trying to detect every
 // possible test-runner output style.
-const FAILURE_LINE_PATTERN = /^(FAIL\s|[×✗❯●])/;
+//
+// Precision decision (fail-log hardening review, task 016425e6): these bare
+// glyphs (×, ✗, ❯, ●) are not exclusive to vitest/jest — a lint tool's own
+// output, a captured shell prompt fragment (❯ is a common custom-prompt
+// character), or an unrelated bullet list could contain them too, and would
+// then be surfaced in `details` as if it were a parsed failure line. The
+// bullet markers are required here to be followed by whitespace (matching
+// every real vitest/jest marker: "× foo", "❯ tests/x.ts", "● Component ›
+// renders"), which rules out glyphs glued to other punctuation with no gap.
+// This is a cheap, safe narrowing — it does not touch any of the existing
+// fixtures below — but it is deliberately NOT airtight: a bare "● " bullet
+// in some other tool's output can still slip through. That residual risk is
+// accepted as best-effort rather than chased further, because
+// `parseFailureLines` only ever runs on a check that has ALREADY failed
+// (the exit code decided that) and only selects which lines to show in the
+// informational `details` array — it never flips `pass`/`fail`, `ready`, or
+// `confidence`. Worst case is a slightly noisier detail line on a real
+// failure, not a misclassified check. When nothing matches, the existing
+// first-10-lines fallback in `computeFailureDetails` still applies, so no
+// information is ever lost either way.
+const FAILURE_LINE_PATTERN = /^(FAIL\s|[×✗❯●]\s)/;
 
 function parseFailureLines(output: string | undefined): string[] {
   if (!output) {
@@ -530,20 +552,69 @@ function computeFailureDetails(
   return [`full output: ${logPath}`, ...bodyLines];
 }
 
-// Monotonically increasing per-process counter appended to log filenames so
-// two failures of the same check within the same millisecond never collide
-// (and silently overwrite each other's log file).
+// Monotonically increasing per-process counter appended to log filenames,
+// together with the current process id, so two failures of the same check
+// never collide (and silently overwrite each other's log file):
+// - Two failures in the *same* process within the same millisecond are
+//   distinguished by the counter (it only ever goes up for the life of the
+//   process).
+// - Two failures from *different* preflight processes (e.g. two `preflight
+//   batch` runs, or a CI job and a local run, sharing the default
+//   `~/.agent-preflight/logs`) landing on the same millisecond are
+//   distinguished by `process.pid`, since each process was assigned its own
+//   pid by the OS for its lifetime.
+// This is a best-effort naming scheme, not a filesystem lock — an OS
+// reusing a pid within the exact same millisecond a prior process with that
+// pid also wrote seq N would still collide, but that is far outside what
+// this feature needs to guard against in practice.
 let logFileSequence = 0;
 
 function sanitizeLogFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "_");
 }
 
-// Any file rotation considers "ours" ends in `-<epoch-ms>-<sequence>.log`,
-// matching exactly what `persistFailureOutput` writes below. Files that don't
-// match (e.g. logs dropped into the same directory by another tool) are
-// never touched by rotation.
-const OWN_LOG_FILE_PATTERN = /-\d+-\d+\.log$/;
+// Any file rotation considers "ours" ends in
+// `-<epoch-ms>-<pid>-<sequence>.log`, matching exactly what
+// `persistFailureOutput` writes below. Files that don't match either this or
+// `LEGACY_LOG_FILE_PATTERN` (e.g. logs dropped into the same directory by
+// another tool) are never touched by rotation. The three captured groups
+// double as the deterministic sort key `rotateLogFiles` uses below (see
+// `parseRotationKey`).
+//
+// Precision decision (fail-log hardening review, task 016425e6): a
+// width-unbounded `\d+` for the first (epoch-ms) group matches any
+// dash-number-count shape, not just an actual timestamp; an nginx-style
+// dated log (`nginx-2026-08-17.log`, three dash-separated groups: year,
+// month, day) or a monthly backup log (`backup-2026-08.log`, two groups)
+// dropped into the same directory by another tool would satisfy the group
+// count alone. Misclassifying such a file as "ours" makes it eligible for
+// silent deletion by rotation, since its tiny fake "epoch" sorts as the
+// oldest entry. `Date.now()` is 13 digits for the entire lifetime of this
+// feature (already past 1e12 in 2001, not reaching 1e14 until the year
+// 5138), so `\d{13,}` accepts every real epoch-ms value while rejecting
+// short numeric groups like a calendar year or month that happen to share
+// the file-naming shape.
+const OWN_LOG_FILE_PATTERN = /-(\d{13,})-(\d+)-(\d+)\.log$/;
+
+// Filenames written by the pre-0.4.0 fail-log feature (task 6691dd56 / PR
+// #45), before `persistFailureOutput` started embedding `process.pid`:
+// `<check>-<epoch-ms>-<sequence>.log` — two number groups instead of three.
+// `OWN_LOG_FILE_PATTERN` stopped matching these the moment the pid segment
+// was added (task 016425e6), which orphaned any log file already on disk
+// from a prior install: `rotateLogFiles` no longer counted them, so they
+// could never be picked for deletion and would sit in the directory forever
+// alongside the current 20-file cap instead of draining through it. This
+// predicate re-admits a legacy-named file into the same rotation pass (see
+// `parseRotationKey`'s synthetic key for it) so it ages out normally. This
+// is a one-time drain: once a legacy file rotates out, nothing ever writes
+// that shape again, so the directory converges back to pure current-format
+// files and this pattern stops matching anything.
+//
+// Same `\d{13,}` epoch-width guard as `OWN_LOG_FILE_PATTERN` above, for
+// the same reason: without it, a two-dash-number-group foreign file like
+// `backup-2026-08.log` would match this pattern too and become eligible for
+// silent deletion by rotation.
+const LEGACY_LOG_FILE_PATTERN = /-(\d{13,})-(\d+)\.log$/;
 
 function persistFailureOutput(
   logDir: string | undefined,
@@ -554,7 +625,7 @@ function persistFailureOutput(
     const dir = logDir ?? defaultLogDir();
     fs.mkdirSync(dir, { recursive: true });
     logFileSequence += 1;
-    const fileName = `${sanitizeLogFileName(checkName)}-${Date.now()}-${logFileSequence}.log`;
+    const fileName = `${sanitizeLogFileName(checkName)}-${Date.now()}-${process.pid}-${logFileSequence}.log`;
     const filePath = path.join(dir, fileName);
     fs.writeFileSync(filePath, output);
     rotateLogFiles(dir);
@@ -569,22 +640,50 @@ function persistFailureOutput(
 
 const MAX_LOG_FILES = 20;
 
+// (epochMs, pid, sequence) extracted from a filename that already matched
+// `OWN_LOG_FILE_PATTERN` or `LEGACY_LOG_FILE_PATTERN`. Used to sort
+// oldest-first for rotation.
+type RotationKey = readonly [epochMs: number, pid: number, sequence: number];
+
+// The filename already carries a deterministic sort key — reading it back
+// out of the name lets rotation sort oldest-first without a single
+// `statSync` call (and without the mtime-can-be-touched-by-other-tools
+// ambiguity a stat-based sort would have). `OWN_LOG_FILE_PATTERN` and
+// `LEGACY_LOG_FILE_PATTERN` are the single source of truth for both "is
+// this ours" and "what's its key": a current-format match yields the real
+// `(epochMs, pid, sequence)` triple; a legacy match (no pid segment) yields
+// a synthetic `[epochMs, 0, 0]` so it sorts purely by its own timestamp and
+// drains through the same 20-file cap as current-format files instead of
+// being permanently skipped.
+function parseRotationKey(fileName: string): RotationKey {
+  const ownMatch = fileName.match(OWN_LOG_FILE_PATTERN);
+  if (ownMatch) {
+    return [Number(ownMatch[1]), Number(ownMatch[2]), Number(ownMatch[3])];
+  }
+  const legacyMatch = fileName.match(LEGACY_LOG_FILE_PATTERN);
+  if (legacyMatch) {
+    return [Number(legacyMatch[1]), 0, 0];
+  }
+  // Defensive fallback only: every caller filters with `isOwnOrLegacyLogFile`
+  // first, so reaching here should be unreachable.
+  return [0, 0, 0];
+}
+
+function compareRotationKeys(a: RotationKey, b: RotationKey): number {
+  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+}
+
+function isOwnOrLegacyLogFile(fileName: string): boolean {
+  return OWN_LOG_FILE_PATTERN.test(fileName) || LEGACY_LOG_FILE_PATTERN.test(fileName);
+}
+
 function rotateLogFiles(logDir: string): void {
   try {
     const ownLogFiles = fs
       .readdirSync(logDir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && OWN_LOG_FILE_PATTERN.test(entry.name))
-      .map((entry) => {
-        const filePath = path.join(logDir, entry.name);
-        let mtimeMs = 0;
-        try {
-          mtimeMs = fs.statSync(filePath).mtimeMs;
-        } catch {
-          // Concurrent removal, etc.: treat as oldest rather than aborting.
-        }
-        return { name: entry.name, mtimeMs };
-      })
-      .sort((a, b) => a.mtimeMs - b.mtimeMs);
+      .filter((entry) => entry.isFile() && isOwnOrLegacyLogFile(entry.name))
+      .map((entry) => ({ name: entry.name, key: parseRotationKey(entry.name) }))
+      .sort((a, b) => compareRotationKeys(a.key, b.key));
 
     const excess = ownLogFiles.length - MAX_LOG_FILES;
     for (let i = 0; i < excess; i += 1) {
