@@ -185,16 +185,35 @@ describe("runShellCheck full-output logging — green run", () => {
 });
 
 describe("runShellCheck full-output logging — rotation", () => {
+  // A constant check name (no per-iteration numeric suffix) plus tracking
+  // each call's own returned log path is deliberate; see the identical
+  // rationale in the "rotation boundary" describe block below: a
+  // per-iteration name suffix can mask a naming-shape regression instead of
+  // catching it, so correctness here is verified against real paths.
   it("keeps only the last 20 of this check's own log files and ignores foreign files", async () => {
     const logDir = makeTempDir("preflight-fail-log-rotation-");
     fs.mkdirSync(logDir, { recursive: true });
     const foreignFile = path.join(logDir, "not-ours.txt");
     fs.writeFileSync(foreignFile, "leave me alone");
+    // Foreign files shaped like real logs from other tools that could share
+    // this directory: an nginx-style dated access log (three dash-separated
+    // number groups before `.log`, year, month, day) and a monthly backup
+    // log (two groups, year, month). Neither group is an actual epoch-ms
+    // timestamp, but a width-unbounded `\d+` in `OWN_LOG_FILE_PATTERN` /
+    // `LEGACY_LOG_FILE_PATTERN` would still match the dash-number-count
+    // shape alone and misclassify them as this feature's own files, which
+    // then makes them eligible for silent deletion by rotation. Both must
+    // survive untouched.
+    const nginxForeignFile = path.join(logDir, "nginx-2026-08-17.log");
+    fs.writeFileSync(nginxForeignFile, "not agent-preflight's log");
+    const backupForeignFile = path.join(logDir, "backup-2026-08.log");
+    fs.writeFileSync(backupForeignFile, "not agent-preflight's log either");
 
+    const logPaths: string[] = [];
     for (let i = 0; i < 25; i += 1) {
       const result = await runShellCheck({
         repoPath: os.tmpdir(),
-        name: `check-${i}`,
+        name: "rotation-check",
         kind: "lint",
         command: catCommand([`failure number ${i}`], 1),
         weight: 0.1,
@@ -202,15 +221,25 @@ describe("runShellCheck full-output logging — rotation", () => {
         logDir,
       });
       expect(result.check?.status).toBe("fail");
+      logPaths.push(result.check!.details![0].replace(/^full output: /, ""));
     }
 
     const entries = fs.readdirSync(logDir);
-    const ownFiles = entries.filter((name) => name !== "not-ours.txt");
+    const ownFiles = entries.filter(
+      (name) => name !== "not-ours.txt" && name !== "nginx-2026-08-17.log" && name !== "backup-2026-08.log"
+    );
     expect(ownFiles).toHaveLength(20);
     expect(entries).toContain("not-ours.txt");
+    expect(entries).toContain("nginx-2026-08-17.log");
+    expect(entries).toContain("backup-2026-08.log");
 
-    expect(ownFiles.some((name) => name.startsWith("check-0-"))).toBe(false);
-    expect(ownFiles.some((name) => name.startsWith("check-24-"))).toBe(true);
+    // The 5 oldest of the 25 real failures are rotated out, the 20 newest
+    // survive; verified against the actual returned paths, not a
+    // name-derived prefix.
+    expect(fs.existsSync(logPaths[0])).toBe(false);
+    expect(fs.existsSync(logPaths[4])).toBe(false);
+    expect(fs.existsSync(logPaths[5])).toBe(true);
+    expect(fs.existsSync(logPaths[24])).toBe(true);
   });
 });
 

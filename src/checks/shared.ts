@@ -580,7 +580,21 @@ function sanitizeLogFileName(name: string): string {
 // another tool) are never touched by rotation. The three captured groups
 // double as the deterministic sort key `rotateLogFiles` uses below (see
 // `parseRotationKey`).
-const OWN_LOG_FILE_PATTERN = /-(\d+)-(\d+)-(\d+)\.log$/;
+//
+// Precision decision (fail-log hardening review, task 016425e6): a
+// width-unbounded `\d+` for the first (epoch-ms) group matches any
+// dash-number-count shape, not just an actual timestamp; an nginx-style
+// dated log (`nginx-2026-08-17.log`, three dash-separated groups: year,
+// month, day) or a monthly backup log (`backup-2026-08.log`, two groups)
+// dropped into the same directory by another tool would satisfy the group
+// count alone. Misclassifying such a file as "ours" makes it eligible for
+// silent deletion by rotation, since its tiny fake "epoch" sorts as the
+// oldest entry. `Date.now()` is 13 digits for the entire lifetime of this
+// feature (already past 1e12 in 2001, not reaching 1e14 until the year
+// 5138), so `\d{13,}` accepts every real epoch-ms value while rejecting
+// short numeric groups like a calendar year or month that happen to share
+// the file-naming shape.
+const OWN_LOG_FILE_PATTERN = /-(\d{13,})-(\d+)-(\d+)\.log$/;
 
 // Filenames written by the pre-0.4.0 fail-log feature (task 6691dd56 / PR
 // #45), before `persistFailureOutput` started embedding `process.pid`:
@@ -595,7 +609,12 @@ const OWN_LOG_FILE_PATTERN = /-(\d+)-(\d+)-(\d+)\.log$/;
 // is a one-time drain: once a legacy file rotates out, nothing ever writes
 // that shape again, so the directory converges back to pure current-format
 // files and this pattern stops matching anything.
-const LEGACY_LOG_FILE_PATTERN = /-(\d+)-(\d+)\.log$/;
+//
+// Same `\d{13,}` epoch-width guard as `OWN_LOG_FILE_PATTERN` above, for
+// the same reason: without it, a two-dash-number-group foreign file like
+// `backup-2026-08.log` would match this pattern too and become eligible for
+// silent deletion by rotation.
+const LEGACY_LOG_FILE_PATTERN = /-(\d{13,})-(\d+)\.log$/;
 
 function persistFailureOutput(
   logDir: string | undefined,
