@@ -185,6 +185,78 @@ Strategy: **unit-tests** with [Vitest](https://vitest.dev/).
 - Tests must not depend on environment variables unless explicitly set in the test.
 - Run the suite with `npm test` (`vitest run`); collect coverage with `npx vitest run --coverage` (provided by `@vitest/coverage-v8`). Aim for branch coverage of the check runners (`src/checks/`) and `runner.ts`; there is no enforced threshold gate.
 
+### Test-File Typecheck (CI)
+
+A project's `tsconfig.json` almost always excludes test files from `tsc`
+(so `npm run build` doesn't try to emit them), and Vitest transpiles test
+files without typechecking them at all. That combination is a gap: a test
+file can hold a real type error: a fixture that no longer matches a
+type, a wrong generic, a typo'd property, and nothing in CI ever sees
+it. The suite still runs green because Vitest only cares that the file
+transpiles, not that it typechecks.
+
+agent-preflight closes this gap for itself (PR #43, 2026-06-28) with a
+second, test-scoped tsconfig and a second CI step:
+
+```jsonc
+// tsconfig.test.json
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "declaration": false
+  },
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+```yaml
+# .github/workflows/ci.yml
+- run: npx tsc --noEmit --skipLibCheck
+- run: npx tsc --noEmit -p tsconfig.test.json
+- run: npx vitest run --coverage
+```
+
+The CI step runs right after the normal build-scoped typecheck, before
+the test run, so a bad test file fails fast with a `tsc` error instead
+of silently passing under Vitest.
+
+**Negative-control recipe**: whenever adding or touching this step,
+prove it actually gates: append a deliberate type error to any test file
+(e.g. `const __negativeControl: number = "not a number";`), confirm
+`npx tsc --noEmit -p tsconfig.test.json` fails, then revert the file. If
+the step doesn't fail on that, the config is wrong (wrong `include`,
+wrong `rootDir`, or the CI step didn't get wired in).
+
+**Adapting the pattern to a different repo:**
+
+- `include` must match the repo's actual test layout; a separate
+  `tests/`, a colocated `*.test.ts` beside `src/`, or both.
+- If a project's base `tsconfig.json` already includes its test files
+  with no exclusion (e.g. `include: ["src"]` with tests colocated and
+  no `*.test.ts` exclude pattern), the gap does not exist there, so no
+  new config needed, just confirm with `tsc --noEmit --listFiles`.
+- If a test file imports source from a sibling package (a workspace
+  monorepo test reaching across package boundaries), `rootDir: "."`
+  is not wide enough, widen it to the common ancestor (e.g. `".."`)
+  so `tsc` doesn't reject the cross-package file with `TS6059`.
+- Name the new script to match the repo's existing convention for its
+  build-scoped typecheck step (`typecheck:test`, `lint:test`, …), not
+  necessarily `typecheck:test`; see the adopter list below.
+
+**Cross-repo rollout (2026-08-17, task 03f1b6d7):**
+
+| Repo | Status | Notes |
+| --- | --- | --- |
+| agent-preflight | Origin (PR #43) | Exemplar; single package. |
+| agent-relay | No gap | Tests colocated in `src/`, already covered by the base `tsconfig.json` (no test exclusion) and the existing `typecheck` CI step. |
+| agent-dx | Adopted (PR #101) | Per-package rollout across 7 of 8 workspace packages with a Vitest suite (`git-batch-cli` is plain JS, out of scope). One real surfaced error fixed in `slop-detector` (a `vi.hoisted()` factory whose control-flow-narrowed return type made a later mock assignment untypeable). |
+| triologue-agent-gateway | Adopted (PR #43) | Root already covered its 14 colocated test files; added the config for `sdk/` and `bridge/`, whose CI typecheck steps were compiling zero test files. No errors surfaced. |
+| agent-tasks | Adopted (PR #464) | Per-workspace rollout across `backend`, `cli`, `mcp-server`, `mcp-bridge` (`frontend` already covered, no gap). `backend` surfaced ~26 real errors across 13 files: test fixtures built with a stale `Actor` shape missing a since-added mandatory field, a loosely-typed base fixture spread with an overriding property, a lazily-imported function typed with the wrong generic, and a read of a schema property that legitimately never exists. All fixed in the test files only. |
+| project-pilot | Adopted (PR #126) | Per-workspace rollout across `backend`, `mcp`, `frontend`. No errors surfaced. `frontend` needed both a new script (no prior typecheck step existed at all) and an `exclude` override (its base tsconfig explicitly excludes `*.test.ts`/`*.test.tsx`, unlike agent-tasks' frontend). |
+
 ### Test Naming
 
 Name `describe` blocks after the unit under test and `it` blocks after the scenario and expected outcome:
