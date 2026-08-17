@@ -306,12 +306,27 @@ describe("runShellCheck full-output logging — rotation sorts by the filename k
 });
 
 describe("runShellCheck full-output logging — rotation boundary (MAX_LOG_FILES = 20)", () => {
+  // A constant check name (no per-iteration numeric suffix) is deliberate:
+  // an earlier version of these tests used `boundary-${i}` as the check
+  // name and asserted on a `boundary-<i>-` filename prefix. That is a weak
+  // pin — with a per-iteration digit suffix baked into the check name, a
+  // mutant that drops the pid segment from the persisted filename (reverting
+  // `persistFailureOutput` to the pre-016425e6 `<name>-<epoch>-<seq>.log`
+  // shape) still produces a filename with three dash-separated number groups
+  // before `.log` (the trailing digit of e.g. "boundary-0" supplies the
+  // spurious third one), so `OWN_LOG_FILE_PATTERN` kept matching and
+  // rotation kept "working" — for the wrong reason, since the resulting sort
+  // key was reading the check-name digit as the epoch. Using one constant
+  // name per test and tracking each call's own returned log path removes
+  // that accidental masking: rotation correctness is verified against real
+  // paths, not a name-derived prefix.
   it("keeps all 20 files when exactly at the limit", async () => {
     const logDir = makeTempDir("preflight-fail-log-rotation-20-");
+    const logPaths: string[] = [];
     for (let i = 0; i < 20; i += 1) {
       const result = await runShellCheck({
         repoPath: os.tmpdir(),
-        name: `boundary-${i}`,
+        name: "boundaryN",
         kind: "lint",
         command: catCommand([`failure number ${i}`], 1),
         weight: 0.1,
@@ -319,20 +334,22 @@ describe("runShellCheck full-output logging — rotation boundary (MAX_LOG_FILES
         logDir,
       });
       expect(result.check?.status).toBe("fail");
+      logPaths.push(result.check!.details![0].replace(/^full output: /, ""));
     }
 
     const entries = fs.readdirSync(logDir);
     expect(entries).toHaveLength(20);
-    expect(entries.some((name) => name.startsWith("boundary-0-"))).toBe(true);
-    expect(entries.some((name) => name.startsWith("boundary-19-"))).toBe(true);
+    expect(fs.existsSync(logPaths[0])).toBe(true);
+    expect(fs.existsSync(logPaths[19])).toBe(true);
   });
 
   it("deletes exactly the single oldest file once the limit is exceeded by one", async () => {
     const logDir = makeTempDir("preflight-fail-log-rotation-21-");
+    const logPaths: string[] = [];
     for (let i = 0; i < 21; i += 1) {
       const result = await runShellCheck({
         repoPath: os.tmpdir(),
-        name: `boundary-${i}`,
+        name: "boundaryN",
         kind: "lint",
         command: catCommand([`failure number ${i}`], 1),
         weight: 0.1,
@@ -340,13 +357,67 @@ describe("runShellCheck full-output logging — rotation boundary (MAX_LOG_FILES
         logDir,
       });
       expect(result.check?.status).toBe("fail");
+      logPaths.push(result.check!.details![0].replace(/^full output: /, ""));
     }
 
     const entries = fs.readdirSync(logDir);
     expect(entries).toHaveLength(20);
-    expect(entries.some((name) => name.startsWith("boundary-0-"))).toBe(false);
-    expect(entries.some((name) => name.startsWith("boundary-1-"))).toBe(true);
-    expect(entries.some((name) => name.startsWith("boundary-20-"))).toBe(true);
+    expect(fs.existsSync(logPaths[0])).toBe(false);
+    expect(fs.existsSync(logPaths[1])).toBe(true);
+    expect(fs.existsSync(logPaths[20])).toBe(true);
+  });
+});
+
+describe("runShellCheck full-output logging — legacy pre-pid filenames are drained, not orphaned", () => {
+  it("counts legacy `<check>-<epoch>-<seq>.log` files in the same rotation pass as current-format files and deletes the oldest across both shapes", async () => {
+    const logDir = makeTempDir("preflight-fail-log-legacy-drain-");
+    const baseEpoch = 1_700_000_000_000;
+
+    // Seed 15 legacy-format files (no pid segment — the shape written by
+    // agent-preflight <0.4.0) as the oldest 15, and 5 current-format files
+    // as the newest 5. Total = 20, exactly at MAX_LOG_FILES, so nothing
+    // should be deleted yet.
+    for (let i = 0; i < 15; i += 1) {
+      const fileName = `legacy-check-${baseEpoch + i}-1.log`;
+      fs.writeFileSync(path.join(logDir, fileName), `legacy seed ${i}`);
+    }
+    for (let i = 0; i < 5; i += 1) {
+      const fileName = `legacy-check-${baseEpoch + 1000 + i}-1-1.log`;
+      fs.writeFileSync(path.join(logDir, fileName), `current seed ${i}`);
+    }
+    expect(fs.readdirSync(logDir)).toHaveLength(20);
+
+    // One more real failure pushes the count to 21. If legacy files were
+    // still orphaned (the pre-fix bug), rotation would only ever see the 5
+    // current-format seed files, conclude it is well under the 20-file cap,
+    // and delete nothing — the directory would grow to 21 files and keep
+    // growing forever after. With the fix, all 20 seeded files (legacy +
+    // current) plus the new one are counted together, and the single
+    // oldest — a legacy file, since all legacy seeds predate all current
+    // seeds — is deleted.
+    const result = await runShellCheck({
+      repoPath: os.tmpdir(),
+      name: "legacy-check",
+      kind: "lint",
+      command: catCommand(["trigger rotation"], 1),
+      weight: 0.1,
+      failureMessage: "lint failed",
+      logDir,
+    });
+    expect(result.check?.status).toBe("fail");
+
+    const entries = fs.readdirSync(logDir);
+    expect(entries).toHaveLength(20);
+    // The oldest legacy file (i=0) is gone…
+    expect(entries).not.toContain(`legacy-check-${baseEpoch + 0}-1.log`);
+    // …but later legacy files and all current-format seeds survive: the
+    // legacy batch drained from its own oldest end, mixed in by timestamp
+    // with the current-format batch, not wholesale ignored or wholesale
+    // wiped.
+    expect(entries).toContain(`legacy-check-${baseEpoch + 14}-1.log`);
+    for (let i = 0; i < 5; i += 1) {
+      expect(entries).toContain(`legacy-check-${baseEpoch + 1000 + i}-1-1.log`);
+    }
   });
 });
 

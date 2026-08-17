@@ -575,11 +575,27 @@ function sanitizeLogFileName(name: string): string {
 
 // Any file rotation considers "ours" ends in
 // `-<epoch-ms>-<pid>-<sequence>.log`, matching exactly what
-// `persistFailureOutput` writes below. Files that don't match (e.g. logs
-// dropped into the same directory by another tool) are never touched by
-// rotation. The three captured groups double as the deterministic sort key
-// `rotateLogFiles` uses below (see `parseRotationKey`).
+// `persistFailureOutput` writes below. Files that don't match either this or
+// `LEGACY_LOG_FILE_PATTERN` (e.g. logs dropped into the same directory by
+// another tool) are never touched by rotation. The three captured groups
+// double as the deterministic sort key `rotateLogFiles` uses below (see
+// `parseRotationKey`).
 const OWN_LOG_FILE_PATTERN = /-(\d+)-(\d+)-(\d+)\.log$/;
+
+// Filenames written by the pre-0.4.0 fail-log feature (task 6691dd56 / PR
+// #45), before `persistFailureOutput` started embedding `process.pid`:
+// `<check>-<epoch-ms>-<sequence>.log` — two number groups instead of three.
+// `OWN_LOG_FILE_PATTERN` stopped matching these the moment the pid segment
+// was added (task 016425e6), which orphaned any log file already on disk
+// from a prior install: `rotateLogFiles` no longer counted them, so they
+// could never be picked for deletion and would sit in the directory forever
+// alongside the current 20-file cap instead of draining through it. This
+// predicate re-admits a legacy-named file into the same rotation pass (see
+// `parseRotationKey`'s synthetic key for it) so it ages out normally. This
+// is a one-time drain: once a legacy file rotates out, nothing ever writes
+// that shape again, so the directory converges back to pure current-format
+// files and this pattern stops matching anything.
+const LEGACY_LOG_FILE_PATTERN = /-(\d+)-(\d+)\.log$/;
 
 function persistFailureOutput(
   logDir: string | undefined,
@@ -606,33 +622,47 @@ function persistFailureOutput(
 const MAX_LOG_FILES = 20;
 
 // (epochMs, pid, sequence) extracted from a filename that already matched
-// `OWN_LOG_FILE_PATTERN`. Used to sort oldest-first for rotation.
+// `OWN_LOG_FILE_PATTERN` or `LEGACY_LOG_FILE_PATTERN`. Used to sort
+// oldest-first for rotation.
 type RotationKey = readonly [epochMs: number, pid: number, sequence: number];
 
-// The filename already carries a deterministic (epochMs, pid, sequence) key
-// — reading it back out of the name lets rotation sort oldest-first without
-// a single `statSync` call (and without the mtime-can-be-touched-by-other-
-// tools ambiguity a stat-based sort would have). `OWN_LOG_FILE_PATTERN` is
-// the single source of truth for both "is this ours" and "what's its key".
+// The filename already carries a deterministic sort key — reading it back
+// out of the name lets rotation sort oldest-first without a single
+// `statSync` call (and without the mtime-can-be-touched-by-other-tools
+// ambiguity a stat-based sort would have). `OWN_LOG_FILE_PATTERN` and
+// `LEGACY_LOG_FILE_PATTERN` are the single source of truth for both "is
+// this ours" and "what's its key": a current-format match yields the real
+// `(epochMs, pid, sequence)` triple; a legacy match (no pid segment) yields
+// a synthetic `[epochMs, 0, 0]` so it sorts purely by its own timestamp and
+// drains through the same 20-file cap as current-format files instead of
+// being permanently skipped.
 function parseRotationKey(fileName: string): RotationKey {
-  const match = fileName.match(OWN_LOG_FILE_PATTERN);
-  // Defensive fallback only: every caller filters with the same pattern
-  // first, so a non-match here should be unreachable.
-  if (!match) {
-    return [0, 0, 0];
+  const ownMatch = fileName.match(OWN_LOG_FILE_PATTERN);
+  if (ownMatch) {
+    return [Number(ownMatch[1]), Number(ownMatch[2]), Number(ownMatch[3])];
   }
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
+  const legacyMatch = fileName.match(LEGACY_LOG_FILE_PATTERN);
+  if (legacyMatch) {
+    return [Number(legacyMatch[1]), 0, 0];
+  }
+  // Defensive fallback only: every caller filters with `isOwnOrLegacyLogFile`
+  // first, so reaching here should be unreachable.
+  return [0, 0, 0];
 }
 
 function compareRotationKeys(a: RotationKey, b: RotationKey): number {
   return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 }
 
+function isOwnOrLegacyLogFile(fileName: string): boolean {
+  return OWN_LOG_FILE_PATTERN.test(fileName) || LEGACY_LOG_FILE_PATTERN.test(fileName);
+}
+
 function rotateLogFiles(logDir: string): void {
   try {
     const ownLogFiles = fs
       .readdirSync(logDir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && OWN_LOG_FILE_PATTERN.test(entry.name))
+      .filter((entry) => entry.isFile() && isOwnOrLegacyLogFile(entry.name))
       .map((entry) => ({ name: entry.name, key: parseRotationKey(entry.name) }))
       .sort((a, b) => compareRotationKeys(a.key, b.key));
 

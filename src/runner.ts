@@ -1,7 +1,19 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { CheckResult, PreflightConfig, PreflightResult } from "./types.js";
 import { ensureProjectSetup, getWorkingDirHint } from "./checks/shared.js";
+
+// Expands a leading `~/` in a configured path to `os.homedir()`, the way a
+// shell would, before the absolute/relative resolution below runs. Without
+// this, `logDir: "~/logs"` was resolved as the literal relative path
+// `<repoPath>/~/logs` (a directory named `~` inside the repo) instead of
+// under the user's home directory, because `path.isAbsolute("~/logs")` is
+// false. Only the leading-`~/` shape is handled (the common case for a
+// directory value); a bare `~` with no trailing segment is left as-is.
+function expandLeadingTilde(value: string): string {
+  return value.startsWith("~/") ? path.join(os.homedir(), value.slice(2)) : value;
+}
 
 export async function runPreflight(
   repoPath: string,
@@ -19,8 +31,9 @@ export async function runPreflight(
   // also relocate the failure-log directory, and callers running preflight
   // from a different cwd than the repo (e.g. `runBatch`) still get a
   // predictable, repo-relative location for a relative `logDir`.
-  const effectiveConfig: PreflightConfig = config.logDir
-    ? { ...config, logDir: path.isAbsolute(config.logDir) ? config.logDir : path.resolve(repoPath, config.logDir) }
+  const configuredLogDir = config.logDir ? expandLeadingTilde(config.logDir) : undefined;
+  const effectiveConfig: PreflightConfig = configuredLogDir
+    ? { ...config, logDir: path.isAbsolute(configuredLogDir) ? configuredLogDir : path.resolve(repoPath, configuredLogDir) }
     : config;
 
   // Import check runners dynamically to keep dependencies optional
