@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **MCP server (`preflight-mcp`)** (task 91953eae). `src/mcp.ts` / `dist/mcp.js`, stdio only, registered via `claude mcp add preflight -- preflight-mcp`. Exposes `preflight_run({ repoPath, ciSimulation?, noAudit?, noSecrets? })` and `preflight_batch({ root, only?, exclude? })`, calling `runPreflight`/`runBatch` directly (no CLI shelling) and returning the exact structured JSON `preflight run --json` / `preflight batch --json` produce. Both tool descriptions carry the same "`ready:false` means this PR will likely break CI; do not merge" guidance the CLI's exit code conveys. A nonexistent `repoPath`/`root` returns a structured tool error instead of crashing.
 - **`PreflightConfig.logDir`** (task 016425e6, follow-up to the 0.3.0 fail-log feature / PR #45). Wired through every check runner that persists failure logs (lint, typecheck, test, audit, custom), so operators can override the default `~/.agent-preflight/logs` per repo via `.preflight.json`. A relative value resolves against the repo root, not `workingDir` and not `process.cwd()`; a leading `~/` expands to the home directory.
 
 ### Changed

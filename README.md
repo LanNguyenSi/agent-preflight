@@ -91,6 +91,31 @@ preflight sandbox --docker-socket --ci-simulation
 
 `preflight batch` is inspired by [`git-batch-cli`](https://github.com/LanNguyenSi/agent-dx/tree/master/packages/git-batch-cli) and runs the single-repo path against every git repo under the given root.
 
+## MCP server
+
+`preflight-mcp` exposes the same runner over [MCP](https://modelcontextprotocol.io) (stdio only) so other agents/tools can call preflight in-process instead of shelling out to the CLI. Register it once and it survives a session restart:
+
+```bash
+claude mcp add preflight -- preflight-mcp
+```
+
+or, without a global install:
+
+```bash
+claude mcp add preflight -- node /path/to/agent-preflight/dist/mcp.js
+```
+
+Two tools:
+
+| Tool | Input | Returns |
+|------|-------|---------|
+| `preflight_run` | `{ repoPath, ciSimulation?, noAudit?, noSecrets? }` | Exactly what `preflight run --json` prints: `ready`, `confidence`, `checks`, `blockers`, `warnings`, `limitations`, `durationMs`, `timestamp` |
+| `preflight_batch` | `{ root, only?, exclude? }` | Exactly what `preflight batch --json` prints: per-repo results plus aggregate `ready`/`notReady`/`skipped` counts |
+
+Both tool descriptions carry the same semantics as the CLI's exit code: **`ready: false` (or a per-repo `result.ready: false`) means that repo/PR will likely break CI — do not merge on it.** `ciSimulation`, `noAudit`, and `noSecrets` mirror the CLI's `--ci-simulation`, `--no-audit`, and `--no-secrets` flags. A `repoPath`/`root` that doesn't exist returns a structured tool error (`isError: true`), not a crash.
+
+This is stdio-only — no remote/HTTP transport, no new checks beyond what `preflight run`/`preflight batch` already do.
+
 ## Configuration
 
 `.preflight.json` in the repo root, all keys optional:
