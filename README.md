@@ -110,6 +110,7 @@ preflight sandbox --docker-socket --ci-simulation
     "tdd": true
   },
   "protectedBranches": ["main", "master"],
+  "logDir": ".preflight-logs",
   "secretDetectionStrict": false,
   "secretAllowlist": ["fixtures/*", "src/config.ts:42"],
   "tddExceptions": ["src/generated/**"],
@@ -134,14 +135,20 @@ preflight sandbox --docker-socket --ci-simulation
 
 If no commands are configured, agent-preflight auto-detects common Node, Python, PHP, and Java manifests and picks reasonable defaults. The full toggle, override, and monorepo guidance lives in [docs/checks.md](docs/checks.md). Sandbox image profiles, apt packages, and act flags are covered in [docs/architecture.md](docs/architecture.md#sandbox).
 
-When a shell-based check fails, its complete stdout+stderr is written
-best-effort to `~/.agent-preflight/logs/<check>-<timestamp>.log` (only the
-20 newest of these logs are kept; unrelated files in that directory are
-never touched), and the check's `details` lead with `full output: <path>`
-plus the parsed vitest/jest failure lines so consumers can name the failing
-tests without re-running the suite. A failed log write silently falls back
-to the previous first-10-lines detail behavior — it never affects the
-check result.
+When a shell-based check (lint, typecheck, test, audit, custom) fails, its
+complete stdout+stderr is written best-effort to
+`~/.agent-preflight/logs/<check>-<epoch-ms>-<pid>-<sequence>.log` — override
+the directory with `logDir` in `.preflight.json` (a relative path resolves
+against the repo root, not `workingDir` and not the process's cwd). The pid
+and per-process sequence number together keep two failures of the same
+check from colliding even at the identical millisecond, whether they come
+from the same process or two concurrent `preflight` runs sharing a log
+directory. Only the 20 newest of these logs are kept; unrelated files in
+that directory are never touched. The check's `details` lead with
+`full output: <path>` plus up to 10 parsed vitest/jest failure lines so
+consumers can name the failing tests without re-running the suite. A failed
+log write silently falls back to the previous first-10-lines detail
+behavior — it never affects the check result.
 
 ## Skill templates
 

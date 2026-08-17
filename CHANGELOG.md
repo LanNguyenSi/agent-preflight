@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Fail-log hardening: pid in filename, name-key rotation sort, stricter failure-marker matching, new `PreflightConfig.logDir`** (task 016425e6, follow-up to the 0.3.0 fail-log feature / PR #45). The persisted-failure-log filename now includes `process.pid` (`<check>-<epoch-ms>-<pid>-<sequence>.log`) so two different `preflight` processes failing the same check in the same millisecond no longer collide — the previous scheme was only collision-free within a single process. `rotateLogFiles` now sorts by the filename's own `(epochMs, pid, sequence)` key instead of `statSync` mtime, which is both deterministic (no more races with other tools touching mtimes) and avoids a stat syscall per log file. `FAILURE_LINE_PATTERN`'s bullet markers (`×`, `✗`, `❯`, `●`) now require trailing whitespace, narrowing accidental matches on glyphs glued to unrelated text; this only affects which lines are highlighted in the informational `details` array on an already-failing check; it never touches `ready`, `confidence`, or pass/fail status. `PreflightConfig.logDir` is now wired through every check runner that persists failure logs (lint, typecheck, test, audit, custom), resolved against the repo root when relative, so operators can override the default `~/.agent-preflight/logs` per-repo via `.preflight.json`.
+
 ## [0.3.0] - 2026-07-18
 
 ### Added

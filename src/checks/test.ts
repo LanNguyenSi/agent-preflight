@@ -26,7 +26,7 @@ export async function runTestChecks(
       ? []
       : ["Skipping recursive Node test command while already running under Vitest"];
 
-    const result = await runConfiguredCommands(repoPath, "test", safeCommands, 0.2);
+    const result = await runConfiguredCommands(repoPath, "test", safeCommands, 0.2, config.logDir);
     return {
       checks: result.checks,
       limitations: [...limitations, ...result.limitations],
@@ -52,6 +52,7 @@ export async function runTestChecks(
           missingLimitation: "npm script `test` invokes a tool that is not installed; Node test check skipped",
           treatToolNotFoundAsLimitation: true,
           timeoutMs: 300_000,
+          logDir: config.logDir,
         });
         if (result.check) {
           checks.push(result.check);
@@ -76,6 +77,7 @@ export async function runTestChecks(
         failureMessage: "pytest failed",
         missingLimitation: "pytest not installed; Python test check skipped",
         timeoutMs: 300_000,
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);
@@ -97,6 +99,7 @@ export async function runTestChecks(
         missingLimitation: "composer script `test` invokes a tool that is not installed; PHP test check skipped",
         treatToolNotFoundAsLimitation: true,
         timeoutMs: 300_000,
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);
@@ -110,6 +113,7 @@ export async function runTestChecks(
         weight: 0.2,
         failureMessage: "phpunit failed",
         timeoutMs: 300_000,
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);
@@ -140,6 +144,7 @@ export async function runTestChecks(
         failureMessage: "Java test command failed",
         missingLimitation: "Maven/Gradle not installed; Java test check skipped",
         timeoutMs: 300_000,
+        logDir: config.logDir,
       });
       if (result.check) {
         checks.push(result.check);

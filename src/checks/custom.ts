@@ -17,6 +17,7 @@ export async function runCustomChecks(
       weight: 0.1,
       failureMessage: `${customCheck.name} failed`,
       failureStatus: customCheck.failOnError === false ? "warn" : "fail",
+      logDir: config.logDir,
     });
 
     if (result.check) {

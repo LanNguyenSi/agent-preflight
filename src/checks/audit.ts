@@ -19,7 +19,7 @@ export async function runAuditChecks(
 ): Promise<CheckSetResult> {
   const configuredCommands = getConfiguredCommands(config, "audit");
   if (configuredCommands.length > 0) {
-    return runConfiguredCommands(repoPath, "audit", configuredCommands, 0.15);
+    return runConfiguredCommands(repoPath, "audit", configuredCommands, 0.15, config.logDir);
   }
 
   const context = createProjectContext(repoPath);
@@ -72,6 +72,7 @@ export async function runAuditChecks(
           failureMessage: "pip-audit found dependency issues",
           missingLimitation: "pip-audit not installed; Python audit skipped",
           failureStatus: "warn",
+          logDir: config.logDir,
         });
         if (result.check) {
           checks.push(result.check);
@@ -94,6 +95,7 @@ export async function runAuditChecks(
       failureMessage: "composer audit found dependency issues",
       missingLimitation: "composer not installed; PHP audit skipped",
       failureStatus: "warn",
+      logDir: config.logDir,
     });
     if (result.check) {
       checks.push(result.check);

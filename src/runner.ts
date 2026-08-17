@@ -14,6 +14,15 @@ export async function runPreflight(
     limitations.push(...await ensureProjectSetup(targetPath));
   }
 
+  // `logDir` is resolved against `repoPath` (not `targetPath`/`workingDir`,
+  // and not `process.cwd()`) so a monorepo's `workingDir` override doesn't
+  // also relocate the failure-log directory, and callers running preflight
+  // from a different cwd than the repo (e.g. `runBatch`) still get a
+  // predictable, repo-relative location for a relative `logDir`.
+  const effectiveConfig: PreflightConfig = config.logDir
+    ? { ...config, logDir: path.isAbsolute(config.logDir) ? config.logDir : path.resolve(repoPath, config.logDir) }
+    : config;
+
   // Import check runners dynamically to keep dependencies optional
   const { runLintChecks } = await import("./checks/lint.js");
   const { runTypecheckChecks } = await import("./checks/typecheck.js");
@@ -32,25 +41,25 @@ export async function runPreflight(
   }
 
   if (config.checks?.lint !== false) {
-    const result = await runLintChecks(targetPath, config);
+    const result = await runLintChecks(targetPath, effectiveConfig);
     checks.push(...result.checks);
     limitations.push(...result.limitations);
   }
 
   if (config.checks?.typecheck !== false) {
-    const result = await runTypecheckChecks(targetPath, config);
+    const result = await runTypecheckChecks(targetPath, effectiveConfig);
     checks.push(...result.checks);
     limitations.push(...result.limitations);
   }
 
   if (config.checks?.test !== false) {
-    const result = await runTestChecks(targetPath, config);
+    const result = await runTestChecks(targetPath, effectiveConfig);
     checks.push(...result.checks);
     limitations.push(...result.limitations);
   }
 
   if (config.checks?.audit !== false) {
-    const result = await runAuditChecks(targetPath, config);
+    const result = await runAuditChecks(targetPath, effectiveConfig);
     checks.push(...result.checks);
     limitations.push(...result.limitations);
   }
@@ -83,7 +92,7 @@ export async function runPreflight(
   }
 
   if ((config.customChecks ?? []).length > 0) {
-    const result = await runCustomChecks(targetPath, config);
+    const result = await runCustomChecks(targetPath, effectiveConfig);
     checks.push(...result.checks);
     limitations.push(...result.limitations);
   }
