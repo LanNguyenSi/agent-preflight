@@ -7,11 +7,23 @@ import * as os from 'os';
 
 describe('Critical Path Integration Tests', () => {
   let testRepoPath: string;
+  // Every runPreflight() call below enables typecheck against a fixture repo
+  // that has a tsconfig.json but no local `typescript`/`tsc` and no
+  // scripts.typecheck, so it spawns a REAL `npx tsc` — which always fails
+  // here (npx resolves the unrelated, deprecated `tsc` placeholder package
+  // from the registry rather than finding TypeScript). Without an explicit
+  // `logDir`, that failure persists its full output to the real
+  // `~/.agent-preflight/logs` on whatever machine runs this suite (see the
+  // `ShellCheckOptions.logDir` docblock in src/checks/shared.ts: "Tests MUST
+  // override this to a temp directory"). Routing it inside `testRepoPath`
+  // means the existing `afterAll` cleanup below removes it for free.
+  let logDir: string;
 
   beforeAll(async () => {
     // Create a minimal valid test repository
     testRepoPath = path.join(os.tmpdir(), `preflight-test-${Date.now()}`);
     await fs.mkdir(testRepoPath, { recursive: true });
+    logDir = path.join(testRepoPath, '.preflight-test-logs');
 
     // Create package.json
     await fs.writeFile(
@@ -70,6 +82,7 @@ describe('Critical Path Integration Tests', () => {
         commitConvention: true,
         ciSimulation: false, // Skip act (not installed in test env)
       },
+      logDir,
     };
 
     const result = await runPreflight(testRepoPath, config);
@@ -102,6 +115,7 @@ describe('Critical Path Integration Tests', () => {
     );
 
     const config = await loadConfig(testRepoPath);
+    config.logDir = logDir;
     const result = await runPreflight(testRepoPath, config);
 
     // Verify that audit check was skipped
@@ -119,6 +133,7 @@ describe('Critical Path Integration Tests', () => {
         commitConvention: true,
         ciSimulation: false,
       },
+      logDir,
     };
 
     const result = await runPreflight(testRepoPath, config);
@@ -145,6 +160,7 @@ describe('Critical Path Integration Tests', () => {
         commitConvention: false,
         ciSimulation: false,
       },
+      logDir,
     };
 
     const result = await runPreflight(testRepoPath, config);
@@ -161,6 +177,7 @@ describe('Critical Path Integration Tests', () => {
       checks: {
         // ciSimulation not specified (defaults to false)
       },
+      logDir,
     };
 
     const result = await runPreflight(testRepoPath, config);
@@ -185,6 +202,7 @@ describe('Critical Path Integration Tests', () => {
         commitConvention: true,
         ciSimulation: false,
       },
+      logDir,
     };
 
     const start = Date.now();

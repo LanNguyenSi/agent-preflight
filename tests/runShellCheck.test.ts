@@ -6,10 +6,18 @@ import * as os from "os";
 
 describe("runShellCheck missing-binary pre-check", () => {
   let repoPath: string;
+  // Every runShellCheck() call below MUST override logDir: a failing check
+  // (e.g. "bash-wrapper") persists its full output via
+  // computeFailureDetails/persistFailureOutput, which falls back to the
+  // real ~/.agent-preflight/logs when logDir is omitted (see the
+  // ShellCheckOptions.logDir docblock in src/checks/shared.ts). Routing it
+  // inside repoPath means the existing afterAll cleanup removes it for free.
+  let logDir: string;
 
   beforeAll(async () => {
     repoPath = path.join(os.tmpdir(), `preflight-runshellcheck-${Date.now()}`);
     await fs.mkdir(repoPath, { recursive: true });
+    logDir = path.join(repoPath, ".preflight-test-logs");
   });
 
   afterAll(async () => {
@@ -19,6 +27,7 @@ describe("runShellCheck missing-binary pre-check", () => {
   it("returns limitation when primary binary is truly missing", async () => {
     const result = await runShellCheck({
       repoPath,
+      logDir,
       name: "nonexistent-tool",
       kind: "lint",
       command: "definitely-not-a-real-binary-xyz123 --foo",
@@ -34,6 +43,7 @@ describe("runShellCheck missing-binary pre-check", () => {
   it("returns real fail when binary exists but command exits non-zero (including 127 from nested)", async () => {
     const result = await runShellCheck({
       repoPath,
+      logDir,
       name: "bash-wrapper",
       kind: "lint",
       command: "bash -c 'exit 127'",
@@ -50,6 +60,7 @@ describe("runShellCheck missing-binary pre-check", () => {
   it("returns pass when binary exists and command succeeds", async () => {
     const result = await runShellCheck({
       repoPath,
+      logDir,
       name: "true-command",
       kind: "lint",
       command: "true",
@@ -69,6 +80,7 @@ describe("runShellCheck missing-binary pre-check", () => {
 
     const result = await runShellCheck({
       repoPath,
+      logDir,
       name: "mvnw-like",
       kind: "typecheck",
       command: "./mvnw-test -q compile",
@@ -91,6 +103,7 @@ describe("runShellCheck missing-binary pre-check", () => {
 
     const result = await runShellCheck({
       repoPath,
+      logDir,
       name: "path-qualified",
       kind: "lint",
       command: "vendor/bin/tool --check",
@@ -111,10 +124,16 @@ describe("runShellCheck missing-binary pre-check", () => {
 // specific patterns shells emit in that case.
 describe("runShellCheck treatToolNotFoundAsLimitation (wrapper invocations)", () => {
   let repoPath: string;
+  // See the matching comment on the describe block above: every fail-status
+  // call here (e.g. "npm-error-envelope-only", "real-violations") persists
+  // its output via computeFailureDetails and MUST override logDir, or it
+  // writes into the real ~/.agent-preflight/logs.
+  let logDir: string;
 
   beforeAll(async () => {
     repoPath = path.join(os.tmpdir(), `preflight-wrapper-missing-${Date.now()}`);
     await fs.mkdir(repoPath, { recursive: true });
+    logDir = path.join(repoPath, ".preflight-test-logs");
   });
 
   afterAll(async () => {
@@ -128,6 +147,7 @@ describe("runShellCheck treatToolNotFoundAsLimitation (wrapper invocations)", ()
     // limitation, not a fail.
     const result = await runShellCheck({
       repoPath,
+      logDir,
       name: "missing-via-wrapper",
       kind: "lint",
       command: "bash -c 'definitely-not-installed-xyz123 src/'",
@@ -148,6 +168,7 @@ describe("runShellCheck treatToolNotFoundAsLimitation (wrapper invocations)", ()
     // what the heuristic anchors on.
     const result = await runShellCheck({
       repoPath,
+      logDir,
       name: "npm-wrapped-real",
       kind: "lint",
       command:
@@ -168,6 +189,7 @@ describe("runShellCheck treatToolNotFoundAsLimitation (wrapper invocations)", ()
     // there is no `sh: ...: command not found` line, so it must remain a fail.
     const result = await runShellCheck({
       repoPath,
+      logDir,
       name: "npm-error-envelope-only",
       kind: "lint",
       command: "bash -c 'echo \"npm error code 127\" >&2; exit 1'",
@@ -185,6 +207,7 @@ describe("runShellCheck treatToolNotFoundAsLimitation (wrapper invocations)", ()
     // Conservative-by-default contract: no flag, no reclassification.
     const result = await runShellCheck({
       repoPath,
+      logDir,
       name: "no-flag",
       kind: "lint",
       command: "bash -c 'definitely-not-installed-xyz456 src/'",
@@ -202,6 +225,7 @@ describe("runShellCheck treatToolNotFoundAsLimitation (wrapper invocations)", ()
     // found` in output, no `npm error code 127`. Must remain a fail.
     const result = await runShellCheck({
       repoPath,
+      logDir,
       name: "real-violations",
       kind: "lint",
       command: "bash -c 'echo \"src/foo.ts:5:1: error: missing-semi\" >&2; exit 1'",
@@ -221,6 +245,7 @@ describe("runShellCheck treatToolNotFoundAsLimitation (wrapper invocations)", ()
     // failure stays a fail.
     const result = await runShellCheck({
       repoPath,
+      logDir,
       name: "bare-127-flagged",
       kind: "lint",
       command: "bash -c 'exit 127'",
@@ -241,6 +266,7 @@ describe("runShellCheck treatToolNotFoundAsLimitation (wrapper invocations)", ()
     // satisfy.
     const result = await runShellCheck({
       repoPath,
+      logDir,
       name: "false-positive-guard",
       kind: "lint",
       command: "bash -c 'echo \"rule check: command not found in our style guide is a warn\" >&2; exit 1'",
