@@ -11,6 +11,7 @@ Read this file before changing the codebase.
 - Distribution: Node CLI / npm package
 - Config format: `.preflight.json` in the repo root
 - Main entrypoint: `src/cli.ts`
+- Secondary entrypoint: `src/mcp.ts` (MCP stdio server, `preflight-mcp` binary)
 
 The tool runs local checks and returns a structured result with:
 
@@ -26,6 +27,7 @@ The tool runs local checks and returns a structured result with:
 - `preflight run [repoPath]`
 - `preflight batch [root]`
 - `preflight sandbox [repoPath]`
+- `preflight-mcp` (MCP stdio server; exposes `preflight_run`/`preflight_batch` — see `src/mcp.ts` and README "MCP server". The target repo's `.preflight.json` can define shell commands these tools execute, same as the CLI checks; only point it at trusted repositories.)
 
 The optional legacy Docker wrapper is `./agent-preflight-sandbox`.
 `preflight sandbox` resolves a capability-based local image profile from the target repo and may auto-build a matching image on first use.
@@ -40,6 +42,7 @@ agent-preflight/
 │   ├── batch.ts      # Batch-mode orchestration
 │   ├── cli.ts        # Commander CLI
 │   ├── config.ts     # .preflight.json loading + defaults
+│   ├── mcp.ts        # MCP stdio server (preflight_run/preflight_batch)
 │   ├── runner.ts     # Main preflight orchestration
 │   └── types.ts      # Shared types
 ├── tests/            # Vitest suites

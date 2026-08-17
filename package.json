@@ -4,7 +4,8 @@
   "description": "CI preflight validation tool for AI agents",
   "main": "dist/index.js",
   "bin": {
-    "preflight": "dist/cli.js"
+    "preflight": "dist/cli.js",
+    "preflight-mcp": "dist/mcp.js"
   },
   "files": [
     "dist",
@@ -38,8 +39,10 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "commander": "^12.0.0",
-    "execa": "^8.0.1"
+    "execa": "^8.0.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
