@@ -4,7 +4,7 @@
  * they never write into the real home directory." Individual test files are
  * expected to pass an explicit `logDir` to every `runShellCheck`/
  * `runPreflight` call that can fail, but that discipline is easy to forget
- * on a new test — this guard catches a regression across the WHOLE suite,
+ * on a new test; this guard catches a regression across the WHOLE suite,
  * not just the file it was added to.
  *
  * Why a Vitest `globalSetup` (this file) rather than the two alternatives
@@ -13,7 +13,7 @@
  * - A global `os.homedir()` stub in a per-file `setupFiles` entry would run
  *   inside every worker for every test file, which conflicts with
  *   `tests/shared-fail-log.test.ts`'s own dedicated test ("resolves under
- *   os.homedir()/.agent-preflight/logs when not overridden") — that test
+ *   os.homedir()/.agent-preflight/logs when not overridden"): that test
  *   deliberately asserts on the *real* default-logDir resolution behavior
  *   by mocking `os.homedir()` itself; a suite-wide stub would fight that
  *   test's own `vi.spyOn`/`vi.restoreAllMocks()` lifecycle (restoring past
@@ -44,7 +44,7 @@ function snapshot(): Set<string> {
     return new Set(fs.readdirSync(REAL_LOG_DIR));
   } catch {
     // Directory may not exist yet (e.g. a machine that never ran the real
-    // `preflight` CLI) — that's an empty snapshot, not an error.
+    // `preflight` CLI); that's an empty snapshot, not an error.
     return new Set();
   }
 }

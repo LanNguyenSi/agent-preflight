@@ -9,7 +9,7 @@ describe('Critical Path Integration Tests', () => {
   let testRepoPath: string;
   // Every runPreflight() call below enables typecheck against a fixture repo
   // that has a tsconfig.json but no local `typescript`/`tsc` and no
-  // scripts.typecheck, so it spawns a REAL `npx tsc` — which always fails
+  // scripts.typecheck, so it spawns a REAL `npx tsc`, which always fails
   // here (npx resolves the unrelated, deprecated `tsc` placeholder package
   // from the registry rather than finding TypeScript). Without an explicit
   // `logDir`, that failure persists its full output to the real
