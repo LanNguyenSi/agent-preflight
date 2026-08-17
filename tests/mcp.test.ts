@@ -6,6 +6,7 @@ import { execSync } from "child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { ProgressNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createMcpServer } from "../src/mcp.js";
 
 // Connects a fresh createMcpServer() instance to a fresh SDK Client over a
@@ -403,6 +404,66 @@ describe("preflight_batch only/exclude", () => {
   });
 });
 
+describe("preflight_batch noAudit/noSecrets threading", () => {
+  // Mirrors "preflight_run noAudit/noSecrets threading" above, but for
+  // preflight_batch's own configOverride wiring (src/mcp.ts noAudit/
+  // noSecrets lines just above the runBatch call). That block only
+  // exercises preflight_run's threading; every existing preflight_batch
+  // test uses a fixture with audit/secretDetection left at their default
+  // false, so "the check is absent" and "the flag suppressed it" were
+  // indistinguishable there — a mutant turning both configOverride lines
+  // into no-ops stayed green. As in the preflight_run block, this fixture
+  // has both checks ENABLED in its own .preflight.json.
+  let batchRoot: string;
+  let repoPath: string;
+
+  beforeAll(() => {
+    batchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-mcp-batch-threading-"));
+    const fixture = makeFixtureRepo("exit 0", { enableAudit: true, enableSecretDetection: true });
+    repoPath = path.join(batchRoot, path.basename(fixture));
+    fs.renameSync(fixture, repoPath);
+  });
+
+  afterAll(() => {
+    fs.rmSync(batchRoot, { recursive: true, force: true });
+  });
+
+  async function checkKinds(args: Record<string, unknown>): Promise<string[]> {
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({
+        name: "preflight_batch",
+        arguments: { root: batchRoot, ...args },
+      });
+      expect(response.isError).toBeFalsy();
+      const structured = response.structuredContent as {
+        results: Array<{ result: { checks: Array<{ kind: string }> } | null }>;
+      };
+      return (structured.results[0].result?.checks ?? []).map((c) => c.kind);
+    } finally {
+      await close();
+    }
+  }
+
+  it("includes both audit and secret-detection checks when neither flag is set", async () => {
+    const kinds = await checkKinds({});
+    expect(kinds).toContain("audit");
+    expect(kinds).toContain("secret-detection");
+  });
+
+  it("omits audit but keeps secret-detection when noAudit is set", async () => {
+    const kinds = await checkKinds({ noAudit: true });
+    expect(kinds).not.toContain("audit");
+    expect(kinds).toContain("secret-detection");
+  });
+
+  it("omits secret-detection but keeps audit when noSecrets is set", async () => {
+    const kinds = await checkKinds({ noSecrets: true });
+    expect(kinds).toContain("audit");
+    expect(kinds).not.toContain("secret-detection");
+  });
+});
+
 describe("progress notifications", () => {
   // A single test (per the task's "mind. ein Test" ask), using a short
   // 15ms progressIntervalMs (vs. the ~10s production default) so it does
@@ -429,6 +490,45 @@ describe("progress notifications", () => {
         // onprogress (which makes the SDK attach a progressToken
         // automatically), so at least one ping must arrive.
         expect(progressUpdates.length).toBeGreaterThanOrEqual(1);
+      } finally {
+        await close();
+      }
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  // Negative counterpart to the test above: a caller that never passes
+  // `onprogress` (so the SDK never attaches a `_meta.progressToken` to the
+  // request — see protocol.js's `request()`) must receive zero
+  // notifications/progress messages, not just "zero reaching *my*
+  // onprogress callback". `client.setNotificationHandler` is registered
+  // directly against the raw `ProgressNotificationSchema`, replacing the
+  // SDK's own built-in routing for that method, so this observes every
+  // notifications/progress message that actually crosses the wire —
+  // independent of whether this client asked for any.
+  it("sends no notifications/progress at all when the caller attaches no onprogress/progressToken", async () => {
+    const repoPath = makeFixtureRepo("sleep 0.3 && exit 0");
+    try {
+      const { client, close } = await connectedClient({ progressIntervalMs: 15 });
+      try {
+        const rawProgressNotifications: unknown[] = [];
+        client.setNotificationHandler(ProgressNotificationSchema, (notification) => {
+          rawProgressNotifications.push(notification);
+        });
+
+        const response = await client.callTool({
+          name: "preflight_run",
+          arguments: { repoPath },
+        });
+
+        expect(response.isError).toBeFalsy();
+        // The mutation this guards against: withProgressPings() dropping
+        // its `if (progressToken === undefined) return work();` guard,
+        // which would start the ping interval unconditionally and send
+        // notifications/progress to every caller, not just ones that
+        // opted in via a progressToken.
+        expect(rawProgressNotifications).toEqual([]);
       } finally {
         await close();
       }

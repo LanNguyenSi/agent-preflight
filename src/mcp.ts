@@ -217,14 +217,20 @@ async function withProgressPings<T>(
   let progress = 0;
   const timer = setInterval(() => {
     progress += 1;
-    void extra.sendNotification({
-      method: "notifications/progress",
-      params: {
-        progressToken,
-        progress,
-        message: "agent-preflight checks still running",
-      },
-    });
+    // Best-effort ping: a transport hiccup or a closed connection must
+    // never surface as an unhandled rejection from inside this interval
+    // callback (which isn't awaited by anything and has no caller to
+    // propagate to).
+    extra
+      .sendNotification({
+        method: "notifications/progress",
+        params: {
+          progressToken,
+          progress,
+          message: "agent-preflight checks still running",
+        },
+      })
+      .catch(() => {});
   }, intervalMs);
 
   try {
