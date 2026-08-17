@@ -263,6 +263,48 @@ describe("runShellCheck full-output logging — default logDir", () => {
   });
 });
 
+describe("runShellCheck full-output logging — rotation sorts by the filename key, not mtime", () => {
+  it("deletes the name-key-oldest file even when its mtime is the newest on disk", async () => {
+    const logDir = makeTempDir("preflight-fail-log-name-key-sort-");
+    const baseEpoch = 1_700_000_000_000;
+    const now = new Date();
+
+    // Seed exactly MAX_LOG_FILES (20) files whose *names* are in ascending
+    // chronological order (i=0 oldest by name-key, i=19 newest), but whose
+    // *mtimes* are deliberately set in the opposite order: i=0 gets the
+    // newest mtime, i=19 gets the oldest. If rotation ever regresses back
+    // to sorting by statSync mtime, it would delete i=19 (oldest mtime)
+    // instead of i=0 (oldest name-key) once the 21st file pushes it over
+    // the limit below.
+    for (let i = 0; i < 20; i += 1) {
+      const fileName = `seed-${baseEpoch + i}-1-1.log`;
+      fs.writeFileSync(path.join(logDir, fileName), `seed file ${i}`);
+      const mtime = new Date(now.getTime() - i * 60_000); // i=0 newest, i=19 oldest
+      fs.utimesSync(path.join(logDir, fileName), mtime, mtime);
+    }
+
+    // Push the count to 21 so rotation deletes exactly one file.
+    const result = await runShellCheck({
+      repoPath: os.tmpdir(),
+      name: "seed-trigger",
+      kind: "lint",
+      command: catCommand(["trigger rotation"], 1),
+      weight: 0.1,
+      failureMessage: "lint failed",
+      logDir,
+    });
+    expect(result.check?.status).toBe("fail");
+
+    const entries = fs.readdirSync(logDir);
+    expect(entries).toHaveLength(20);
+    // Name-key-oldest (i=0, despite having the newest mtime) is gone.
+    expect(entries).not.toContain(`seed-${baseEpoch + 0}-1-1.log`);
+    // Name-key-newest of the seeded batch (i=19, despite having the
+    // oldest mtime) survives.
+    expect(entries).toContain(`seed-${baseEpoch + 19}-1-1.log`);
+  });
+});
+
 describe("runShellCheck full-output logging — rotation boundary (MAX_LOG_FILES = 20)", () => {
   it("keeps all 20 files when exactly at the limit", async () => {
     const logDir = makeTempDir("preflight-fail-log-rotation-20-");
