@@ -6,6 +6,7 @@ INSTALL_DIR="${PREFLIGHT_INSTALL_DIR:-$HOME/.local/share/agent-preflight}"
 BIN_DIR="${PREFLIGHT_BIN_DIR:-$HOME/.local/bin}"
 TARGET_SCRIPT="$BIN_DIR/preflight"
 TARGET_SANDBOX="$BIN_DIR/preflight-sandbox"
+TARGET_MCP="$BIN_DIR/preflight-mcp"
 SHELL_RC=""
 INSTALL_MODE=""
 
@@ -80,6 +81,13 @@ exec "$TARGET_SCRIPT" sandbox "\$@"
 EOF
 chmod 0755 "$TARGET_SANDBOX"
 
+cat > "$TARGET_MCP" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec node "$INSTALL_DIR/dist/mcp.js" "\$@"
+EOF
+chmod 0755 "$TARGET_MCP"
+
 case "${SHELL:-}" in
   */zsh)
     SHELL_RC="$HOME/.zshrc"
@@ -126,8 +134,10 @@ echo ""
 echo "Installed:"
 echo "  $TARGET_SCRIPT"
 echo "  $TARGET_SANDBOX"
+echo "  $TARGET_MCP"
 echo "Mode: $INSTALL_MODE"
 echo ""
 echo "You can now run:"
 echo "  preflight run"
 echo "  preflight sandbox"
+echo "  preflight-mcp                 # MCP stdio server: claude mcp add preflight -- preflight-mcp"

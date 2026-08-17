@@ -110,11 +110,15 @@ Two tools:
 | Tool | Input | Returns |
 |------|-------|---------|
 | `preflight_run` | `{ repoPath, ciSimulation?, noAudit?, noSecrets? }` | Exactly what `preflight run --json` prints: `ready`, `confidence`, `checks`, `blockers`, `warnings`, `limitations`, `durationMs`, `timestamp` |
-| `preflight_batch` | `{ root, only?, exclude? }` | Exactly what `preflight batch --json` prints: per-repo results plus aggregate `ready`/`notReady`/`skipped` counts |
+| `preflight_batch` | `{ root, only?, exclude?, noAudit?, noSecrets? }` | Exactly what `preflight batch --json` prints: per-repo results plus aggregate `ready`/`notReady`/`skipped` counts |
 
-Both tool descriptions carry the same semantics as the CLI's exit code: **`ready: false` (or a per-repo `result.ready: false`) means that repo/PR will likely break CI — do not merge on it.** `ciSimulation`, `noAudit`, and `noSecrets` mirror the CLI's `--ci-simulation`, `--no-audit`, and `--no-secrets` flags. A `repoPath`/`root` that doesn't exist returns a structured tool error (`isError: true`), not a crash.
+Both tool descriptions carry the same semantics as the CLI's exit code: **`ready: false` (or a per-repo `result.ready: false`) means that repo/PR will likely break CI — do not merge on it.** `ciSimulation`, `noAudit`, and `noSecrets` mirror the CLI's `--ci-simulation`, `--no-audit`, and `--no-secrets` flags (`preflight_batch`'s `noAudit`/`noSecrets` apply to every repo in the batch, same as the CLI's `--no-audit`/`--no-secrets`). A `repoPath`/`root` that doesn't exist, or exists but isn't a directory, returns a structured tool error (`isError: true`), not a crash.
 
 This is stdio-only — no remote/HTTP transport, no new checks beyond what `preflight run`/`preflight batch` already do.
+
+**Security: the target repo is not just data.** Its `.preflight.json` can define shell commands (`customChecks[].command`, `commands.lint`/`typecheck`/`test`/`audit`) that these tools execute on the machine running the MCP server. Only point `preflight_run`/`preflight_batch` at repositories you trust — this is the same execution surface `preflight run`/`preflight batch` already have on the CLI, just now reachable by whatever agent/tool is calling the MCP server.
+
+**Timeouts and long runs.** The MCP SDK's default request timeout is 60s; a real `preflight_run` (let alone `preflight_batch`, which loops over every repo under `root`) can easily take longer. Both tools send a `notifications/progress` ping roughly every 10s while the underlying checks are still running, but only when your client attaches a `progressToken` to the request (most MCP clients do this automatically when you pass an `onprogress` callback / enable progress-aware timeouts, e.g. `resetTimeoutOnProgress`). If your client doesn't support that, raise its request timeout for these two tools instead — `preflight_batch` in particular is expected to be long-running.
 
 ## Configuration
 

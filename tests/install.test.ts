@@ -27,10 +27,15 @@ describe("install.sh", () => {
 
       const preflightPath = path.join(binDir, "preflight");
       const sandboxPath = path.join(binDir, "preflight-sandbox");
+      const mcpPath = path.join(binDir, "preflight-mcp");
 
       expect(fs.existsSync(preflightPath)).toBe(true);
       expect(fs.existsSync(sandboxPath)).toBe(true);
+      expect(fs.existsSync(mcpPath)).toBe(true);
+      expect(fs.statSync(mcpPath).mode & 0o777).toBe(0o755);
+      expect(fs.readFileSync(mcpPath, "utf-8")).toContain(`node "${installDir}/dist/mcp.js"`);
       expect(fs.existsSync(path.join(installDir, "dist", "cli.js"))).toBe(true);
+      expect(fs.existsSync(path.join(installDir, "dist", "mcp.js"))).toBe(true);
       expect(fs.existsSync(path.join(installDir, "src", "cli.ts"))).toBe(true);
       expect(fs.existsSync(path.join(installDir, "Dockerfile"))).toBe(true);
       expect(fs.existsSync(path.join(installDir, "tsconfig.json"))).toBe(true);
@@ -108,6 +113,7 @@ describe("install.sh", () => {
       expect(fs.existsSync(path.join(installDir, "release-manifest.json"))).toBe(true);
       expect(fs.existsSync(path.join(installDir, "src", "cli.ts"))).toBe(true);
       expect(fs.existsSync(path.join(binDir, "preflight"))).toBe(true);
+      expect(fs.existsSync(path.join(binDir, "preflight-mcp"))).toBe(true);
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
