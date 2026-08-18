@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-18
+
 ### Added
 
 - **MCP server (`preflight-mcp`)** (task 91953eae). `src/mcp.ts` / `dist/mcp.js`, stdio only, registered via `claude mcp add preflight -- preflight-mcp`. Exposes `preflight_run({ repoPath, ciSimulation?, noAudit?, noSecrets? })` and `preflight_batch({ root, only?, exclude?, noAudit?, noSecrets? })`, calling `runPreflight`/`runBatch` directly (no CLI shelling) and returning the exact structured JSON `preflight run --json` / `preflight batch --json` produce. Both tool descriptions carry two pinned warnings: the existing "`ready:false` means this PR will likely break CI; do not merge" guidance, and (fix-round finding, review of PR for task 91953eae) that the target repo's `.preflight.json` can define shell commands (`customChecks[].command`, `commands.lint`/`typecheck`/`test`/`audit`) these tools will execute — only point them at trusted repositories. A `repoPath`/`root` that doesn't exist, or exists but isn't a directory, returns a structured tool error instead of crashing or leaking a raw `ENOTDIR`. Both tools send periodic `notifications/progress` pings (~10s) while a check is still running, for clients that attached a `progressToken` (e.g. via an `onprogress` callback) — surviving the MCP SDK's 60s default request timeout on a long `preflight_run`/`preflight_batch` additionally requires the client to pass `resetTimeoutOnProgress: true` (or a raised timeout), a separate switch from just attaching the token; see README "MCP server" for details.
