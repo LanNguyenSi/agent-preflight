@@ -200,6 +200,27 @@ describe("run command — pretty-print output", () => {
     expect(stdout).toContain("Limitations");
     expect(stdout).toContain("no ci sim");
   });
+
+  it("renders an acknowledged check's justification in the human output (agent-tasks b31065cc)", async () => {
+    mockRunPreflight.mockResolvedValue(
+      makeResult({
+        ready: true,
+        checks: [
+          {
+            name: "npm-test",
+            kind: "test",
+            status: "acknowledged",
+            message: "npm test failed — acknowledged: install-sh suite is linux-only, CI covers it",
+            durationMs: 10,
+            confidenceContribution: 0.2,
+          },
+        ],
+      })
+    );
+    const { stdout } = await runCommand(["run", "."]);
+    expect(stdout).toContain("Acknowledged");
+    expect(stdout).toContain("install-sh suite is linux-only, CI covers it");
+  });
 });
 
 // ── FLAG → CONFIG MAPPING ────────────────────────────────────────────────────
@@ -266,6 +287,53 @@ describe("batch command — exit-code contract", () => {
     mockRunBatch.mockResolvedValue({ total: 1, ready: 1, notReady: 0, skipped: 0, results: [] });
     const { exitCode } = await runCommand(["batch", "."]);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("batch command — pretty output acknowledged marker (review finding 3)", () => {
+  it("shows an '[n acknowledged]' marker on a repo's line when it has acknowledged checks", async () => {
+    mockRunBatch.mockResolvedValue({
+      total: 1,
+      ready: 1,
+      notReady: 0,
+      skipped: 0,
+      results: [
+        {
+          repo: "some-repo",
+          result: makeResult({
+            ready: true,
+            checks: [
+              {
+                name: "npm-test",
+                kind: "test",
+                status: "acknowledged",
+                message: "npm test failed — acknowledged: linux-only suite",
+                durationMs: 10,
+                confidenceContribution: 0.2,
+              },
+            ],
+          }),
+        },
+      ],
+    });
+
+    const { stdout } = await runCommand(["batch", "."]);
+
+    expect(stdout).toContain("[1 acknowledged]");
+  });
+
+  it("omits the marker when no check is acknowledged", async () => {
+    mockRunBatch.mockResolvedValue({
+      total: 1,
+      ready: 1,
+      notReady: 0,
+      skipped: 0,
+      results: [{ repo: "some-repo", result: makeResult({ ready: true }) }],
+    });
+
+    const { stdout } = await runCommand(["batch", "."]);
+
+    expect(stdout).not.toContain("acknowledged");
   });
 });
 

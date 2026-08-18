@@ -24,6 +24,8 @@ If an agent is installing this skill from a repo template, it should fetch it fr
    - `ready`
    - blockers
    - warnings
+   - acknowledged checks (scan `checks[]` for `status: "acknowledged"` —
+     waived failures never appear in blockers/warnings)
    - limitations
    - confidence
 

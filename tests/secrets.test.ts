@@ -155,6 +155,151 @@ describe("runSecretDetection — git-aware severity", () => {
   });
 });
 
+describe("runSecretDetection — test-fixture heuristic (agent-tasks b31065cc)", () => {
+  it("warns (does not fail) on an obvious test-fixture constant under tests/, even when this branch introduces it", async () => {
+    // The real dogfood case: TOKEN = "test-planforge-bot-token" in
+    // scaffoldkit's tests/test_notify_planforge.py blocked a push over an
+    // obvious test fixture.
+    const repoPath = makeTempDir("preflight-secrets-fixture-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "tests"));
+    fs.writeFileSync(
+      path.join(repoPath, "tests", "test_notify_planforge.py"),
+      'TOKEN = "test-planforge-bot-token"\n',
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("warn");
+    expect(result.checks[0]?.details?.[0]).toContain("tests/test_notify_planforge.py:1");
+  });
+
+  it("also downgrades dummy-/fake-prefixed fixture values under tests/", async () => {
+    const repoPath = makeTempDir("preflight-secrets-fixture-prefixes-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "test"));
+    fs.writeFileSync(
+      path.join(repoPath, "test", "config.ts"),
+      'const apiKey = "dummy_1234567890abcdefghij";\nconst secret = "fake-1234567890abcdefghij";\n',
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("warn");
+  });
+
+  it("NEGATIVE CONTROL: still fails on a realistic-looking secret outside any test/tests directory", async () => {
+    const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-outside-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const token = "${REAL_SECRET}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/config.ts:1");
+  });
+
+  it("NEGATIVE CONTROL: still fails on a realistic-looking (non-fixture-prefixed) secret INSIDE tests/", async () => {
+    // Being under tests/ alone is not enough — the value must also look
+    // like an obvious fixture, or a real leaked credential in a test
+    // fixture file would be masked.
+    const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-inside-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "tests"));
+    fs.writeFileSync(
+      path.join(repoPath, "tests", "test_leak.py"),
+      `TOKEN = "${REAL_SECRET}"\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("tests/test_leak.py:1");
+  });
+
+  it("does not downgrade a test-/dummy-/fake-prefixed value that lives outside test/tests (prefix alone is not enough)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-prefix-only-");
+    gitInit(repoPath);
+    fs.writeFileSync(
+      path.join(repoPath, "config.ts"),
+      'const token = "test-planforge-bot-token";\n',
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+  });
+
+  it("NEGATIVE CONTROL: still fails on a real password under tests/ whose value merely contains an INNER ':test-' (review finding 1)", async () => {
+    // Reviewer-measured false negative on the pre-fix unanchored
+    // TEST_FIXTURE_VALUE_PATTERN: it searched the whole matched text for
+    // ANY `:`/`=` followed by a fixture-looking prefix, so a value with an
+    // inner separator matched on the embedded `:test-` fragment and was
+    // downgraded to `warn` — masking a real leaked password. The pattern
+    // is now anchored to the FIRST separator (the actual assignment), so
+    // only the real value is examined.
+    const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-inner-sep-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "tests"));
+    fs.writeFileSync(
+      path.join(repoPath, "tests", "config.ts"),
+      'password = "db://u:S3cretPr0d:test-1"\n',
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("tests/config.ts:1");
+  });
+
+  it("NEGATIVE CONTROL: still fails on a genuine ghp_ token under tests/ even when the value is 'test-' prefixed (review finding 2)", async () => {
+    // Reviewer-measured false negative: SECRET_PATTERNS is checked in order
+    // and scanDir stops at the first match per line. `TOKEN = "test-ghp_..."`
+    // trips the earlier, weaker `(?:secret|token)\s*[:=]...` pattern first,
+    // so the high-confidence ghp_ pattern a few entries later was never
+    // even consulted, and the test-fixture heuristic downgraded a real
+    // GitHub token dressed up with a "test-" prefix to a non-blocking warn.
+    // A high-confidence credential SHAPE anywhere on the line must now
+    // force testFixture:false regardless of which pattern actually won.
+    const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-ghp-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "tests"));
+    fs.writeFileSync(
+      path.join(repoPath, "tests", "leak.py"),
+      `TOKEN = "test-ghp_${"x".repeat(36)}"\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("tests/leak.py:1");
+  });
+
+  it("NEGATIVE CONTROL: a file merely NAMED 'tests' (not a directory) does not get the test-fixture downgrade (isTestPath LOW finding)", async () => {
+    // isTestPath() previously checked every path segment, including the
+    // file's own basename — so an extensionless file literally named
+    // `tests` (e.g. `bin/tests`) counted as "under a test directory" purely
+    // because its filename matched, even though it lives directly in
+    // `bin/`. Only directory segments should count.
+    const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-filename-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "bin"));
+    fs.writeFileSync(
+      path.join(repoPath, "bin", "tests"),
+      'TOKEN = "test-planforge-bot-token"\n',
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("bin/tests:1");
+  });
+});
+
 describe("runSecretDetection — allowlist", () => {
   it("suppresses a finding listed by exact path in secretAllowlist", async () => {
     const repoPath = makeTempDir("preflight-secrets-allow-path-");

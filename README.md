@@ -186,6 +186,97 @@ failure lines so consumers can name the failing tests without re-running
 the suite. A failed log write silently falls back to the previous
 first-10-lines detail behavior — it never affects the check result.
 
+### Waiving a permanently-failing check: `checks.<kind>.acknowledge`
+
+Some check failures are not a signal to fix before pushing — they are a
+known, permanent gap (a platform-specific test suite that only runs on the
+CI runner's OS, for example). For those, give the check's toggle in
+`.preflight.json` an `acknowledge` reason instead of `true`/`false`:
+
+```json
+{
+  "checks": {
+    "test": { "acknowledge": "install-sh suite is linux-only, CI covers it" }
+  }
+}
+```
+
+The check still runs. If it fails, that failure is downgraded from `fail`
+to a new `acknowledged` status instead of being dropped or hidden:
+
+- `ready` becomes `true` (an acknowledged check is not a blocker), but the
+  check keeps its own `acknowledged` status in `checks[]` — a caller reading
+  only `ready`/`blockers` still sees `ready: true`, but anything reading
+  `checks[]` sees the check did not actually pass.
+- An acknowledged check never appears in `blockers[]` (only `fail` does) or
+  `warnings[]` (only `warn` does) — it is visible *exclusively* through its
+  own `status: "acknowledged"` entry in `checks[]`. A consumer that only
+  quotes `blockers`/`warnings` and never scans `checks[]` will report a
+  clean "READY" without ever surfacing that a failure was waived.
+- The check's `message` is rewritten to include the reason
+  (`"... — acknowledged: install-sh suite is linux-only, CI covers it"`),
+  and a matching entry is added to `limitations`, so the waiver is visible
+  in `--json` output.
+- The human-output CLI prints a dedicated `Acknowledged (failed, but
+  waived — not counted as a blocker):` section naming the check and reason.
+  `preflight batch`'s one-line-per-repo summary has no room for that
+  section, so it instead appends a compact `[n acknowledged]` marker to a
+  repo's line when that repo has one or more acknowledged checks.
+
+It is never silent about a REJECTED acknowledge: `acknowledge` requires a
+non-empty string, and a present-but-unusable value (`{ "acknowledge": "" }`,
+`{ "acknowledge": 12345 }`, etc.) is rejected — the check is left exactly as
+it would be without an acknowledge (still a blocker if it failed), and the
+rejection is reported once per check kind as a `limitations` entry, so a
+typo'd config can never silently waive a real failure. A bare `{}` (no
+`acknowledge` key at all) is a *different* case: it carries nothing to
+reject, so it is not reported anywhere — the check simply runs enabled,
+identical to `true`, with no acknowledge behavior in play.
+
+**Deliberate boundaries:**
+- Scoped to checks that failed (`fail`); a `pass`/`warn`/`skip` result is
+  already non-blocking and is left untouched.
+- Applies to the `checks.*` boolean toggles (`gitState`, `lint`,
+  `typecheck`, `test`, `audit`, `commitConvention`, `tdd`) — one reason
+  acknowledges every check of that kind for the whole run (e.g. every
+  `commands.test` entry), not a single named sub-check.
+- **Not supported** for `ciSimulation` (its toggle stays a plain boolean —
+  acknowledging CI-simulation behavior is out of scope for this feature) or
+  for `customChecks` (which already have their own per-check
+  `failOnError: false` waiver instead).
+- **Not supported** for `secretDetection` either (its toggle also stays a
+  plain boolean, Orchestrator decision D-013): every other kind above waives
+  the whole check for the run, but a secret-detection finding is not
+  interchangeable that way — one `acknowledge` reason would blind every
+  *future* secret in the repo, not just the finding an operator actually
+  reviewed. Use `secretAllowlist` (a `path` or `path:line` entry) or an
+  inline `pragma: allowlist secret` comment instead, both scoped to one
+  specific, already-reviewed finding — see "Secret detection: obvious
+  test-fixture values don't block" below. A configured but ignored
+  `checks.secretDetection.acknowledge` is reported in `limitations` (not
+  silently dropped), pointing at these alternatives.
+
+### Secret detection: obvious test-fixture values don't block
+
+A secret-shaped match (`TOKEN = "..."`, `apiKey = "..."`, etc.) is
+downgraded from `fail` to a non-blocking `warn` when **both** of these
+hold, regardless of diff scope or `secretDetectionStrict`:
+
+- the file lives under a directory literally named `test` or `tests`
+  (e.g. `tests/test_notify_planforge.py`), and
+- the matched value itself — immediately after the `:`/`=` and an optional
+  quote — starts with `test-`, `test_`, `dummy-`, `dummy_`, `fake-`, or
+  `fake_` (e.g. `"test-planforge-bot-token"`).
+
+This is deliberately narrow on both axes so it cannot mask a real secret:
+a realistic-looking value outside any `test`/`tests` directory still
+blocks, and a realistic-looking value *inside* `tests/` that doesn't carry
+one of those prefixes still blocks too — being under a test directory
+alone is not sufficient. It does not cover other test-directory
+conventions (`__tests__`, `spec`, `e2e`, ...) or a fixture-looking prefix
+that isn't the assigned value itself; widen `secretAllowlist` or an inline
+`pragma: allowlist secret` comment (see above) for those instead.
+
 ## Skill templates
 
 Reusable starting points for installing or adapting `agent-preflight` into agent-specific workflows. Source repo: `https://github.com/LanNguyenSi/agent-preflight`. Template path: `templates/skills/<skill-name>`.

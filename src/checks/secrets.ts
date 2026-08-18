@@ -19,6 +19,30 @@ const SECRET_PATTERNS = [
   /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
 ];
 
+// High-confidence secret SHAPES (review finding 2, fix-round on agent-tasks
+// b31065cc): a match against either of these anywhere on the line means the
+// line unambiguously carries a real credential format, not just a
+// name-looks-like-a-secret heuristic. SECRET_PATTERNS above is checked in
+// order and scanDir stops at the FIRST pattern that matches a given line
+// (see the `break` there), so a line such as
+// `TOKEN = "test-ghp_<36 chars>"` trips the earlier, weaker
+// `(?:secret|token)\s*[:=]...` pattern first and — pre-fix — the genuinely
+// high-confidence `ghp_...` pattern a few lines below it was never even
+// consulted for that line. scanDir re-tests the full line (not just the
+// winning pattern's matched text) against this subset after a match is
+// found, and forces `testFixture: false` whenever one hits — regardless of
+// which SECRET_PATTERNS entry actually produced the finding, and regardless
+// of whether the matched VALUE also happens to look test-/dummy-/fake-
+// prefixed. A real ghp_ token or private-key header can be dressed up with
+// a `test-` prefix exactly as easily as a real password can embed an inner
+// `:test-` in a connection string (see TEST_FIXTURE_VALUE_PATTERN below) —
+// in both cases the presence of an unambiguous credential SHAPE must win
+// over the test-fixture heuristic, never the other way round.
+const HIGH_CONFIDENCE_PATTERNS = [
+  /ghp_[a-zA-Z0-9]{36}/,
+  /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
+];
+
 // Placeholder patterns that indicate example/template values (not real secrets)
 const PLACEHOLDER_PATTERNS = [
   /your_[a-z_]+_here/i,
@@ -27,6 +51,57 @@ const PLACEHOLDER_PATTERNS = [
   /placeholder/i,
   /<your[_\s]/i,
 ];
+
+// Test-fixture value heuristic (agent-tasks b31065cc): a secret-shaped
+// finding whose VALUE (the text immediately after the `:`/`=` and an
+// optional opening quote) starts with `test-`/`test_`/`dummy-`/`dummy_`/
+// `fake-`/`fake_`, AND whose file lives under a directory literally named
+// `test` or `tests` (see `isTestPath`), is downgraded to a non-blocking
+// `warn` instead of `fail` — even when the current change introduces it.
+// Real dogfood case: `TOKEN = "test-planforge-bot-token"` in  // pragma: allowlist secret
+// scaffoldkit's tests/test_notify_planforge.py blocked a push for an
+// obvious test constant.
+//
+// Deliberately narrow on BOTH axes, to avoid masking a real secret:
+//   - Directory match is exact-segment ("test"/"tests"), not every
+//     test-ish convention (no "__tests__", "spec", "e2e", ...) — widening
+//     the path side widens how many files this can ever apply to.
+//   - The prefix must be the VALUE itself, immediately after the
+//     assignment, not merely present anywhere on the line — so
+//     `token = "AbC-test-shaped-but-real-1234567890"` still blocks.  // pragma: allowlist secret
+// A value that satisfies only one of the two conditions (a realistic
+// secret inside tests/, or a test-/dummy-/fake-prefixed value outside any
+// test/tests directory) still blocks exactly as before — see
+// tests/secrets.test.ts's negative-control cases.
+//
+// Anchored to the FIRST `:`/`=` on the matched text (review finding 1,
+// fix-round on agent-tasks b31065cc): `^[^:=]*[:=]` consumes everything up
+// to and including that first separator (the key name), and the
+// test-/dummy-/fake- prefix must sit immediately after it. The prior
+// unanchored `/[:=]\s*.../ ` searched the ENTIRE matched text (which can be
+// a whole line for the password/apiKey/secret patterns above) for ANY
+// `:`/`=` followed by a fixture-looking prefix, so a value with an inner
+// separator — e.g. `password = "db://u:S3cretPr0d:test-1"` — matched on  // pragma: allowlist secret
+// the embedded `:test-` and got downgraded to `warn`, masking a real
+// leaked password. Anchoring to the first separator means only the actual
+// assigned value is examined, exactly as the block comment above already
+// promises ("the prefix must be the VALUE itself, immediately after the
+// assignment").
+const TEST_FIXTURE_VALUE_PATTERN = /^[^:=]*[:=]\s*["']?(?:test|dummy|fake)[-_]/i;
+
+// Only DIRECTORY segments count (review finding, fix-round on agent-tasks
+// b31065cc): `.slice(0, -1)` drops the last segment, which is always the
+// file's own basename, before checking for an exact "test"/"tests"
+// segment. Without the slice, a FILE literally named `tests` (e.g.
+// `bin/tests`, an extensionless script) counted as being "under a test
+// directory" purely because its own filename matched — even though it
+// lives directly in `bin/`, not in any `test`/`tests` directory.
+function isTestPath(relPath: string): boolean {
+  return relPath.split("/").slice(0, -1).some((segment) => {
+    const lower = segment.toLowerCase();
+    return lower === "test" || lower === "tests";
+  });
+}
 
 // Inline suppression marker (the detect-secrets convention). Comment-style
 // agnostic: `# pragma: allowlist secret`, `// pragma: allowlist secret`,
@@ -60,6 +135,14 @@ interface Finding {
   file: string;
   /** 1-based line number of the matching line. */
   line: number;
+  /**
+   * Set at scan time when both TEST_FIXTURE_VALUE_PATTERN and isTestPath
+   * matched (see the block comment above those). A test-fixture finding is
+   * always downgraded to `warn`, regardless of diff scope or
+   * secretDetectionStrict — the same unconditional tier as a `.md` hit or
+   * a gitignored-untracked file.
+   */
+  testFixture: boolean;
 }
 
 /**
@@ -75,6 +158,11 @@ interface Finding {
  *   - A file that is gitignored AND untracked: it cannot be pushed, so
  *     `warn`. (`git check-ignore` without `--no-index` reports exactly
  *     this set — a tracked file is never listed even if a rule matches.)
+ *   - An obvious test-fixture constant: the matched value itself starts
+ *     with `test-`/`test_`/`dummy-`/`dummy_`/`fake-`/`fake_` AND the file
+ *     lives under a directory literally named `test` or `tests`: `warn`.
+ *     See the TEST_FIXTURE_VALUE_PATTERN/isTestPath block comment above
+ *     for why both conditions are required and kept narrow.
  *   - A committable file (tracked, or untracked-but-not-ignored) that
  *     the current branch CHANGED — relative to its merge-base with the
  *     default/upstream branch, plus working-tree edits and new untracked
@@ -88,7 +176,11 @@ interface Finding {
  * touched it. The same strict behaviour is the fail-safe fallback when
  * the merge-base cannot be resolved (detached/orphan branch, no
  * upstream and no default branch), so a finding is never silently
- * downgraded on an inconclusive diff.
+ * downgraded on an inconclusive diff. The test-fixture rule above is a
+ * separate, unconditional axis (same tier as `.md` / gitignored-untracked)
+ * and still applies under `secretDetectionStrict` — strict mode only
+ * removes the diff-scoping leniency, not the "this obviously isn't a real
+ * secret" classification.
  *
  * Findings matching `config.secretAllowlist` or carrying an inline
  * `pragma: allowlist secret` comment are suppressed entirely.
@@ -139,6 +231,10 @@ export async function runSecretDetection(
       warning.push(f);
     } else if (ignoredUntracked.has(f.file)) {
       warning.push(f);
+    } else if (f.testFixture) {
+      // Obvious test-fixture constant under a test/tests directory: never
+      // a blocker, independent of diff scope or secretDetectionStrict.
+      warning.push(f);
     } else if (strict || changedFiles === null || changedFiles.has(f.file)) {
       // Committable AND introduced/touched by this change (or strict
       // mode, or an inconclusive diff base): a secret this push adds.
@@ -168,7 +264,7 @@ export async function runSecretDetection(
       message += ` (+${warning.length} non-blocking)`;
     }
   } else if (warning.length > 0) {
-    message = `${warning.length} potential secret(s) in non-blocking location(s) (pre-existing, gitignored, docs, or non-git)`;
+    message = `${warning.length} potential secret(s) in non-blocking location(s) (pre-existing, gitignored, docs, test-fixture, or non-git)`;
   }
 
   const details = [
@@ -418,7 +514,15 @@ function scanDir(dir: string, root: string, findings: Finding[]): void {
           const match = line.match(pattern);
           const matchText = match ? match[0] : "";
           if (match && !PLACEHOLDER_PATTERNS.some((p) => p.test(matchText))) {
-            findings.push({ file: relPath, line: i + 1 });
+            // A high-confidence credential SHAPE anywhere on the line (see
+            // HIGH_CONFIDENCE_PATTERNS above) always wins over the
+            // test-fixture heuristic, even when the winning SECRET_PATTERNS
+            // entry above was a weaker one, and even when the matched
+            // value also looks test-/dummy-/fake-prefixed.
+            const highConfidence = HIGH_CONFIDENCE_PATTERNS.some((p) => p.test(line));
+            const testFixture =
+              !highConfidence && isTestPath(relPath) && TEST_FIXTURE_VALUE_PATTERN.test(matchText);
+            findings.push({ file: relPath, line: i + 1, testFixture });
             break; // one finding per line is enough
           }
         }

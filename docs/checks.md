@@ -23,6 +23,10 @@ Every check `agent-preflight` can run, what it verifies, and when it fires. Each
 - `pass` and `skip` never block.
 - `warn` shows in output but does not move `ready` to `false`.
 - `fail` is a blocker, `ready` becomes `false`, and the CLI exits non-zero.
+- `acknowledged` is a `fail` the operator explicitly waived via
+  `checks.<kind>.acknowledge` in `.preflight.json` — never blocks, but
+  stays visible with its own status and the waiver's reason (see the
+  README's "Waiving a permanently-failing check" section).
 
 `clean-worktree` is a blocker because local modifications make the result diverge from what will actually be pushed. `protected-branch` is a warning because direct-push workflows still exist.
 
@@ -79,6 +83,14 @@ Every check can be turned off in `.preflight.json`:
 
 CLI flags `--no-audit`, `--no-secrets`, and `--ci-simulation` override the file for one run.
 
+Instead of `true`/`false`, any toggle except `ciSimulation` and
+`secretDetection` can also be `{ "acknowledge": "<reason>" }` to run the
+check but waive a `fail` result as a non-blocking `acknowledged` status
+with the reason attached — see the README's "Waiving a
+permanently-failing check" section for the full contract (required
+non-empty reason, visibility guarantees, boundaries, and why
+`secretDetection` is excluded).
+
 ### Failure log directory override
 
 `logDir` in `.preflight.json` overrides where a failing lint/typecheck/test/audit/custom check's complete stdout+stderr is persisted, in place of the default `~/.agent-preflight/logs`:
@@ -121,7 +133,7 @@ The setup phase is intentionally conservative. It only runs when the project fil
 ## Behavior notes
 
 - Dependency bootstrap is opt-in. The runner never touches `node_modules/`, `vendor/`, or virtualenvs unless `--setup` is passed.
-- Secret detection is git-aware and diff-scoped. A hit is a `fail` blocker only when the secret can reach the remote **and** the current change introduced it — the file is committable (tracked, or untracked-but-not-ignored) **and** the current branch changed it, measured against the merge-base with the upstream / default branch (uncommitted edits and new untracked files included). A hit in a gitignored-and-untracked file (a `.env` holding real credentials is the normal, correct state), in a `.md` documentation file, in a directory that is not a git repository, or in a tracked file the branch never touched is a non-blocking `warn`. When the merge-base cannot be resolved the check fails safe and treats every committable finding as blocking. Set `"secretDetectionStrict": true` to drop the diff-scoping and block on every committable finding. Keep example values in template files like `.env.example` or `.env.template`. For a measured comparison of the current regex-based engine against gitleaks and trufflehog (class coverage, false positives, runtime, license), see [`docs/secret-scanner-investigation.md`](secret-scanner-investigation.md).
+- Secret detection is git-aware and diff-scoped. A hit is a `fail` blocker only when the secret can reach the remote **and** the current change introduced it — the file is committable (tracked, or untracked-but-not-ignored) **and** the current branch changed it, measured against the merge-base with the upstream / default branch (uncommitted edits and new untracked files included). A hit in a gitignored-and-untracked file (a `.env` holding real credentials is the normal, correct state), in a `.md` documentation file, in a directory that is not a git repository, or in a tracked file the branch never touched is a non-blocking `warn`. When the merge-base cannot be resolved the check fails safe and treats every committable finding as blocking. Set `"secretDetectionStrict": true` to drop the diff-scoping and block on every committable finding. A finding is also downgraded to `warn` — regardless of diff scope or `secretDetectionStrict` — when it is an obvious test-fixture constant: the file lives under a directory literally named `test` or `tests` **and** the matched value itself starts with `test-`/`test_`/`dummy-`/`dummy_`/`fake-`/`fake_`; either condition alone still blocks (see the README's "Secret detection: obvious test-fixture values don't block" section for the exact boundary and why it's kept narrow). Keep example values in template files like `.env.example` or `.env.template`. For a measured comparison of the current regex-based engine against gitleaks and trufflehog (class coverage, false positives, runtime, license), see [`docs/secret-scanner-investigation.md`](secret-scanner-investigation.md).
 - To suppress an intentional finding (a demo/example key), either list it in `secretAllowlist` in `.preflight.json` — entries are a repo-relative path, a `path:line` pair, or a `*`-glob — or put a `pragma: allowlist secret` comment on the line:
 
   ```json

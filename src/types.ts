@@ -12,7 +12,11 @@ export interface PreflightResult {
 export interface CheckResult {
   name: string;
   kind: CheckKind;
-  status: "pass" | "fail" | "warn" | "skip";
+  // "acknowledged": the check ran and failed, but the operator waived it in
+  // .preflight.json with a required justification (checks.<kind>.acknowledge).
+  // Treated like "warn": visible, but never a `ready:false` blocker. See
+  // resolveAcknowledge/applyAcknowledgements in src/runner.ts.
+  status: "pass" | "fail" | "warn" | "skip" | "acknowledged";
   message?: string;
   details?: string[];
   durationMs: number;
@@ -31,17 +35,38 @@ export type CheckKind =
   | "tdd"
   | "custom";
 
+/**
+ * A check's `.preflight.json` toggle. `true`/`false` enable/disable the
+ * check, same as before. `{ acknowledge: "<reason>" }` runs the check as
+ * normal but, if it fails, downgrades that failure to a non-blocking
+ * `acknowledged` status (see CheckResult.status and
+ * runner.ts#applyAcknowledgements) — the failure stays visible (its own
+ * status, its message carries the reason) but no longer flips `ready` to
+ * `false`. `acknowledge` is required to be a non-empty string; a missing or
+ * non-string value is rejected (ignored, with the rejection reported in
+ * `PreflightResult.limitations`), never silently treated as "acknowledged".
+ * Deliberately NOT supported for `ciSimulation` (kept a plain boolean),
+ * `secretDetection` (also kept a plain boolean — Orchestrator decision
+ * D-013: a whole-kind waiver would blind every future secret-detection
+ * finding for the run, not just the one an operator reviewed; use
+ * `secretAllowlist` or an inline `pragma: allowlist secret` comment
+ * instead, see runner.ts#checkSecretDetectionAcknowledgeIgnored and the
+ * README's "Deliberate boundaries"), or `custom` checks (which already
+ * have their own per-check `failOnError`).
+ */
+export type CheckToggle = boolean | { acknowledge: string };
+
 export interface PreflightConfig {
   checks?: {
-    gitState?: boolean;
-    lint?: boolean;
-    typecheck?: boolean;
-    test?: boolean;
-    audit?: boolean;
+    gitState?: CheckToggle;
+    lint?: CheckToggle;
+    typecheck?: CheckToggle;
+    test?: CheckToggle;
+    audit?: CheckToggle;
     ciSimulation?: boolean;
-    commitConvention?: boolean;
+    commitConvention?: CheckToggle;
     secretDetection?: boolean;
-    tdd?: boolean;
+    tdd?: CheckToggle;
   };
   tddExceptions?: string[];
   /**

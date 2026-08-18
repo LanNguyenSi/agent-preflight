@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -154,6 +155,204 @@ describe("PreflightConfig.logDir wiring through the four runConfiguredCommands c
       const logPath = logLine!.replace(/^full output: /, "");
       expect(path.dirname(logPath)).toBe(path.join(repoPath, `custom-logs-${kind}`));
       expect(fs.existsSync(logPath)).toBe(true);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("checks.<kind>.acknowledge (agent-tasks b31065cc)", () => {
+  it("downgrades a failing check to status:acknowledged, unblocks ready, and surfaces the reason in message + limitations", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-ack-repo-"));
+    try {
+      const config = defaultConfig();
+      config.checks = {
+        ...allChecksDisabled(),
+        test: { acknowledge: "install-sh suite is linux-only, CI covers it" },
+      };
+      config.commands = { test: ["echo boom && exit 1"] };
+      config.logDir = "custom-logs";
+
+      const result = await runPreflight(repoPath, config);
+
+      const testCheck = result.checks.find((c) => c.kind === "test");
+      expect(testCheck?.status).toBe("acknowledged");
+      expect(testCheck?.message).toContain("install-sh suite is linux-only, CI covers it");
+      expect(result.ready).toBe(true);
+      expect(result.blockers).toEqual([]);
+      expect(
+        result.limitations.some((l) => l.includes("install-sh suite is linux-only, CI covers it"))
+      ).toBe(true);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a missing/empty acknowledge justification — the check stays a blocker, and the rejection is reported in limitations, never silently", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-ack-reject-repo-"));
+    try {
+      const config = defaultConfig();
+      config.checks = { ...allChecksDisabled(), test: { acknowledge: "" } };
+      config.commands = { test: ["echo boom && exit 1"] };
+      config.logDir = "custom-logs";
+
+      const result = await runPreflight(repoPath, config);
+
+      const testCheck = result.checks.find((c) => c.kind === "test");
+      expect(testCheck?.status).toBe("fail");
+      expect(result.ready).toBe(false);
+      expect(result.blockers.length).toBeGreaterThan(0);
+      expect(
+        result.limitations.some((l) => l.includes("acknowledge must be a non-empty string"))
+      ).toBe(true);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not crash on a malformed (non-string) acknowledge value from an unvalidated .preflight.json; the check stays a blocker", async () => {
+    // loadConfig() (src/config.ts) does not runtime-validate .preflight.json
+    // (known gap, tracked separately — see task 850903cb), so a live config
+    // file can hand the runner arbitrary JSON-shaped junk here. The cast
+    // simulates exactly that: a value TypeScript would normally reject, but
+    // which can appear at runtime from a hand-edited config file.
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-ack-malformed-repo-"));
+    try {
+      const config = defaultConfig();
+      config.checks = {
+        ...allChecksDisabled(),
+        test: { acknowledge: 12345 },
+      } as unknown as NonNullable<PreflightConfig["checks"]>;
+      config.commands = { test: ["echo boom && exit 1"] };
+      config.logDir = "custom-logs";
+
+      const result = await runPreflight(repoPath, config);
+
+      const testCheck = result.checks.find((c) => c.kind === "test");
+      expect(testCheck?.status).toBe("fail");
+      expect(result.ready).toBe(false);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a passing check alone even when its kind carries an acknowledge (nothing to waive)", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-ack-passing-repo-"));
+    try {
+      const config = defaultConfig();
+      config.checks = { ...allChecksDisabled(), test: { acknowledge: "not needed, just documenting" } };
+      config.commands = { test: ["exit 0"] };
+      config.logDir = "custom-logs";
+
+      const result = await runPreflight(repoPath, config);
+
+      const testCheck = result.checks.find((c) => c.kind === "test");
+      expect(testCheck?.status).toBe("pass");
+      expect(result.ready).toBe(true);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("CONTRACT: an acknowledged check never appears in blockers[] or warnings[] (review finding 3)", async () => {
+    // blockers[] is `status === "fail"` and warnings[] is `status === "warn"`
+    // — an "acknowledged" check is neither, so it must be absent from both.
+    // This is the precise gap SKILL.md's "quote blockers and warnings"
+    // guidance missed: an acknowledged waiver is only visible in checks[].
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-ack-contract-repo-"));
+    try {
+      const config = defaultConfig();
+      config.checks = {
+        ...allChecksDisabled(),
+        test: { acknowledge: "install-sh suite is linux-only, CI covers it" },
+      };
+      config.commands = { test: ["echo boom && exit 1"] };
+      config.logDir = "custom-logs";
+
+      const result = await runPreflight(repoPath, config);
+
+      const testCheck = result.checks.find((c) => c.kind === "test");
+      expect(testCheck?.status).toBe("acknowledged");
+      expect(result.blockers).toEqual([]);
+      expect(result.warnings).toEqual([]);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a rejected acknowledge once per config key, not once per underlying check (LOW finding)", async () => {
+    // commands.test with two entries produces two CheckResults ("test:1",
+    // "test:2") sharing the same "test" config key. Pre-fix, the rejection
+    // message embedded the individual check name, so the two messages
+    // differed and the end-of-run `[...new Set(limitations)]` dedup could
+    // not collapse them — a malformed acknowledge on a multi-command check
+    // kind spammed one rejection line per command.
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-ack-dedupe-repo-"));
+    try {
+      const config = defaultConfig();
+      config.checks = {
+        ...allChecksDisabled(),
+        test: { acknowledge: 12345 },
+      } as unknown as NonNullable<PreflightConfig["checks"]>;
+      config.commands = { test: ["echo boom1 && exit 1", "echo boom2 && exit 1"] };
+      config.logDir = "custom-logs";
+
+      const result = await runPreflight(repoPath, config);
+
+      expect(result.checks.filter((c) => c.kind === "test")).toHaveLength(2);
+      const rejectionLines = result.limitations.filter((l) =>
+        l.includes("acknowledge must be a non-empty string")
+      );
+      expect(rejectionLines).toHaveLength(1);
+      expect(rejectionLines[0]).toContain("checks.test");
+      expect(result.ready).toBe(false);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("checks.secretDetection.acknowledge is not supported (Orchestrator decision D-013, review finding 4)", () => {
+  it("does not waive a real secret-detection finding — ready stays false, and a limitations entry explains why", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-secret-ack-noop-repo-"));
+    try {
+      execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoPath, stdio: "ignore" });
+      fs.writeFileSync(
+        path.join(repoPath, "leaked.js"),
+        'const secret = "abcdefghijklmnopqrstuvwxyz123456";\n',
+      );
+
+      const config = defaultConfig();
+      config.checks = {
+        ...allChecksDisabled(),
+        secretDetection: { acknowledge: "reviewed, false positive" },
+      } as unknown as NonNullable<PreflightConfig["checks"]>;
+
+      const result = await runPreflight(repoPath, config);
+
+      const secretCheck = result.checks.find((c) => c.kind === "secret-detection");
+      expect(secretCheck?.status).toBe("fail");
+      expect(result.ready).toBe(false);
+      expect(result.blockers.length).toBeGreaterThan(0);
+      expect(
+        result.limitations.some((l) => l.includes("checks.secretDetection.acknowledge is not supported"))
+      ).toBe(true);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("stays quiet when checks.secretDetection is a plain boolean (no acknowledge key present)", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-secret-ack-quiet-repo-"));
+    try {
+      const config = defaultConfig();
+      config.checks = { ...allChecksDisabled(), secretDetection: false };
+
+      const result = await runPreflight(repoPath, config);
+
+      expect(
+        result.limitations.some((l) => l.includes("secretDetection.acknowledge"))
+      ).toBe(false);
     } finally {
       fs.rmSync(repoPath, { recursive: true, force: true });
     }
