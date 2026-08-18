@@ -300,6 +300,114 @@ describe("runSecretDetection — test-fixture heuristic (agent-tasks b31065cc)",
   });
 });
 
+describe("runSecretDetection — AWS credential patterns (agent-tasks 211f559c)", () => {
+  // AWS's own canonical documentation example access key ID (widely
+  // published, not a real credential — the exact value AWS's own docs use
+  // as the generic access-key-ID placeholder). Built via concatenation,
+  // matching this file's existing `"x".repeat(36)` ghp_ fixture convention,
+  // rather than one unbroken literal.
+  const AWS_EXAMPLE_ACCESS_KEY_ID = "AKIA" + "IOSFODNN7EXAMPLE"; // 20 chars, matches AKIA[0-9A-Z]{16}
+  // A synthetic, non-placeholder-looking 40-char base64-ish value for the
+  // secret-access-key pattern. Deliberately NOT AWS's own canonical example
+  // secret value (`wJalrXUtn...EXAMPLEKEY`): that literal ends in
+  // "EXAMPLEKEY", which trips the pre-existing PLACEHOLDER_PATTERNS
+  // `example[_-]?key` filter and gets correctly dropped as an obvious
+  // placeholder — a separate, unrelated mechanism this task does not touch.
+  const AWS_SECRET_ACCESS_KEY_VALUE = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0"; // 40 chars
+
+  it("fails on a bare AWS access key ID (AKIA + 16 uppercase alphanumeric chars)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-akia-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const accessKeyId = "AKIA${"X".repeat(16)}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/config.ts:1");
+  });
+
+  it("blocks AWS's own canonical docs example access key ID — no exemption for canonical/example values (deliberate decision)", async () => {
+    // Decision (see the SECRET_PATTERNS / HIGH_CONFIDENCE_PATTERNS comments
+    // in src/checks/secrets.ts): AWS's canonical documentation example
+    // access key ID is NOT exempted. It matches AKIA[0-9A-Z]{16} exactly
+    // like a real access key ID and is high-confidence, so it blocks just
+    // like a genuine one would — the same hard-line treatment the existing
+    // ghp_/PEM patterns already get, neither of which carries an
+    // example-value exemption either. An operator who deliberately wants
+    // this literal committed (e.g. in a docs snippet) has `secretAllowlist`
+    // or the inline `pragma: allowlist secret` comment.
+    const repoPath = makeTempDir("preflight-secrets-aws-example-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const accessKeyId = "${AWS_EXAMPLE_ACCESS_KEY_ID}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/config.ts:1");
+  });
+
+  it("fails on an AWS_SECRET_ACCESS_KEY-style assignment (identifier + 40-char base64-ish value)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-secret-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const awsSecretAccessKey = "${AWS_SECRET_ACCESS_KEY_VALUE}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/config.ts:1");
+  });
+
+  it("still fails on a test-/dummy-/fake-prefixed value under tests/ when the line also carries a high-confidence AWS access key shape (mirrors the ghp_ negative control)", async () => {
+    // Same false-negative class the HIGH_CONFIDENCE_PATTERNS mechanism (PR
+    // #57 / agent-tasks b31065cc) already fixed for ghp_: SECRET_PATTERNS is
+    // checked in order and scanDir stops at the first match per line, so
+    // `TOKEN = "test-AKIA..."` trips the earlier, weaker
+    // `(?:secret|token)\s*[:=]...` pattern first. The line-wide
+    // HIGH_CONFIDENCE_PATTERNS re-check must still find the AKIA shape and
+    // force testFixture:false, so this still blocks under tests/.
+    const repoPath = makeTempDir("preflight-secrets-aws-akia-fixture-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "tests"));
+    fs.writeFileSync(
+      path.join(repoPath, "tests", "leak.py"),
+      `TOKEN = "test-${AWS_EXAMPLE_ACCESS_KEY_ID}"\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("tests/leak.py:1");
+  });
+
+  it("does NOT flag an arbitrary 40-char base64-ish value with no AWS-style key name on the line (anchoring negative control)", async () => {
+    // The AWS secret-access-key pattern must stay anchored to an AWS-ish
+    // identifier, not fire on any 40-char base64-ish string.
+    const repoPath = makeTempDir("preflight-secrets-aws-negctrl-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "hash.ts"),
+      `const buildHash = "${AWS_SECRET_ACCESS_KEY_VALUE}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("pass");
+  });
+});
+
 describe("runSecretDetection — allowlist", () => {
   it("suppresses a finding listed by exact path in secretAllowlist", async () => {
     const repoPath = makeTempDir("preflight-secrets-allow-path-");

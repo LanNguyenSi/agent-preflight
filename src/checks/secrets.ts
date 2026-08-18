@@ -17,6 +17,34 @@ const SECRET_PATTERNS = [
   /(?:secret|token)\s*[:=]\s*["'][a-zA-Z0-9_-]{20,}["']/i,
   /ghp_[a-zA-Z0-9]{36}/,
   /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
+  // AWS access key ID: a fixed, unambiguous shape (`AKIA` + 16 uppercase
+  // alphanumeric chars) — no surrounding keyword needed, same rationale
+  // as the bare `ghp_...` entry above. Also listed in
+  // HIGH_CONFIDENCE_PATTERNS below (agent-tasks 211f559c): the AWS docs'
+  // own canonical example access-key-id ALSO matches this shape (see
+  // tests/secrets.test.ts) and is deliberately NOT exempted — same
+  // hard-line, no-exemption treatment as a `ghp_...`/PEM match. A
+  // canonical doc example pasted into a real file is exactly as likely
+  // to be a copy-paste mistake as a genuine leaked key, and this scanner
+  // has no mechanism (nor should it grow one here) to distinguish
+  // "someone's actual AWS key" from "someone quoted the docs' example
+  // verbatim in the wrong place" — the `pragma: allowlist secret` /
+  // `secretAllowlist` escape hatches already cover a deliberately-
+  // committed example. (The literal example string is deliberately not
+  // spelled out in this comment: it matches the pattern below and would
+  // trip this very check when this file is self-scanned.)
+  /AKIA[0-9A-Z]{16}/,
+  // AWS secret access key: an AWS_SECRET_ACCESS_KEY-style identifier
+  // (aws/secret/access/key in order, any `_`/`-`/camelCase separator,
+  // case-insensitive) assigned a 40-char base64-ish value. Anchored to
+  // the identifier — not just "any 40-char base64-ish string" — so it
+  // cannot fire on an arbitrary hash/token with no AWS-shaped key name
+  // on the line. Not in HIGH_CONFIDENCE_PATTERNS: unlike AKIA's fixed
+  // prefix, a 40-char base64-ish value has no shape of its own that is
+  // unambiguously AWS-specific, so it stays subject to the normal
+  // test-fixture heuristic like the generic secret/token/password
+  // patterns above it.
+  /aws[_-]?secret[_-]?access[_-]?key\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?/i,
 ];
 
 // High-confidence secret SHAPES (review finding 2, fix-round on agent-tasks
@@ -41,6 +69,10 @@ const SECRET_PATTERNS = [
 const HIGH_CONFIDENCE_PATTERNS = [
   /ghp_[a-zA-Z0-9]{36}/,
   /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
+  // AWS access key ID (agent-tasks 211f559c): see the SECRET_PATTERNS
+  // entry above for the full rationale, including the deliberate
+  // no-exemption decision for AWS's canonical example access-key-id.
+  /AKIA[0-9A-Z]{16}/,
 ];
 
 // Placeholder patterns that indicate example/template values (not real secrets)
