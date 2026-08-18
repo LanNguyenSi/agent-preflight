@@ -109,6 +109,13 @@ behavior, false-positive rate, or latency.
 | Generic `api_key = "..."` | HIT | HIT | MISS |
 | **Classes hit / 10** | **5** | **9** | **6** |
 
+> **Note (2026-08-18, superseding):** the AWS access-key row above
+> predates agent-tasks 211f559c; the in-tree regexes now HIT this class —
+> re-measured 2026-08-18. This note supersedes only that one row; the
+> table itself is left as originally measured, and a full corpus refresh
+> (re-running every row above against the current in-tree regexes) is a
+> filed follow-up, not done here.
+
 Two results are worth calling out because they cut against the intuitive
 "specialized tool wins everywhere" story:
 
