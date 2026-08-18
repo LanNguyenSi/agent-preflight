@@ -408,6 +408,188 @@ describe("runSecretDetection — AWS credential patterns (agent-tasks 211f559c)"
   });
 });
 
+describe("runSecretDetection — AWS credential pattern hardening (fix-round, agent-tasks 211f559c review)", () => {
+  // Same value fixture as the describe block above, redefined locally so
+  // this block reads standalone.
+  const AWS_SECRET_ACCESS_KEY_VALUE = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0"; // 40 chars
+
+  // --- F1: quoted-key identifier (assignment pattern) ---------------------
+
+  it("F1: detects a quoted-key JSON serialization of the AWS secret access key assignment (`\"aws_secret_access_key\": \"<40 chars>\"`)", async () => {
+    // Reviewer-measured miss: the identifier previously had to be
+    // followed immediately by `\s*[:=]`, so a JSON/quoted-YAML
+    // serialization — where a closing quote sits between the identifier
+    // and the separator — produced zero findings.
+    const repoPath = makeTempDir("preflight-secrets-aws-json-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.json"),
+      `{\n  "aws_secret_access_key": "${AWS_SECRET_ACCESS_KEY_VALUE}"\n}\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/config.json:2");
+  });
+
+  it("F1 lock: does NOT match a 39-char AWS secret-access-key value ({40} is a fixed width, not a minimum)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-secret-39-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    const value39 = AWS_SECRET_ACCESS_KEY_VALUE.slice(0, 39);
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const awsSecretAccessKey = "${value39}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("pass");
+  });
+
+  // --- F2: AKIA boundary-anchoring ------------------------------------------
+
+  it("F2: does NOT flag AKIA merely embedded inside a longer uppercase/digit run (e.g. a base32-style build hash)", async () => {
+    // Reviewer-measured false positive: the previously unanchored
+    // AKIA[0-9A-Z]{16} pattern matched anywhere `AKIA` + 16 [0-9A-Z]
+    // chars occurred, even mid-run inside a longer blob with no
+    // standalone AWS access-key-id shape — and because AKIA is
+    // high-confidence, such a hit was a hard, non-downgradable block.
+    const repoPath = makeTempDir("preflight-secrets-aws-akia-embedded-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "build-id.ts"),
+      `const buildChecksum = "ZZZAKIA1234567890ABCDEFZZZZZZZZZZZZZZZZZZZZZZZZZZ";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("pass");
+  });
+
+  it("F2 lock: does NOT match a lowercase 'akia...' or an 'AKIA' prefix with a lowercase 16-char tail (case-sensitive by design)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-akia-case-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "lower.ts"),
+      [
+        `const lowerFull = "akia${"x".repeat(16)}";`,
+        `const lowerTail = "AKIA${"x".repeat(16)}";`,
+        "",
+      ].join("\n"),
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("pass");
+  });
+
+  it("F2 verification: still matches AKIA... in a URL query-string form (e.g. a pre-signed S3 URL's AWSAccessKeyId param)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-akia-url-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const url = "https://bucket.s3.amazonaws.com/key?AWSAccessKeyId=AKIA${"X".repeat(16)}&Expires=1234567890";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+  });
+
+  it("F2 verification: still matches AKIA... as a bare JSON string value (e.g. `\"accessKeyId\": \"AKIA...\"`)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-akia-json-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.json"),
+      `{\n  "accessKeyId": "AKIA${"X".repeat(16)}"\n}\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+  });
+
+  it("F2 verification: still matches AKIA... bare in prose with no surrounding code/quotes", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-akia-prose-");
+    gitInit(repoPath);
+    fs.writeFileSync(
+      path.join(repoPath, "notes.txt"),
+      `Rotate the leaked key AKIA${"X".repeat(16)} immediately.\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+  });
+
+  it("F2 axis interaction lock: an AKIA finding in a .md file still downgrades to warn (non-blocking) — the .md tier applies even to a high-confidence match", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-akia-md-");
+    gitInit(repoPath);
+    fs.writeFileSync(
+      path.join(repoPath, "README.md"),
+      `Example: \`const accessKeyId = "AKIA${"X".repeat(16)}"\`\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("warn");
+    expect(result.checks[0]?.details).toContain("README.md:1 (non-blocking)");
+  });
+
+  // --- F3: the fixture downgrade is structurally unreachable for the
+  //     AWS secret-access-key assignment pattern ---------------------------
+
+  it("F3 lock: still fails (does not downgrade to warn) on an aws_secret_access_key value starting with the word 'test' under tests/ — the fixture downgrade is structurally unreachable for this pattern", async () => {
+    // TEST_FIXTURE_VALUE_PATTERN requires `test`/`dummy`/`fake`
+    // immediately followed by `-`/`_` right after the separator; this
+    // pattern's value charset ([A-Za-z0-9/+=]) has no `-`/`_`, so a
+    // value that merely starts with the literal word "test" (no
+    // separator) never satisfies TEST_FIXTURE_VALUE_PATTERN and must
+    // still block, even under tests/.
+    const repoPath = makeTempDir("preflight-secrets-aws-secret-testword-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "tests"));
+    const value = "test" + "A".repeat(36); // 40 chars, no '-'/'_' right after "test"
+    fs.writeFileSync(
+      path.join(repoPath, "tests", "fixture.ts"),
+      `const awsSecretAccessKey = "${value}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("tests/fixture.ts:1");
+  });
+
+  // --- Missing-test lock: placeholder-pattern interaction -------------------
+
+  it("pins current behavior: AWS's own canonical docs secret-access-key example value (ends in EXAMPLEKEY) is dropped by the pre-existing PLACEHOLDER_PATTERNS filter, not this task's patterns", async () => {
+    // So a later, unrelated PLACEHOLDER_PATTERNS edit flips this test
+    // instead of silently changing behavior. This test does not touch
+    // PLACEHOLDER_PATTERNS.
+    const repoPath = makeTempDir("preflight-secrets-aws-secret-placeholder-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    const AWS_DOCS_EXAMPLE_SECRET_ACCESS_KEY =
+      "wJalrXUtnFEMI/K7MDENG/bPxRfiCY" + "EXAMPLEKEY"; // 40 chars, AWS's own docs example
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const awsSecretAccessKey = "${AWS_DOCS_EXAMPLE_SECRET_ACCESS_KEY}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("pass");
+  });
+});
+
 describe("runSecretDetection — allowlist", () => {
   it("suppresses a finding listed by exact path in secretAllowlist", async () => {
     const repoPath = makeTempDir("preflight-secrets-allow-path-");

@@ -268,6 +268,12 @@ hold, regardless of diff scope or `secretDetectionStrict`:
   quote — starts with `test-`, `test_`, `dummy-`, `dummy_`, `fake-`, or
   `fake_` (e.g. `"test-planforge-bot-token"`).
 
+A line carrying an unambiguous credential shape — a `ghp_...` token, a PEM
+private-key header, or an AWS `AKIA...` access key ID — always blocks
+regardless of either condition above; the escape hatch there is
+`secretAllowlist` or the inline `pragma: allowlist secret` comment, not
+this heuristic.
+
 This is deliberately narrow on both axes so it cannot mask a real secret:
 a realistic-looking value outside any `test`/`tests` directory still
 blocks, and a realistic-looking value *inside* `tests/` that doesn't carry

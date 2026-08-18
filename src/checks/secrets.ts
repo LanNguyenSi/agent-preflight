@@ -33,18 +33,47 @@ const SECRET_PATTERNS = [
   // committed example. (The literal example string is deliberately not
   // spelled out in this comment: it matches the pattern below and would
   // trip this very check when this file is self-scanned.)
-  /AKIA[0-9A-Z]{16}/,
+  //
+  // Boundary-anchored (fix-round, agent-tasks 211f559c review, finding
+  // F2): a bare `(?<![A-Z0-9])`/`(?![A-Z0-9])` lookbehind/lookahead
+  // stops this high-confidence, non-downgradable pattern from firing on
+  // `AKIA...` merely embedded inside a longer uppercase/digit run (e.g.
+  // a base32-style build hash or checksum) where it is not actually a
+  // standalone AWS access key ID — such a false positive would
+  // otherwise be a hard, non-downgradable block. Every genuine
+  // standalone occurrence (quoted, in a URL query string, bare in
+  // prose, ...) is bounded by a non-alphanumeric-or-different-case
+  // character on both sides already, so this narrows nothing real; see
+  // tests/secrets.test.ts.
+  /(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![A-Z0-9])/,
   // AWS secret access key: an AWS_SECRET_ACCESS_KEY-style identifier
   // (aws/secret/access/key in order, any `_`/`-`/camelCase separator,
-  // case-insensitive) assigned a 40-char base64-ish value. Anchored to
-  // the identifier — not just "any 40-char base64-ish string" — so it
+  // case-insensitive) assigned a 40-char base64-ish value, with an
+  // optional closing quote allowed directly on the identifier itself
+  // (fix-round, agent-tasks 211f559c review, finding F1) so a
+  // quoted-key serialization — `"aws_secret_access_key": "<value>"` in
+  // JSON or quoted YAML — is detected too; without it, the identifier
+  // had to be followed immediately by `\s*[:=]` with nothing in
+  // between, which quoted-key forms never satisfy. Anchored to the
+  // identifier — not just "any 40-char base64-ish string" — so it
   // cannot fire on an arbitrary hash/token with no AWS-shaped key name
   // on the line. Not in HIGH_CONFIDENCE_PATTERNS: unlike AKIA's fixed
   // prefix, a 40-char base64-ish value has no shape of its own that is
-  // unambiguously AWS-specific, so it stays subject to the normal
-  // test-fixture heuristic like the generic secret/token/password
-  // patterns above it.
-  /aws[_-]?secret[_-]?access[_-]?key\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?/i,
+  // unambiguously AWS-specific.
+  //
+  // NOTE (fix-round, agent-tasks 211f559c review, finding F3): despite
+  // the framing above, this pattern does NOT actually reach the
+  // test-fixture downgrade in practice. TEST_FIXTURE_VALUE_PATTERN
+  // requires `test`/`dummy`/`fake` immediately followed by `-`/`_`
+  // right after the first `:`/`=`; this pattern's value charset is
+  // `[A-Za-z0-9/+=]` — no `-` and no `_` — so a matched value can never
+  // start with `test-`, `test_`, `dummy-`, `dummy_`, `fake-`, or
+  // `fake_`. The downgrade path is therefore structurally unreachable
+  // for this pattern as currently written (locked by a test in
+  // tests/secrets.test.ts). Widening the value charset to include `-`
+  // or `_` would make it reachable again — do that deliberately, not by
+  // accident.
+  /aws[_-]?secret[_-]?access[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?/i,
 ];
 
 // High-confidence secret SHAPES (review finding 2, fix-round on agent-tasks
@@ -71,8 +100,9 @@ const HIGH_CONFIDENCE_PATTERNS = [
   /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
   // AWS access key ID (agent-tasks 211f559c): see the SECRET_PATTERNS
   // entry above for the full rationale, including the deliberate
-  // no-exemption decision for AWS's canonical example access-key-id.
-  /AKIA[0-9A-Z]{16}/,
+  // no-exemption decision for AWS's canonical example access-key-id and
+  // the boundary-anchoring rationale (fix-round review, finding F2).
+  /(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![A-Z0-9])/,
 ];
 
 // Placeholder patterns that indicate example/template values (not real secrets)
