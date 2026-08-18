@@ -200,6 +200,27 @@ describe("run command — pretty-print output", () => {
     expect(stdout).toContain("Limitations");
     expect(stdout).toContain("no ci sim");
   });
+
+  it("renders an acknowledged check's justification in the human output (agent-tasks b31065cc)", async () => {
+    mockRunPreflight.mockResolvedValue(
+      makeResult({
+        ready: true,
+        checks: [
+          {
+            name: "npm-test",
+            kind: "test",
+            status: "acknowledged",
+            message: "npm test failed — acknowledged: install-sh suite is linux-only, CI covers it",
+            durationMs: 10,
+            confidenceContribution: 0.2,
+          },
+        ],
+      })
+    );
+    const { stdout } = await runCommand(["run", "."]);
+    expect(stdout).toContain("Acknowledged");
+    expect(stdout).toContain("install-sh suite is linux-only, CI covers it");
+  });
 });
 
 // ── FLAG → CONFIG MAPPING ────────────────────────────────────────────────────

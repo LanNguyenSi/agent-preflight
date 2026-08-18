@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { CheckResult, PreflightConfig, PreflightResult } from "./types.js";
+import { CheckKind, CheckResult, CheckToggle, PreflightConfig, PreflightResult } from "./types.js";
 import { ensureProjectSetup, getWorkingDirHint } from "./checks/shared.js";
 
 // Expands a leading `~/` in a configured path to `os.homedir()`, the way a
@@ -13,6 +13,98 @@ import { ensureProjectSetup, getWorkingDirHint } from "./checks/shared.js";
 // directory value); a bare `~` with no trailing segment is left as-is.
 function expandLeadingTilde(value: string): string {
   return value.startsWith("~/") ? path.join(os.homedir(), value.slice(2)) : value;
+}
+
+// Maps a CheckResult's `kind` back to the `.preflight.json` `checks.<key>`
+// toggle that controls it, for the acknowledge feature below. Deliberately
+// excludes "ci-simulation" (its toggle stays a plain boolean — see
+// PreflightConfig.checks — acknowledging it is out of scope) and "custom"
+// (customChecks[] already has its own per-check `failOnError` waiver).
+const CHECK_KIND_TO_CONFIG_KEY: Partial<
+  Record<CheckKind, keyof NonNullable<PreflightConfig["checks"]>>
+> = {
+  "git-state": "gitState",
+  lint: "lint",
+  typecheck: "typecheck",
+  test: "test",
+  audit: "audit",
+  "commit-convention": "commitConvention",
+  "secret-detection": "secretDetection",
+  tdd: "tdd",
+};
+
+interface AcknowledgeResolution {
+  /** Trimmed, non-empty justification, or `null` when none was configured. */
+  reason: string | null;
+  /**
+   * `true` when the config carried an `acknowledge` key but its value was
+   * not a usable justification (missing/empty/non-string) — a config error
+   * to surface, not a silent acknowledgement.
+   */
+  rejected: boolean;
+}
+
+// loadConfig() (src/config.ts) does not runtime-validate .preflight.json
+// (known gap, tracked separately) — a config value can be anything JSON
+// allows. This reads a check's toggle defensively: any shape other than a
+// plain object with a non-empty string `acknowledge` is treated as "no
+// acknowledge configured" (booleans, `null`, arrays, `{}`) or "rejected"
+// (an `acknowledge` key present but not a usable string), never a crash.
+function resolveAcknowledge(toggle: CheckToggle | undefined): AcknowledgeResolution {
+  if (toggle === null || typeof toggle !== "object" || Array.isArray(toggle)) {
+    return { reason: null, rejected: false };
+  }
+  if (!("acknowledge" in toggle)) {
+    return { reason: null, rejected: false };
+  }
+  const raw = (toggle as Record<string, unknown>).acknowledge;
+  if (typeof raw === "string" && raw.trim().length > 0) {
+    return { reason: raw.trim(), rejected: false };
+  }
+  return { reason: null, rejected: true };
+}
+
+/**
+ * Downgrades a `fail` CheckResult to a non-blocking `acknowledged` status
+ * when its check kind's `.preflight.json` toggle carries a valid
+ * `acknowledge` justification (agent-tasks b31065cc). Scoped to `fail`
+ * only — `pass`/`warn`/`skip` are already non-blocking, so there is nothing
+ * to acknowledge. Never silent: every application appends a
+ * `PreflightResult.limitations` entry naming the check and the reason, and
+ * the check's own `message` is rewritten to carry the reason too (visible
+ * in both `--json` and the human CLI output). A malformed `acknowledge`
+ * (present but not a non-empty string) is rejected — the check is left
+ * exactly as-is (still blocking if it failed) and a limitations entry
+ * reports the rejection, so a typo'd config can never silently waive a
+ * real failure.
+ */
+function applyAcknowledgements(
+  checks: CheckResult[],
+  config: PreflightConfig
+): { checks: CheckResult[]; limitations: string[] } {
+  const limitations: string[] = [];
+  const transformed = checks.map((check): CheckResult => {
+    const configKey = CHECK_KIND_TO_CONFIG_KEY[check.kind];
+    if (!configKey) return check;
+
+    const { reason, rejected } = resolveAcknowledge(config.checks?.[configKey]);
+    if (rejected) {
+      limitations.push(
+        `checks.${configKey}.acknowledge must be a non-empty string justification; ignoring it — "${check.name}" is not acknowledged`
+      );
+      return check;
+    }
+    if (reason && check.status === "fail") {
+      limitations.push(`checks.${configKey} acknowledged (was failing "${check.name}"): ${reason}`);
+      return {
+        ...check,
+        status: "acknowledged",
+        message: check.message ? `${check.message} — acknowledged: ${reason}` : `acknowledged: ${reason}`,
+      };
+    }
+    return check;
+  });
+  return { checks: transformed, limitations };
 }
 
 export async function runPreflight(
@@ -110,22 +202,32 @@ export async function runPreflight(
     limitations.push(...result.limitations);
   }
 
-  const blockers = checks
+  // Acknowledge pass: downgrades a `fail` to non-blocking `acknowledged`
+  // when the operator waived that check kind in .preflight.json with a
+  // justification. Runs after every check kind above has reported in, and
+  // before blockers/confidence are computed, so an acknowledged check never
+  // reaches `blockers` and its status/message reflect the waiver in both
+  // `checks` and the `--json` output.
+  const acknowledgeResult = applyAcknowledgements(checks, config);
+  const finalChecks = acknowledgeResult.checks;
+  limitations.push(...acknowledgeResult.limitations);
+
+  const blockers = finalChecks
     .filter((c) => c.status === "fail")
     .map((c) => c.message ?? c.name);
 
-  const warnings = checks
+  const warnings = finalChecks
     .filter((c) => c.status === "warn")
     .map((c) => c.message ?? c.name);
 
-  const confidence = computeConfidence(checks, limitations);
+  const confidence = computeConfidence(finalChecks, limitations);
   // ready = no blockers (warnings are ok); confidence is separate signal for agents
   const ready = blockers.length === 0;
 
   return {
     ready,
     confidence,
-    checks,
+    checks: finalChecks,
     blockers,
     warnings,
     limitations: [...new Set(limitations)],

@@ -160,6 +160,100 @@ describe("PreflightConfig.logDir wiring through the four runConfiguredCommands c
   });
 });
 
+describe("checks.<kind>.acknowledge (agent-tasks b31065cc)", () => {
+  it("downgrades a failing check to status:acknowledged, unblocks ready, and surfaces the reason in message + limitations", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-ack-repo-"));
+    try {
+      const config = defaultConfig();
+      config.checks = {
+        ...allChecksDisabled(),
+        test: { acknowledge: "install-sh suite is linux-only, CI covers it" },
+      };
+      config.commands = { test: ["echo boom && exit 1"] };
+      config.logDir = "custom-logs";
+
+      const result = await runPreflight(repoPath, config);
+
+      const testCheck = result.checks.find((c) => c.kind === "test");
+      expect(testCheck?.status).toBe("acknowledged");
+      expect(testCheck?.message).toContain("install-sh suite is linux-only, CI covers it");
+      expect(result.ready).toBe(true);
+      expect(result.blockers).toEqual([]);
+      expect(
+        result.limitations.some((l) => l.includes("install-sh suite is linux-only, CI covers it"))
+      ).toBe(true);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a missing/empty acknowledge justification — the check stays a blocker, and the rejection is reported in limitations, never silently", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-ack-reject-repo-"));
+    try {
+      const config = defaultConfig();
+      config.checks = { ...allChecksDisabled(), test: { acknowledge: "" } };
+      config.commands = { test: ["echo boom && exit 1"] };
+      config.logDir = "custom-logs";
+
+      const result = await runPreflight(repoPath, config);
+
+      const testCheck = result.checks.find((c) => c.kind === "test");
+      expect(testCheck?.status).toBe("fail");
+      expect(result.ready).toBe(false);
+      expect(result.blockers.length).toBeGreaterThan(0);
+      expect(
+        result.limitations.some((l) => l.includes("acknowledge must be a non-empty string"))
+      ).toBe(true);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not crash on a malformed (non-string) acknowledge value from an unvalidated .preflight.json; the check stays a blocker", async () => {
+    // loadConfig() (src/config.ts) does not runtime-validate .preflight.json
+    // (known gap, tracked separately — see task 850903cb), so a live config
+    // file can hand the runner arbitrary JSON-shaped junk here. The cast
+    // simulates exactly that: a value TypeScript would normally reject, but
+    // which can appear at runtime from a hand-edited config file.
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-ack-malformed-repo-"));
+    try {
+      const config = defaultConfig();
+      config.checks = {
+        ...allChecksDisabled(),
+        test: { acknowledge: 12345 },
+      } as unknown as NonNullable<PreflightConfig["checks"]>;
+      config.commands = { test: ["echo boom && exit 1"] };
+      config.logDir = "custom-logs";
+
+      const result = await runPreflight(repoPath, config);
+
+      const testCheck = result.checks.find((c) => c.kind === "test");
+      expect(testCheck?.status).toBe("fail");
+      expect(result.ready).toBe(false);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a passing check alone even when its kind carries an acknowledge (nothing to waive)", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-ack-passing-repo-"));
+    try {
+      const config = defaultConfig();
+      config.checks = { ...allChecksDisabled(), test: { acknowledge: "not needed, just documenting" } };
+      config.commands = { test: ["exit 0"] };
+      config.logDir = "custom-logs";
+
+      const result = await runPreflight(repoPath, config);
+
+      const testCheck = result.checks.find((c) => c.kind === "test");
+      expect(testCheck?.status).toBe("pass");
+      expect(result.ready).toBe(true);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("PreflightConfig.logDir tilde expansion", () => {
   it("expands a leading '~/' to os.homedir() before resolving, instead of a literal '~' directory under repoPath", async () => {
     const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-logdir-repo-tilde-"));

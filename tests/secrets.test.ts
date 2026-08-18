@@ -155,6 +155,86 @@ describe("runSecretDetection — git-aware severity", () => {
   });
 });
 
+describe("runSecretDetection — test-fixture heuristic (agent-tasks b31065cc)", () => {
+  it("warns (does not fail) on an obvious test-fixture constant under tests/, even when this branch introduces it", async () => {
+    // The real dogfood case: TOKEN = "test-planforge-bot-token" in
+    // scaffoldkit's tests/test_notify_planforge.py blocked a push over an
+    // obvious test fixture.
+    const repoPath = makeTempDir("preflight-secrets-fixture-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "tests"));
+    fs.writeFileSync(
+      path.join(repoPath, "tests", "test_notify_planforge.py"),
+      'TOKEN = "test-planforge-bot-token"\n',
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("warn");
+    expect(result.checks[0]?.details?.[0]).toContain("tests/test_notify_planforge.py:1");
+  });
+
+  it("also downgrades dummy-/fake-prefixed fixture values under tests/", async () => {
+    const repoPath = makeTempDir("preflight-secrets-fixture-prefixes-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "test"));
+    fs.writeFileSync(
+      path.join(repoPath, "test", "config.ts"),
+      'const apiKey = "dummy_1234567890abcdefghij";\nconst secret = "fake-1234567890abcdefghij";\n',
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("warn");
+  });
+
+  it("NEGATIVE CONTROL: still fails on a realistic-looking secret outside any test/tests directory", async () => {
+    const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-outside-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const token = "${REAL_SECRET}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/config.ts:1");
+  });
+
+  it("NEGATIVE CONTROL: still fails on a realistic-looking (non-fixture-prefixed) secret INSIDE tests/", async () => {
+    // Being under tests/ alone is not enough — the value must also look
+    // like an obvious fixture, or a real leaked credential in a test
+    // fixture file would be masked.
+    const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-inside-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "tests"));
+    fs.writeFileSync(
+      path.join(repoPath, "tests", "test_leak.py"),
+      `TOKEN = "${REAL_SECRET}"\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("tests/test_leak.py:1");
+  });
+
+  it("does not downgrade a test-/dummy-/fake-prefixed value that lives outside test/tests (prefix alone is not enough)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-prefix-only-");
+    gitInit(repoPath);
+    fs.writeFileSync(
+      path.join(repoPath, "config.ts"),
+      'const token = "test-planforge-bot-token";\n',
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+  });
+});
+
 describe("runSecretDetection — allowlist", () => {
   it("suppresses a finding listed by exact path in secretAllowlist", async () => {
     const repoPath = makeTempDir("preflight-secrets-allow-path-");

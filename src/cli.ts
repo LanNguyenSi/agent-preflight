@@ -61,6 +61,13 @@ export function createProgram(): Command {
         console.log();
       }
 
+      const acknowledged = result.checks.filter((c) => c.status === "acknowledged");
+      if (acknowledged.length > 0) {
+        console.log("Acknowledged (failed, but waived — not counted as a blocker):");
+        acknowledged.forEach((c) => console.log(`  ~ ${c.name}: ${c.message}`));
+        console.log();
+      }
+
       if (result.limitations.length > 0) {
         console.log("Limitations (not validated locally):");
         result.limitations.forEach((l) => console.log(`  ~ ${l}`));

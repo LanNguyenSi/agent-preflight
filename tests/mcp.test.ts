@@ -282,6 +282,68 @@ describe("preflight_run noAudit/noSecrets threading", () => {
   });
 });
 
+// agent-tasks b31065cc: the "acknowledged" CheckResult status must survive
+// the MCP tool's outputSchema runtime validation (a strict z.enum missing
+// the new value would make the SDK reject the tool response, not just fail
+// typecheck) and still carry the justification through to the caller.
+describe("preflight_run — acknowledged status through the MCP path", () => {
+  let repoPath: string;
+
+  beforeAll(() => {
+    repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-mcp-ack-"));
+    fs.writeFileSync(
+      path.join(repoPath, ".preflight.json"),
+      JSON.stringify({
+        checks: {
+          gitState: false,
+          lint: false,
+          typecheck: false,
+          test: { acknowledge: "install-sh suite is linux-only, CI covers it" },
+          audit: false,
+          ciSimulation: false,
+          commitConvention: false,
+          secretDetection: false,
+          tdd: false,
+        },
+        commands: { test: ["echo boom && exit 1"] },
+        logDir: "custom-logs",
+      })
+    );
+    execSync("git init", { cwd: repoPath });
+    execSync('git config user.email "test@example.com"', { cwd: repoPath });
+    execSync('git config user.name "Test User"', { cwd: repoPath });
+    execSync("git add .", { cwd: repoPath });
+    execSync('git commit -m "chore: fixture"', { cwd: repoPath });
+  });
+
+  afterAll(() => {
+    fs.rmSync(repoPath, { recursive: true, force: true });
+  });
+
+  it("returns ready:true with a status:acknowledged check carrying the justification, no schema error", async () => {
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({
+        name: "preflight_run",
+        arguments: { repoPath },
+      });
+
+      // A missing "acknowledged" enum member on the tool's outputSchema
+      // would make the SDK reject this response as isError, not silently
+      // pass — this assertion is the MCP-path regression guard.
+      expect(response.isError).toBeFalsy();
+      const structured = response.structuredContent as Record<string, unknown>;
+      expect(structured.ready).toBe(true);
+      const checks = structured.checks as Array<{ name: string; status: string; message?: string }>;
+      const acknowledged = checks.find((c) => c.status === "acknowledged");
+      expect(acknowledged).toBeDefined();
+      expect(acknowledged?.message).toContain("install-sh suite is linux-only, CI covers it");
+    } finally {
+      await close();
+    }
+  });
+});
+
 describe("preflight_batch", () => {
   let batchRoot: string;
   let repoPath: string;
