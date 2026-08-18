@@ -118,7 +118,16 @@ export function createProgram(): Command {
         const icon = result.ready ? "✅" : "❌";
         const conf = Math.round(result.confidence * 100);
         const blockers = result.blockers.length > 0 ? ` [${result.blockers[0]}]` : "";
-        console.log(`  ${icon} ${repo} (${conf}%)${blockers}`);
+        // Acknowledged checks (waived failures) never surface in
+        // blockers/warnings — they only exist in checks[] — so this batch
+        // summary line would otherwise show a plain ✅ with no sign that a
+        // failure was waived (review finding 3, fix-round on agent-tasks
+        // b31065cc). The single-repo `run` command already has a dedicated
+        // "Acknowledged" section for this; batch's one-line-per-repo format
+        // has no room for that, so it gets a compact count marker instead.
+        const acknowledgedCount = result.checks.filter((c) => c.status === "acknowledged").length;
+        const acknowledged = acknowledgedCount > 0 ? ` [${acknowledgedCount} acknowledged]` : "";
+        console.log(`  ${icon} ${repo} (${conf}%)${blockers}${acknowledged}`);
       }
 
       console.log();

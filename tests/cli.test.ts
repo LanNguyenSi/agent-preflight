@@ -290,6 +290,53 @@ describe("batch command — exit-code contract", () => {
   });
 });
 
+describe("batch command — pretty output acknowledged marker (review finding 3)", () => {
+  it("shows an '[n acknowledged]' marker on a repo's line when it has acknowledged checks", async () => {
+    mockRunBatch.mockResolvedValue({
+      total: 1,
+      ready: 1,
+      notReady: 0,
+      skipped: 0,
+      results: [
+        {
+          repo: "some-repo",
+          result: makeResult({
+            ready: true,
+            checks: [
+              {
+                name: "npm-test",
+                kind: "test",
+                status: "acknowledged",
+                message: "npm test failed — acknowledged: linux-only suite",
+                durationMs: 10,
+                confidenceContribution: 0.2,
+              },
+            ],
+          }),
+        },
+      ],
+    });
+
+    const { stdout } = await runCommand(["batch", "."]);
+
+    expect(stdout).toContain("[1 acknowledged]");
+  });
+
+  it("omits the marker when no check is acknowledged", async () => {
+    mockRunBatch.mockResolvedValue({
+      total: 1,
+      ready: 1,
+      notReady: 0,
+      skipped: 0,
+      results: [{ repo: "some-repo", result: makeResult({ ready: true }) }],
+    });
+
+    const { stdout } = await runCommand(["batch", "."]);
+
+    expect(stdout).not.toContain("acknowledged");
+  });
+});
+
 describe("batch command — flag→config mapping", () => {
   it("--no-audit sets configOverride.checks.audit = false", async () => {
     mockRunBatch.mockResolvedValue({ total: 0, ready: 0, notReady: 0, skipped: 0, results: [] });

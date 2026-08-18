@@ -19,6 +19,30 @@ const SECRET_PATTERNS = [
   /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
 ];
 
+// High-confidence secret SHAPES (review finding 2, fix-round on agent-tasks
+// b31065cc): a match against either of these anywhere on the line means the
+// line unambiguously carries a real credential format, not just a
+// name-looks-like-a-secret heuristic. SECRET_PATTERNS above is checked in
+// order and scanDir stops at the FIRST pattern that matches a given line
+// (see the `break` there), so a line such as
+// `TOKEN = "test-ghp_<36 chars>"` trips the earlier, weaker
+// `(?:secret|token)\s*[:=]...` pattern first and — pre-fix — the genuinely
+// high-confidence `ghp_...` pattern a few lines below it was never even
+// consulted for that line. scanDir re-tests the full line (not just the
+// winning pattern's matched text) against this subset after a match is
+// found, and forces `testFixture: false` whenever one hits — regardless of
+// which SECRET_PATTERNS entry actually produced the finding, and regardless
+// of whether the matched VALUE also happens to look test-/dummy-/fake-
+// prefixed. A real ghp_ token or private-key header can be dressed up with
+// a `test-` prefix exactly as easily as a real password can embed an inner
+// `:test-` in a connection string (see TEST_FIXTURE_VALUE_PATTERN below) —
+// in both cases the presence of an unambiguous credential SHAPE must win
+// over the test-fixture heuristic, never the other way round.
+const HIGH_CONFIDENCE_PATTERNS = [
+  /ghp_[a-zA-Z0-9]{36}/,
+  /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
+];
+
 // Placeholder patterns that indicate example/template values (not real secrets)
 const PLACEHOLDER_PATTERNS = [
   /your_[a-z_]+_here/i,
@@ -49,10 +73,31 @@ const PLACEHOLDER_PATTERNS = [
 // secret inside tests/, or a test-/dummy-/fake-prefixed value outside any
 // test/tests directory) still blocks exactly as before — see
 // tests/secrets.test.ts's negative-control cases.
-const TEST_FIXTURE_VALUE_PATTERN = /[:=]\s*["']?(?:test|dummy|fake)[-_]/i;
+//
+// Anchored to the FIRST `:`/`=` on the matched text (review finding 1,
+// fix-round on agent-tasks b31065cc): `^[^:=]*[:=]` consumes everything up
+// to and including that first separator (the key name), and the
+// test-/dummy-/fake- prefix must sit immediately after it. The prior
+// unanchored `/[:=]\s*.../ ` searched the ENTIRE matched text (which can be
+// a whole line for the password/apiKey/secret patterns above) for ANY
+// `:`/`=` followed by a fixture-looking prefix, so a value with an inner
+// separator — e.g. `password = "db://u:S3cretPr0d:test-1"` — matched on
+// the embedded `:test-` and got downgraded to `warn`, masking a real
+// leaked password. Anchoring to the first separator means only the actual
+// assigned value is examined, exactly as the block comment above already
+// promises ("the prefix must be the VALUE itself, immediately after the
+// assignment").
+const TEST_FIXTURE_VALUE_PATTERN = /^[^:=]*[:=]\s*["']?(?:test|dummy|fake)[-_]/i;
 
+// Only DIRECTORY segments count (review finding, fix-round on agent-tasks
+// b31065cc): `.slice(0, -1)` drops the last segment, which is always the
+// file's own basename, before checking for an exact "test"/"tests"
+// segment. Without the slice, a FILE literally named `tests` (e.g.
+// `bin/tests`, an extensionless script) counted as being "under a test
+// directory" purely because its own filename matched — even though it
+// lives directly in `bin/`, not in any `test`/`tests` directory.
 function isTestPath(relPath: string): boolean {
-  return relPath.split("/").some((segment) => {
+  return relPath.split("/").slice(0, -1).some((segment) => {
     const lower = segment.toLowerCase();
     return lower === "test" || lower === "tests";
   });
@@ -469,7 +514,14 @@ function scanDir(dir: string, root: string, findings: Finding[]): void {
           const match = line.match(pattern);
           const matchText = match ? match[0] : "";
           if (match && !PLACEHOLDER_PATTERNS.some((p) => p.test(matchText))) {
-            const testFixture = isTestPath(relPath) && TEST_FIXTURE_VALUE_PATTERN.test(matchText);
+            // A high-confidence credential SHAPE anywhere on the line (see
+            // HIGH_CONFIDENCE_PATTERNS above) always wins over the
+            // test-fixture heuristic, even when the winning SECRET_PATTERNS
+            // entry above was a weaker one, and even when the matched
+            // value also looks test-/dummy-/fake-prefixed.
+            const highConfidence = HIGH_CONFIDENCE_PATTERNS.some((p) => p.test(line));
+            const testFixture =
+              !highConfidence && isTestPath(relPath) && TEST_FIXTURE_VALUE_PATTERN.test(matchText);
             findings.push({ file: relPath, line: i + 1, testFixture });
             break; // one finding per line is enough
           }

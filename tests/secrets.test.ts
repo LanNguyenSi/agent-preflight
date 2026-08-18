@@ -233,6 +233,71 @@ describe("runSecretDetection — test-fixture heuristic (agent-tasks b31065cc)",
 
     expect(result.checks[0]?.status).toBe("fail");
   });
+
+  it("NEGATIVE CONTROL: still fails on a real password under tests/ whose value merely contains an INNER ':test-' (review finding 1)", async () => {
+    // Reviewer-measured false negative on the pre-fix unanchored
+    // TEST_FIXTURE_VALUE_PATTERN: it searched the whole matched text for
+    // ANY `:`/`=` followed by a fixture-looking prefix, so a value with an
+    // inner separator matched on the embedded `:test-` fragment and was
+    // downgraded to `warn` — masking a real leaked password. The pattern
+    // is now anchored to the FIRST separator (the actual assignment), so
+    // only the real value is examined.
+    const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-inner-sep-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "tests"));
+    fs.writeFileSync(
+      path.join(repoPath, "tests", "config.ts"),
+      'password = "db://u:S3cretPr0d:test-1"\n',
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("tests/config.ts:1");
+  });
+
+  it("NEGATIVE CONTROL: still fails on a genuine ghp_ token under tests/ even when the value is 'test-' prefixed (review finding 2)", async () => {
+    // Reviewer-measured false negative: SECRET_PATTERNS is checked in order
+    // and scanDir stops at the first match per line. `TOKEN = "test-ghp_..."`
+    // trips the earlier, weaker `(?:secret|token)\s*[:=]...` pattern first,
+    // so the high-confidence ghp_ pattern a few entries later was never
+    // even consulted, and the test-fixture heuristic downgraded a real
+    // GitHub token dressed up with a "test-" prefix to a non-blocking warn.
+    // A high-confidence credential SHAPE anywhere on the line must now
+    // force testFixture:false regardless of which pattern actually won.
+    const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-ghp-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "tests"));
+    fs.writeFileSync(
+      path.join(repoPath, "tests", "leak.py"),
+      `TOKEN = "test-ghp_${"x".repeat(36)}"\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("tests/leak.py:1");
+  });
+
+  it("NEGATIVE CONTROL: a file merely NAMED 'tests' (not a directory) does not get the test-fixture downgrade (isTestPath LOW finding)", async () => {
+    // isTestPath() previously checked every path segment, including the
+    // file's own basename — so an extensionless file literally named
+    // `tests` (e.g. `bin/tests`) counted as "under a test directory" purely
+    // because its filename matched, even though it lives directly in
+    // `bin/`. Only directory segments should count.
+    const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-filename-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "bin"));
+    fs.writeFileSync(
+      path.join(repoPath, "bin", "tests"),
+      'TOKEN = "test-planforge-bot-token"\n',
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("bin/tests:1");
+  });
 });
 
 describe("runSecretDetection — allowlist", () => {

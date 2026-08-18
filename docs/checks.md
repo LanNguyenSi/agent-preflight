@@ -83,11 +83,13 @@ Every check can be turned off in `.preflight.json`:
 
 CLI flags `--no-audit`, `--no-secrets`, and `--ci-simulation` override the file for one run.
 
-Instead of `true`/`false`, any toggle except `ciSimulation` can also be
-`{ "acknowledge": "<reason>" }` to run the check but waive a `fail` result
-as a non-blocking `acknowledged` status with the reason attached — see the
-README's "Waiving a permanently-failing check" section for the full
-contract (required non-empty reason, visibility guarantees, boundaries).
+Instead of `true`/`false`, any toggle except `ciSimulation` and
+`secretDetection` can also be `{ "acknowledge": "<reason>" }` to run the
+check but waive a `fail` result as a non-blocking `acknowledged` status
+with the reason attached — see the README's "Waiving a
+permanently-failing check" section for the full contract (required
+non-empty reason, visibility guarantees, boundaries, and why
+`secretDetection` is excluded).
 
 ### Failure log directory override
 

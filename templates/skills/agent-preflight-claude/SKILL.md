@@ -37,6 +37,9 @@ Claude should summarize:
 - `ready`
 - primary blockers
 - notable warnings
+- acknowledged checks (scan `checks[]` for `status: "acknowledged"` — waived
+  failures never appear in `blockers`/`warnings`, so `ready: true` alone can
+  hide one)
 - explicit limitations
 - confidence
 

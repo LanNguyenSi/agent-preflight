@@ -208,31 +208,53 @@ to a new `acknowledged` status instead of being dropped or hidden:
   check keeps its own `acknowledged` status in `checks[]` — a caller reading
   only `ready`/`blockers` still sees `ready: true`, but anything reading
   `checks[]` sees the check did not actually pass.
+- An acknowledged check never appears in `blockers[]` (only `fail` does) or
+  `warnings[]` (only `warn` does) — it is visible *exclusively* through its
+  own `status: "acknowledged"` entry in `checks[]`. A consumer that only
+  quotes `blockers`/`warnings` and never scans `checks[]` will report a
+  clean "READY" without ever surfacing that a failure was waived.
 - The check's `message` is rewritten to include the reason
   (`"... — acknowledged: install-sh suite is linux-only, CI covers it"`),
   and a matching entry is added to `limitations`, so the waiver is visible
   in `--json` output.
 - The human-output CLI prints a dedicated `Acknowledged (failed, but
   waived — not counted as a blocker):` section naming the check and reason.
+  `preflight batch`'s one-line-per-repo summary has no room for that
+  section, so it instead appends a compact `[n acknowledged]` marker to a
+  repo's line when that repo has one or more acknowledged checks.
 
-It is never silent: `acknowledge` requires a non-empty string. A missing or
-non-string value (`{ "acknowledge": "" }`, `{}` with a malformed value, a
-number, etc.) is rejected — the check is left exactly as it would be
-without an acknowledge (still a blocker if it failed), and the rejection
-itself is reported as a `limitations` entry, so a typo'd config can never
-silently waive a real failure.
+It is never silent about a REJECTED acknowledge: `acknowledge` requires a
+non-empty string, and a present-but-unusable value (`{ "acknowledge": "" }`,
+`{ "acknowledge": 12345 }`, etc.) is rejected — the check is left exactly as
+it would be without an acknowledge (still a blocker if it failed), and the
+rejection is reported once per check kind as a `limitations` entry, so a
+typo'd config can never silently waive a real failure. A bare `{}` (no
+`acknowledge` key at all) is a *different* case: it carries nothing to
+reject, so it is not reported anywhere — the check simply runs enabled,
+identical to `true`, with no acknowledge behavior in play.
 
 **Deliberate boundaries:**
 - Scoped to checks that failed (`fail`); a `pass`/`warn`/`skip` result is
   already non-blocking and is left untouched.
 - Applies to the `checks.*` boolean toggles (`gitState`, `lint`,
-  `typecheck`, `test`, `audit`, `commitConvention`, `secretDetection`,
-  `tdd`) — one reason acknowledges every check of that kind for the whole
-  run (e.g. every `commands.test` entry), not a single named sub-check.
+  `typecheck`, `test`, `audit`, `commitConvention`, `tdd`) — one reason
+  acknowledges every check of that kind for the whole run (e.g. every
+  `commands.test` entry), not a single named sub-check.
 - **Not supported** for `ciSimulation` (its toggle stays a plain boolean —
-  acknowledging CI-simulation behavior is out of scope for this feature)
-  or for `customChecks` (which already have their own per-check
+  acknowledging CI-simulation behavior is out of scope for this feature) or
+  for `customChecks` (which already have their own per-check
   `failOnError: false` waiver instead).
+- **Not supported** for `secretDetection` either (its toggle also stays a
+  plain boolean, Orchestrator decision D-013): every other kind above waives
+  the whole check for the run, but a secret-detection finding is not
+  interchangeable that way — one `acknowledge` reason would blind every
+  *future* secret in the repo, not just the finding an operator actually
+  reviewed. Use `secretAllowlist` (a `path` or `path:line` entry) or an
+  inline `pragma: allowlist secret` comment instead, both scoped to one
+  specific, already-reviewed finding — see "Secret detection: obvious
+  test-fixture values don't block" below. A configured but ignored
+  `checks.secretDetection.acknowledge` is reported in `limitations` (not
+  silently dropped), pointing at these alternatives.
 
 ### Secret detection: obvious test-fixture values don't block
 

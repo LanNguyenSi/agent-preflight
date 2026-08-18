@@ -17,9 +17,22 @@ function expandLeadingTilde(value: string): string {
 
 // Maps a CheckResult's `kind` back to the `.preflight.json` `checks.<key>`
 // toggle that controls it, for the acknowledge feature below. Deliberately
-// excludes "ci-simulation" (its toggle stays a plain boolean — see
-// PreflightConfig.checks — acknowledging it is out of scope) and "custom"
-// (customChecks[] already has its own per-check `failOnError` waiver).
+// excludes:
+//   - "ci-simulation" (its toggle stays a plain boolean — see
+//     PreflightConfig.checks — acknowledging it is out of scope);
+//   - "custom" (customChecks[] already has its own per-check `failOnError`
+//     waiver);
+//   - "secret-detection" (Orchestrator decision D-013, fix-round on
+//     agent-tasks b31065cc): unlike every other check kind here, a single
+//     `checks.secretDetection.acknowledge` reason would waive EVERY future
+//     secret-detection finding for the whole run, not just the one the
+//     operator actually reviewed — the scanner already has finding-scoped
+//     waivers (`secretAllowlist` path/`path:line` entries, an inline
+//     `pragma: allowlist secret` comment) that don't carry that blast
+//     radius, so this feature intentionally does not add a coarser one.
+//     See checkSecretDetectionAcknowledgeIgnored() below, which reports a
+//     configured-but-inert `checks.secretDetection.acknowledge` instead of
+//     silently doing nothing with it.
 const CHECK_KIND_TO_CONFIG_KEY: Partial<
   Record<CheckKind, keyof NonNullable<PreflightConfig["checks"]>>
 > = {
@@ -29,7 +42,6 @@ const CHECK_KIND_TO_CONFIG_KEY: Partial<
   test: "test",
   audit: "audit",
   "commit-convention": "commitConvention",
-  "secret-detection": "secretDetection",
   tdd: "tdd",
 };
 
@@ -76,22 +88,26 @@ function resolveAcknowledge(toggle: CheckToggle | undefined): AcknowledgeResolut
  * (present but not a non-empty string) is rejected — the check is left
  * exactly as-is (still blocking if it failed) and a limitations entry
  * reports the rejection, so a typo'd config can never silently waive a
- * real failure.
+ * real failure. The rejection is reported once per config key (not once
+ * per CheckResult) — a config key like `test` can back several results
+ * (one per `commands.test` entry), and reporting the same rejection once
+ * per result only differed by an internal check name, which the
+ * deduplication at the end of `runPreflight` (`[...new Set(limitations)]`)
+ * could not collapse (review finding, fix-round on agent-tasks b31065cc).
  */
 function applyAcknowledgements(
   checks: CheckResult[],
   config: PreflightConfig
 ): { checks: CheckResult[]; limitations: string[] } {
   const limitations: string[] = [];
+  const rejectedConfigKeys = new Set<string>();
   const transformed = checks.map((check): CheckResult => {
     const configKey = CHECK_KIND_TO_CONFIG_KEY[check.kind];
     if (!configKey) return check;
 
     const { reason, rejected } = resolveAcknowledge(config.checks?.[configKey]);
     if (rejected) {
-      limitations.push(
-        `checks.${configKey}.acknowledge must be a non-empty string justification; ignoring it — "${check.name}" is not acknowledged`
-      );
+      rejectedConfigKeys.add(configKey);
       return check;
     }
     if (reason && check.status === "fail") {
@@ -104,7 +120,36 @@ function applyAcknowledgements(
     }
     return check;
   });
+  for (const configKey of rejectedConfigKeys) {
+    limitations.push(
+      `checks.${configKey}.acknowledge must be a non-empty string justification; ignoring it — checks.${configKey} is not acknowledged`
+    );
+  }
   return { checks: transformed, limitations };
+}
+
+/**
+ * `secret-detection` has no CHECK_KIND_TO_CONFIG_KEY entry (Orchestrator
+ * decision D-013, see the block comment on that map), so
+ * applyAcknowledgements() above never touches it — a
+ * `checks.secretDetection.acknowledge` configured in `.preflight.json` is
+ * otherwise silently inert: the check still runs, still reports `fail` on
+ * a real finding, and nothing ever explains why the acknowledge did
+ * nothing. This reports it explicitly, once per run, whenever the toggle
+ * is object-shaped and carries an `acknowledge` key at all (valid or not —
+ * unlike `resolveAcknowledge`, there is no "correct" value here to accept),
+ * so an operator who copies the acknowledge pattern from another check
+ * kind gets a visible `limitations` entry naming the actually-supported,
+ * finding-scoped alternative instead of assuming a real secret got waived
+ * when it did not.
+ */
+function checkSecretDetectionAcknowledgeIgnored(config: PreflightConfig): string[] {
+  const toggle = config.checks?.secretDetection as unknown;
+  if (toggle === null || typeof toggle !== "object" || Array.isArray(toggle)) return [];
+  if (!("acknowledge" in (toggle as Record<string, unknown>))) return [];
+  return [
+    "checks.secretDetection.acknowledge is not supported: secret-detection findings cannot be waived by check kind (a single reason would blind every future scan, not just the one finding it was meant to cover). Use secretAllowlist with a path or path:line entry, or an inline `pragma: allowlist secret` comment, to suppress one reviewed finding instead.",
+  ];
 }
 
 export async function runPreflight(
@@ -174,6 +219,7 @@ export async function runPreflight(
     checks.push(...result.checks);
     limitations.push(...result.limitations);
   }
+  limitations.push(...checkSecretDetectionAcknowledgeIgnored(config));
 
   if (config.checks?.commitConvention !== false) {
     const result = await runCommitConventionCheck(targetPath, config.commitConvention);
