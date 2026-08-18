@@ -58,7 +58,7 @@ const PLACEHOLDER_PATTERNS = [
 // `fake-`/`fake_`, AND whose file lives under a directory literally named
 // `test` or `tests` (see `isTestPath`), is downgraded to a non-blocking
 // `warn` instead of `fail` — even when the current change introduces it.
-// Real dogfood case: `TOKEN = "test-planforge-bot-token"` in
+// Real dogfood case: `TOKEN = "test-planforge-bot-token"` in  // pragma: allowlist secret
 // scaffoldkit's tests/test_notify_planforge.py blocked a push for an
 // obvious test constant.
 //
@@ -68,7 +68,7 @@ const PLACEHOLDER_PATTERNS = [
 //     the path side widens how many files this can ever apply to.
 //   - The prefix must be the VALUE itself, immediately after the
 //     assignment, not merely present anywhere on the line — so
-//     `token = "AbC-test-shaped-but-real-1234567890"` still blocks.
+//     `token = "AbC-test-shaped-but-real-1234567890"` still blocks.  // pragma: allowlist secret
 // A value that satisfies only one of the two conditions (a realistic
 // secret inside tests/, or a test-/dummy-/fake-prefixed value outside any
 // test/tests directory) still blocks exactly as before — see
@@ -81,7 +81,7 @@ const PLACEHOLDER_PATTERNS = [
 // unanchored `/[:=]\s*.../ ` searched the ENTIRE matched text (which can be
 // a whole line for the password/apiKey/secret patterns above) for ANY
 // `:`/`=` followed by a fixture-looking prefix, so a value with an inner
-// separator — e.g. `password = "db://u:S3cretPr0d:test-1"` — matched on
+// separator — e.g. `password = "db://u:S3cretPr0d:test-1"` — matched on  // pragma: allowlist secret
 // the embedded `:test-` and got downgraded to `warn`, masking a real
 // leaked password. Anchoring to the first separator means only the actual
 // assigned value is examined, exactly as the block comment above already
