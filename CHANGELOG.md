@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`loadConfig()` no longer crashes the CLI on a malformed `.preflight.json` field** (task 850903cb). `JSON.parse(raw) as Partial<PreflightConfig>` previously trusted the parsed shape with no runtime check, so e.g. `logDir: 123` reached `expandLeadingTilde()`/`path.isAbsolute()` in `runner.ts` and threw `TypeError: value.startsWith is not a function`, crashing the whole run. `src/config.ts` now hand-rolls a field-by-field type check (no schema library) covering every `PreflightConfig` field: a field whose value has the wrong type is dropped (falls back to `defaultConfig()`'s value via the existing `mergeConfig` merge) and reported via `console.warn`, instead of being merged in as-is. Nested objects (`checks`, `setup`, `commands`, `sandbox`) are validated sub-field-by-sub-field so one malformed sibling doesn't drop the whole object; `customChecks[]` entries are validated individually so one malformed entry is dropped without discarding the rest of the array. A top-level JSON value that isn't even a plain object (array, string, etc.) invalidates the whole file. Valid configs are unaffected: every field that already matches its declared type passes through exactly as before.
+
 ## [0.4.0] - 2026-08-18
 
 ### Added
