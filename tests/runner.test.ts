@@ -210,12 +210,17 @@ describe("checks.<kind>.acknowledge (agent-tasks b31065cc)", () => {
     }
   });
 
-  it("does not crash on a malformed (non-string) acknowledge value from an unvalidated .preflight.json; the check stays a blocker", async () => {
-    // loadConfig() (src/config.ts) does not runtime-validate .preflight.json
-    // (known gap, tracked separately — see task 850903cb), so a live config
-    // file can hand the runner arbitrary JSON-shaped junk here. The cast
-    // simulates exactly that: a value TypeScript would normally reject, but
-    // which can appear at runtime from a hand-edited config file.
+  it("does not crash on a malformed (non-string) acknowledge value inside an otherwise well-shaped checks.<kind> object; the check stays a blocker", async () => {
+    // loadConfig() (src/config.ts) validates every PreflightConfig field's
+    // top-level type since task 850903cb, including checks.<kind>: it must
+    // be a boolean or a plain object. `{ acknowledge: 12345 }` IS a plain
+    // object, so it passes that coarse shape check; config.ts deliberately
+    // does not also validate the inner `acknowledge` value's type (a string),
+    // leaving that to resolveAcknowledge() here in runner.ts, which already
+    // rejects it safely (see the docblock above and CheckToggle in types.ts).
+    // The cast below simulates exactly that residual case: a value
+    // TypeScript would normally reject, but which can still appear at
+    // runtime from a hand-edited config file.
     const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-ack-malformed-repo-"));
     try {
       const config = defaultConfig();

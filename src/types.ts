@@ -45,14 +45,20 @@ export type CheckKind =
  * `false`. `acknowledge` is required to be a non-empty string; a missing or
  * non-string value is rejected (ignored, with the rejection reported in
  * `PreflightResult.limitations`), never silently treated as "acknowledged".
- * Deliberately NOT supported for `ciSimulation` (kept a plain boolean),
- * `secretDetection` (also kept a plain boolean — Orchestrator decision
- * D-013: a whole-kind waiver would blind every future secret-detection
- * finding for the run, not just the one an operator reviewed; use
- * `secretAllowlist` or an inline `pragma: allowlist secret` comment
- * instead, see runner.ts#checkSecretDetectionAcknowledgeIgnored and the
- * README's "Deliberate boundaries"), or `custom` checks (which already
- * have their own per-check `failOnError`).
+ * Deliberately NOT *honored* for `ciSimulation` or `secretDetection`
+ * (Orchestrator decision D-013 for the latter: a whole-kind waiver would
+ * blind every future secret-detection finding for the run, not just the
+ * one an operator reviewed; use `secretAllowlist` or an inline `pragma:
+ * allowlist secret` comment instead), or for `custom` checks (which
+ * already have their own per-check `failOnError`). These two fields are
+ * still typed `CheckToggle` (not a plain `boolean`) so `src/config.ts`'s
+ * `validateConfig()` can accept and pass through an object-shaped value
+ * from `.preflight.json` instead of silently dropping it: `secretDetection`
+ * reports a configured-but-inert `{ acknowledge }` in `limitations` (see
+ * runner.ts#checkSecretDetectionAcknowledgeIgnored and the README's
+ * "Deliberate boundaries"), and `ciSimulation` simply isn't `=== true`, so
+ * it falls back to its normal "skipped" limitations entry, same as any
+ * other non-`true` value.
  */
 export type CheckToggle = boolean | { acknowledge: string };
 
@@ -63,9 +69,9 @@ export interface PreflightConfig {
     typecheck?: CheckToggle;
     test?: CheckToggle;
     audit?: CheckToggle;
-    ciSimulation?: boolean;
+    ciSimulation?: CheckToggle;
     commitConvention?: CheckToggle;
-    secretDetection?: boolean;
+    secretDetection?: CheckToggle;
     tdd?: CheckToggle;
   };
   tddExceptions?: string[];
