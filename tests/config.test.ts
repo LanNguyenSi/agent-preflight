@@ -71,11 +71,19 @@ describe("validateConfig", () => {
     ]);
   });
 
-  it("drops a malformed enum field (commitConvention: not one of the allowed values)", () => {
+  it("drops a malformed enum field (commitConvention: not one of the allowed values) and names the received value (FIX 5)", () => {
     const { config, warnings } = validateConfig({ commitConvention: "yolo" });
     expect(config.commitConvention).toBeUndefined();
     expect(warnings).toEqual([
-      "commitConvention: expected one of conventional, none, got string; ignoring this field",
+      'commitConvention: expected one of conventional, none, got "yolo"; ignoring this field',
+    ]);
+  });
+
+  it("names a non-string enum value's TYPE only, not the value itself (pickEnum stays type-only for non-strings)", () => {
+    const { config, warnings } = validateConfig({ commitConvention: 42 });
+    expect(config.commitConvention).toBeUndefined();
+    expect(warnings).toEqual([
+      "commitConvention: expected one of conventional, none, got number; ignoring this field",
     ]);
   });
 
@@ -134,6 +142,74 @@ describe("validateConfig", () => {
     expect(warnings).toEqual([
       "customChecks: expected an array, got object; ignoring this field",
     ]);
+  });
+
+  // FIX 4 (task-slicer fix-round, review of task 850903cb): 5 previously
+  // uncovered/mutation-survivable cases.
+
+  it("drops commands entirely when it is not an object", () => {
+    const { config, warnings } = validateConfig({ commands: "nope" });
+    expect(config.commands).toBeUndefined();
+    expect(warnings).toEqual([
+      "commands: expected an object, got string; ignoring this field",
+    ]);
+  });
+
+  it("drops sandbox entirely when it is not an object", () => {
+    const { config, warnings } = validateConfig({ sandbox: "nope" });
+    expect(config.sandbox).toBeUndefined();
+    expect(warnings).toEqual([
+      "sandbox: expected an object, got string; ignoring this field",
+    ]);
+  });
+
+  it("drops a customChecks entry that isn't an object (a bare string)", () => {
+    const { config, warnings } = validateConfig({ customChecks: ["echo hi"] });
+    expect(config.customChecks).toEqual([]);
+    expect(warnings).toEqual([
+      "customChecks[0]: expected an object, got string; dropping this entry",
+    ]);
+  });
+
+  it("drops a non-boolean customChecks[i].failOnError but keeps the rest of the entry (closes surviving mutant M4)", () => {
+    const { config, warnings } = validateConfig({
+      customChecks: [{ name: "smoke", command: "echo ok", failOnError: "yes" }],
+    });
+    expect(config.customChecks).toEqual([{ name: "smoke", command: "echo ok" }]);
+    expect(warnings).toEqual([
+      'customChecks[0].failOnError: expected a boolean, got string; ignoring this field',
+    ]);
+  });
+
+  it("pins the 'got null' wording for a null field (logDir: null)", () => {
+    const { config, warnings } = validateConfig({ logDir: null });
+    expect(config.logDir).toBeUndefined();
+    expect(warnings).toEqual([
+      "logDir: expected a string, got null; ignoring this field",
+    ]);
+  });
+
+  // FIX 3 (task-slicer fix-round, review of task 850903cb): unrecognized
+  // keys warn instead of being silently dropped with no signal.
+
+  it("warns about an unrecognized top-level key, naming it, without dropping recognized siblings", () => {
+    const { config, warnings } = validateConfig({ chekcs: { lint: false }, workingDir: "apps/api" });
+    expect(config.workingDir).toBe("apps/api");
+    expect((config as Record<string, unknown>).chekcs).toBeUndefined();
+    expect(warnings.some((w) => w.includes('"chekcs"'))).toBe(true);
+  });
+
+  it("warns about an unrecognized nested key inside checks/commands/sandbox/setup, naming it", () => {
+    const { warnings } = validateConfig({
+      checks: { lint: false, lintt: true },
+      commands: { test: ["true"], tset: ["true"] },
+      sandbox: { aptPackages: [], aptPackagez: [] },
+      setup: { enabled: true, enalbed: true },
+    });
+    expect(warnings.some((w) => w.startsWith("checks:") && w.includes('"lintt"'))).toBe(true);
+    expect(warnings.some((w) => w.startsWith("commands:") && w.includes('"tset"'))).toBe(true);
+    expect(warnings.some((w) => w.startsWith("sandbox:") && w.includes('"aptPackagez"'))).toBe(true);
+    expect(warnings.some((w) => w.startsWith("setup:") && w.includes('"enalbed"'))).toBe(true);
   });
 
   it("leaves a fully valid config untouched with no warnings (out of scope: no behavior change for valid configs)", () => {
@@ -248,5 +324,43 @@ describe("loadConfig malformed field handling (integration)", () => {
     expect(config.checks?.gitState).toBe(true);
     expect(config.commands?.test).toEqual(["true"]);
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  // FIX 1 (task-slicer fix-round, review of task 850903cb): a
+  // checks.secretDetection.acknowledge configured through an actual
+  // .preflight.json file (via loadConfig, not built programmatically) must
+  // still reach the D-013 "not supported" limitations entry. Before this
+  // fix, loadConfig's own validateConfig() dropped the object-shaped
+  // `secretDetection` value (checks.secretDetection was in the
+  // boolean-only picker list), so this scenario silently lost the
+  // documented D-013 signal; the existing runner.test.ts D-013 coverage
+  // builds `config.checks` programmatically and never exercises loadConfig,
+  // so it did not catch the regression.
+  it("D-013: checks.secretDetection.acknowledge loaded from an actual .preflight.json file still reaches runPreflight's limitations", async () => {
+    const repoPath = makeTempDir("preflight-config-d013-e2e-");
+    writeConfig(repoPath, {
+      checks: {
+        gitState: false,
+        lint: false,
+        typecheck: false,
+        test: false,
+        audit: false,
+        ciSimulation: false,
+        commitConvention: false,
+        tdd: false,
+        secretDetection: { acknowledge: "reviewed, false positive" },
+      },
+    });
+
+    const config = loadConfig(repoPath);
+    // The object survives config loading instead of being dropped back to
+    // defaultConfig()'s `secretDetection: true`.
+    expect(config.checks?.secretDetection).toEqual({ acknowledge: "reviewed, false positive" });
+
+    const result = await runPreflight(repoPath, config);
+
+    expect(
+      result.limitations.some((l) => l.includes("checks.secretDetection.acknowledge is not supported"))
+    ).toBe(true);
   });
 });

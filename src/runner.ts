@@ -56,12 +56,19 @@ interface AcknowledgeResolution {
   rejected: boolean;
 }
 
-// loadConfig() (src/config.ts) does not runtime-validate .preflight.json
-// (known gap, tracked separately) — a config value can be anything JSON
-// allows. This reads a check's toggle defensively: any shape other than a
-// plain object with a non-empty string `acknowledge` is treated as "no
-// acknowledge configured" (booleans, `null`, arrays, `{}`) or "rejected"
-// (an `acknowledge` key present but not a usable string), never a crash.
+// config.ts#validateConfig() does validate .preflight.json's outer shape
+// (task 850903cb): it already guarantees `toggle` is a boolean or a plain
+// object, dropping (with a warning) anything else before it ever reaches
+// here. This function still reads the toggle defensively rather than
+// trusting that outer guarantee for the INNER `acknowledge` value: any
+// shape other than a plain object with a non-empty string `acknowledge` is
+// treated as "no acknowledge configured" (booleans, `null`, arrays, `{}`)
+// or "rejected" (an `acknowledge` key present but not a usable string),
+// never a crash. Deliberately: validateConfig() only checks the toggle is
+// boolean-or-object, not that an object's `acknowledge` (if present) is a
+// non-empty string; that inner check, and its own `limitations` reporting
+// on rejection, is intentionally kept here rather than duplicated in
+// config.ts (see config.ts's CHECK_TOGGLE_KEYS comment).
 function resolveAcknowledge(toggle: CheckToggle | undefined): AcknowledgeResolution {
   if (toggle === null || typeof toggle !== "object" || Array.isArray(toggle)) {
     return { reason: null, rejected: false };

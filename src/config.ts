@@ -11,6 +11,19 @@ const DEFAULT_ACT_FLAGS = ["--platform", "ubuntu-latest=catthehacker/ubuntu:act-
 // runner.ts#resolveAcknowledge's job (it already handles any shape safely and
 // reports a rejected acknowledge in `limitations`), so it is deliberately not
 // duplicated here.
+//
+// `ciSimulation` and `secretDetection` are included even though their
+// `acknowledge` is not honored (see types.ts#CheckToggle's doc comment):
+// dropping an object-shaped value here (as an earlier revision of this file
+// did, via a separate boolean-only picker) made a `checks.secretDetection:
+// { acknowledge: "..." }` in `.preflight.json` invisible to `runPreflight`:
+// it never reached runner.ts#checkSecretDetectionAcknowledgeIgnored, so the
+// documented D-013 "not supported" `limitations` entry could never actually
+// fire from a config file, only from a config built programmatically
+// (bypassing `loadConfig`). Passing the object through here, unmodified,
+// lets runner.ts's own defensive reads see it and react (secretDetection:
+// report it as ignored; ciSimulation: it's simply not `=== true`, same as
+// any other non-`true` value).
 const CHECK_TOGGLE_KEYS = [
   "gitState",
   "lint",
@@ -19,12 +32,35 @@ const CHECK_TOGGLE_KEYS = [
   "audit",
   "commitConvention",
   "tdd",
+  "ciSimulation",
+  "secretDetection",
 ] as const;
 
-// `checks.*` keys that are plain booleans only (never an acknowledge object).
-const CHECK_BOOLEAN_KEYS = ["ciSimulation", "secretDetection"] as const;
-
 const COMMAND_KEYS = ["lint", "typecheck", "test", "audit"] as const;
+
+const SANDBOX_KEYS = ["aptPackages", "pipPackages"] as const;
+
+const SETUP_KEYS = ["enabled"] as const;
+
+// Every field `validateConfig()` recognizes at the top level of
+// `.preflight.json`, kept in sync with `PreflightConfig`'s own field list.
+// Used only to warn about an unrecognized top-level key (FIX 3); a key not
+// in this list is otherwise simply never read by any `pickX` call below.
+const TOP_LEVEL_KEYS = [
+  "logDir",
+  "workingDir",
+  "tddExceptions",
+  "secretAllowlist",
+  "protectedBranches",
+  "actFlags",
+  "secretDetectionStrict",
+  "commitConvention",
+  "checks",
+  "setup",
+  "commands",
+  "sandbox",
+  "customChecks",
+] as const;
 
 const COMMIT_CONVENTION_VALUES = ["conventional", "none"] as const;
 
@@ -99,6 +135,8 @@ export function validateConfig(parsed: unknown): ConfigValidationResult {
 
   const customChecks = pickCustomChecks(source, warnings);
   if (customChecks !== undefined) result.customChecks = customChecks;
+
+  warnUnknownKeys(source, TOP_LEVEL_KEYS, "top level", warnings);
 
   return { config: result, warnings };
 }
@@ -252,10 +290,42 @@ function pickEnum<T extends string>(
   if (isString(value) && (allowed as readonly string[]).includes(value)) {
     return value as T;
   }
+  // Unlike every other picker's warning (type-only: "got string"), an
+  // invalid enum VALUE is named ("got \"semantic\""): the value itself is
+  // already one of a small, fixed set of plain words the operator typed
+  // (not arbitrary config content), and seeing the actual typo is what
+  // makes the warning actionable (a bare "got string" tells you nothing you
+  // didn't already know). Every other picker stays type-only deliberately,
+  // to not echo arbitrary config content into logs.
+  const received = isString(value) ? JSON.stringify(value) : describeType(value);
   warnings.push(
-    `${key}: expected one of ${allowed.join(", ")}, got ${describeType(value)}; ignoring this field`
+    `${key}: expected one of ${allowed.join(", ")}, got ${received}; ignoring this field`
   );
   return undefined;
+}
+
+// Warns once (not once per key) about `source` keys not present in `known`,
+// naming all of them together. Warn, never reject: an unrecognized field is
+// simply never read by any picker above (forward compatibility: a newer
+// `.preflight.json` written for a future version of this field set should
+// still load under an older one, with a warning instead of every other
+// field silently vanishing along with the typo). Applied at the top level
+// of `.preflight.json` and to the `checks`/`commands`/`sandbox`/`setup`
+// sub-objects; not applied inside `customChecks[]` entries (out of scope
+// for this pass).
+function warnUnknownKeys(
+  source: Record<string, unknown>,
+  known: readonly string[],
+  context: string,
+  warnings: string[]
+): void {
+  const extra = Object.keys(source).filter((key) => !(known as readonly string[]).includes(key));
+  if (extra.length === 0) return;
+  const noun = extra.length === 1 ? "field" : "fields";
+  const list = extra.map((key) => `"${key}"`).join(", ");
+  warnings.push(
+    `${context}: unrecognized ${noun} ${list}; ignoring (unknown fields are forward-compatible, not an error)`
+  );
 }
 
 function pickChecks(
@@ -281,10 +351,7 @@ function pickChecks(
     }
   }
 
-  for (const key of CHECK_BOOLEAN_KEYS) {
-    const bool = pickBoolean(value, key, warnings, `checks.${key}`);
-    if (bool !== undefined) checks[key] = bool;
-  }
+  warnUnknownKeys(value, CHECK_TOGGLE_KEYS, "checks", warnings);
 
   return checks;
 }
@@ -303,6 +370,9 @@ function pickSetup(
   const setup: NonNullable<PreflightConfig["setup"]> = {};
   const enabled = pickBoolean(value, "enabled", warnings, "setup.enabled");
   if (enabled !== undefined) setup.enabled = enabled;
+
+  warnUnknownKeys(value, SETUP_KEYS, "setup", warnings);
+
   return setup;
 }
 
@@ -322,6 +392,9 @@ function pickCommands(
     const arr = pickStringArray(value, key, warnings, `commands.${key}`);
     if (arr !== undefined) commands[key] = arr;
   }
+
+  warnUnknownKeys(value, COMMAND_KEYS, "commands", warnings);
+
   return commands;
 }
 
@@ -341,6 +414,9 @@ function pickSandbox(
   if (aptPackages !== undefined) sandbox.aptPackages = aptPackages;
   const pipPackages = pickStringArray(value, "pipPackages", warnings, "sandbox.pipPackages");
   if (pipPackages !== undefined) sandbox.pipPackages = pipPackages;
+
+  warnUnknownKeys(value, SANDBOX_KEYS, "sandbox", warnings);
+
   return sandbox;
 }
 
