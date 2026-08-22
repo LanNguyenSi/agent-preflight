@@ -178,7 +178,7 @@ Strategy: **unit-tests** with [Vitest](https://vitest.dev/).
 
 ### Unit Test Rules
 
-- Tests live as flat `*.test.ts` files in `tests/` (e.g. `tests/runner.test.ts`, `tests/secrets.test.ts`, `tests/git-state.test.ts`), with `tests/integration/` and `tests/contract/` for cross-module and contract suites. There are no `tests/commands/` or `tests/config/` directories; the config loader is the single file `src/config.ts`, exercised by `tests/runner.test.ts` and the integration suites.
+- Tests live as flat `*.test.ts` files in `tests/` (e.g. `tests/runner.test.ts`, `tests/secrets.test.ts`, `tests/git-state.test.ts`), with `tests/integration/` and `tests/contract/` for cross-module and contract suites. There are no `tests/commands/` or `tests/config/` directories; the config loader is the single file `src/config.ts`, exercised primarily by `tests/config.test.ts`, with additional coverage from `tests/runner.test.ts` and the integration suites.
 - Use Vitest `describe` / `it` blocks with descriptive names.
 - Tests must not touch the filesystem except through temp directories (`fs.mkdtempSync(path.join(os.tmpdir(), ...))`).
 - Tests must not make network calls.
@@ -270,7 +270,7 @@ describe("runPreflight", () => {
 
 ## Architecture Decision Records (ADRs)
 
-Write an ADR in `docs/adrs/` when:
+Write an ADR in `docs/adrs/` when (the directory is created with the first ADR):
 
 - Choosing a library or external dependency
 - Changing the output schema of any command
