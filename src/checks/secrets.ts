@@ -20,8 +20,24 @@ const SECRET_PATTERNS = [
   // Without it, the identifier had to be followed immediately by
   // `\s*[:=]` with nothing in between, which a quoted key never
   // satisfies (its own closing quote sits in that gap). Unquoted forms
-  // (`apiKey = "<value>"`, a bare YAML `token: <value>`) are unaffected:
-  // the `["']?` is optional and matches zero characters there.
+  // without an adjacent quote character are unaffected: the `["']?` is
+  // optional and matches zero characters there.
+  //
+  // Known false-positive class from this fix (round 2 review, agent-tasks
+  // 9ef05069): the same quoted-key shape is extremely common in non-secret
+  // JSON — OpenAPI/Swagger specs (`"api_key": {"type": "apiKey", ...}`-
+  // adjacent example values), Postman collections, and recorded HTTP
+  // fixture files that happen to name a header/field `api_key`/`token`/
+  // `secret` and give it a realistic-looking >=20-char placeholder or a
+  // recorded (non-secret) value such as a UUID or a commit SHA. This
+  // pattern deliberately does NOT special-case that shape — see the
+  // per-decision test fixtures in tests/secrets.test.ts pinning both a
+  // blocked `"token": "<40-hex>"` outside tests/ and the tests/-directory
+  // fixture downgrade for a `test-`-prefixed quoted-key value. An operator
+  // who hits this on a genuine fixture file has two escape hatches: the
+  // `secretAllowlist` config entry (path or path:line, supports globs) or
+  // an inline `// pragma: allowlist secret` / `# pragma: allowlist secret`
+  // comment on the offending line.
   /(?:api[_-]?key|apikey)["']?\s*[:=]\s*["']?[a-zA-Z0-9_-]{20,}["']?/i,
   /(?:password|passwd|pwd)["']?\s*[:=]\s*["'][^"']{8,}["']/i,
   /(?:secret|token)["']?\s*[:=]\s*["'][a-zA-Z0-9_-]{20,}["']/i,
@@ -73,7 +89,14 @@ const SECRET_PATTERNS = [
   //     fixed 20-char shape — no keyword needed, same as AKIA/ASIA — so
   //     the false-positive argument is unchanged: nothing else in
   //     practice produces `ABIA`/`ACCA` followed by exactly 16
-  //     uppercase-alphanumeric characters.
+  //     uppercase-alphanumeric characters. Residual note: `ACCA` itself
+  //     is all-hex (A/C/C/A are all valid hex digits), so a 20-char
+  //     uppercase-hex identifier that happens to start with the 4
+  //     characters `ACCA` would also match and block — roughly 1 in
+  //     65536 of such identifiers (4 fixed hex-digit-shaped characters
+  //     out of 16 possible each). Accepted: this matches gitleaks and
+  //     detect-secrets, which use the identical prefix set and carry the
+  //     identical residual risk.
   //   - A3T (legacy S3 access-grant / account-ID-shaped credential
   //     prefix): included via `A3T[A-Z0-9]` (3 fixed chars + 1 free
   //     char, so the alternative is 4 chars wide like the others,
@@ -100,6 +123,18 @@ const SECRET_PATTERNS = [
   // prefix, a 40-char base64-ish value has no shape of its own that is
   // unambiguously AWS-specific.
   //
+  // End-anchored (round 2, agent-tasks 9ef05069, R1 reviewer probe of
+  // 211f559c, brought in line with the trailing `(?![A-Za-z0-9/+=])` added
+  // to the sibling identifier-variant pattern below): without it, `{40}`
+  // finds any 40-char run as a PREFIX of a longer base64-ish value too -- a
+  // 200-char JWT or session token beginning with 40 charset-compatible
+  // characters would false-positive as a 40-char AWS secret key under this
+  // literal `aws_secret_access_key` identifier exactly as it would under
+  // the identifier-variant pattern below; AWS secret access keys are
+  // always exactly 40 characters, so a longer value is never one. The
+  // lookahead requires the value to actually END at 40 characters; see
+  // tests/secrets.test.ts for the 41+-char pass and the 40-char control.
+  //
   // NOTE (fix-round, agent-tasks 211f559c review, finding F3): despite
   // the framing above, this pattern does NOT actually reach the
   // test-fixture downgrade in practice. TEST_FIXTURE_VALUE_PATTERN
@@ -112,7 +147,7 @@ const SECRET_PATTERNS = [
   // tests/secrets.test.ts). Widening the value charset to include `-`
   // or `_` would make it reachable again — do that deliberately, not by
   // accident.
-  /aws[_-]?secret[_-]?access[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?/i,
+  /aws[_-]?secret[_-]?access[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])["']?/i,
   // AWS secret access key, round 2 (agent-tasks 9ef05069, R1 reviewer
   // probe of 211f559c): the pattern above requires the literal word
   // "aws" in the identifier and misses the same credential under the
@@ -125,7 +160,16 @@ const SECRET_PATTERNS = [
   // above matches. Same anchoring rationale as above: still requires
   // the full "secret ... access ... key" identifier, still not in
   // HIGH_CONFIDENCE_PATTERNS (the value shape alone is not
-  // AWS-specific). Adds `(?![A-Za-z0-9/+=])` right after the 40-char
+  // AWS-specific). NOT being in HIGH_CONFIDENCE_PATTERNS is NOT a
+  // safety mitigation: every SECRET_PATTERNS match on a changed
+  // committable file still hard-blocks regardless (see scanDir). The
+  // only effect of the omission is that a match under tests/ stays
+  // eligible for the TEST_FIXTURE_VALUE_PATTERN downgrade to `warn`
+  // (HIGH_CONFIDENCE_PATTERNS forces `testFixture: false`, which would
+  // remove that eligibility) — see the block comment above
+  // HIGH_CONFIDENCE_PATTERNS below.
+  //
+  // Adds `(?![A-Za-z0-9/+=])` right after the 40-char
   // value (a value-shape tightening this round-2 pattern introduces
   // fresh, not present on the pattern above): without it, `{40}` finds
   // any 40-char run as a PREFIX of a longer base64-ish value too — a
@@ -143,21 +187,53 @@ const SECRET_PATTERNS = [
   // so per review-round constraint this is deliberately gated on the
   // exact same 40-char-base64-ish, exactly-bounded value shape as the
   // two patterns above (not added as a bare keyword match, and not
-  // added to HIGH_CONFIDENCE_PATTERNS). Residual false-positive
-  // reasoning for why this is still an acceptable risk at that value
-  // shape: Django's default `SECRET_KEY` generator draws from a ~70-char
-  // alphabet that includes `!@#$%^&*(-_=+)` — most of which (`!@#$%^&*(`
-  // plus the frequently-used `-`/`_`) fall OUTSIDE this pattern's
-  // `[A-Za-z0-9/+=]` charset, so a real Django-generated value breaks
-  // the match within the first few characters far more often than not;
-  // Stripe secret keys are `sk_live_`/`sk_test_`-prefixed and the
+  // added to HIGH_CONFIDENCE_PATTERNS). As with the pattern above, NOT
+  // being in HIGH_CONFIDENCE_PATTERNS is NOT a safety mitigation — a
+  // match on a changed committable file still hard-blocks; the only
+  // effect is keeping the tests/-fixture downgrade reachable. Residual
+  // false-positive reasoning for why this is still an acceptable risk at
+  // that value shape: Django's default `SECRET_KEY` generator draws from
+  // a ~70-char alphabet that includes `!@#$%^&*(-_=+)` — most of which
+  // (`!@#$%^&*(` plus the frequently-used `-`/`_`) fall OUTSIDE this
+  // pattern's `[A-Za-z0-9/+=]` charset, so a real Django-generated value
+  // breaks the match within the first few characters far more often than
+  // not; Stripe secret keys are `sk_live_`/`sk_test_`-prefixed and the
   // underscores after `sk` break the charset-run immediately too. The
   // residual case — an app's custom "secret key" happens to be exactly
   // 40 chars of `[A-Za-z0-9/+=]` with no separator — is accepted as the
   // same class of risk the pattern above already carries for
   // `secret_access_key`, not a new one; see
   // tests/secrets.test.ts for the Django-shaped negative control.
-  /(?:aws[_-]?)?secret[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])["']?/i,
+  //
+  // Leading identifier boundary (round-2 fix, agent-tasks 9ef05069, R2
+  // review): `secret[_-]?key` alone, with no boundary in front of it, also
+  // matched as a SUFFIX of a longer identifier — `MY_SECRET_KEY`,
+  // `jwt_secret_key`, `app_secret_key`, etc. That is a much broader,
+  // much less AWS-specific identifier family than this pattern is meant
+  // to cover; those belong (if anywhere) to a generic app-secret pattern,
+  // not this AWS-named one. `(?<![A-Za-z0-9_-])` in front of the optional
+  // `aws[_-]?` requires the match to start at an actual identifier
+  // boundary — treating `_`/`-` as identifier-continuation characters,
+  // the same way a real variable-name boundary works — so only a
+  // standalone `secret_key`/`secretkey`/`secret-key` identifier (or one
+  // explicitly `aws_`/`aws-`-prefixed) matches; `MY_SECRET_KEY` and
+  // `jwt_secret_key` are deliberately NOT this pattern's job now (see
+  // tests/secrets.test.ts). This narrows the pattern; it does not widen
+  // it — every case that matched via a genuine standalone `secret_key`
+  // still matches, since a standalone identifier always sits at such a
+  // boundary already (start of line, whitespace, quote, `{`, etc.).
+  //
+  // 40-hex collision (documented, not fixed): a standalone `secret_key`
+  // identifier assigned a 40-character hex string — `openssl rand -hex
+  // 20`, Python's `secrets.token_hex(20)`, or a raw git SHA-1 — sits
+  // entirely inside this pattern's `[A-Za-z0-9/+=]` value charset (hex
+  // digits are a subset of it) and WILL block. This is accepted, not
+  // fixed: a 40-char hex value assigned to a variable literally named
+  // `secret_key` is a plausible real secret (hex is a completely
+  // ordinary secret-value encoding), so declining to flag it would trade
+  // a real detection for a narrower false-positive surface. See
+  // tests/secrets.test.ts for the pinned `secret_key = "<40-hex>"` fail.
+  /(?<![A-Za-z0-9_-])(?:aws[_-]?)?secret[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])["']?/i,
 ];
 
 // High-confidence secret SHAPES (review finding 2, fix-round on agent-tasks

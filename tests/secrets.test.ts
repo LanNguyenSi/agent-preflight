@@ -830,6 +830,179 @@ describe("runSecretDetection — AWS credential coverage round 2 (agent-tasks 9e
     expect(result.checks[0]?.status).toBe("pass");
   });
 
+  // --- Round-2 review: trailing lookahead is exercised (not just present) --
+
+  it("trailing lookahead: does NOT match `secret_access_key` when the value is 41+ chars (a 40-char PREFIX of a longer value is not a 40-char AWS secret key)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-lookahead-41-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    const value41 = AWS_SECRET_ACCESS_KEY_VALUE + "Q"; // 41 charset-compatible chars
+    fs.writeFileSync(
+      path.join(repoPath, "src", "credentials.ini"),
+      `secret_access_key = ${value41}\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("pass");
+  });
+
+  it("trailing lookahead (decision C): does NOT match `aws_secret_access_key` when the value is a 216-char base64-ish blob (a long session token/JWT is not a 40-char AWS secret key, same reasoning as the identifier-variant pattern)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-lookahead-216-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    // 216 charset-compatible ([A-Za-z0-9/+=]) characters, no separators —
+    // simulates a long STS session token / JWT-shaped blob with the
+    // structural `.` separators stripped, so the ONLY thing that could
+    // stop a match at 40 chars is the trailing lookahead itself.
+    const longValue = "aB3".repeat(72); // 3 * 72 = 216 chars
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const awsSecretAccessKey = "${longValue}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("pass");
+  });
+
+  it("trailing lookahead positive control: still fails on `aws_secret_access_key` at exactly 40 chars", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-lookahead-40-aws-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const awsSecretAccessKey = "${AWS_SECRET_ACCESS_KEY_VALUE}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/config.ts:1");
+  });
+
+  it("trailing lookahead positive control: still fails on `secret_access_key` at exactly 40 chars", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-lookahead-40-noaws-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "credentials.ini"),
+      `secret_access_key = ${AWS_SECRET_ACCESS_KEY_VALUE}\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/credentials.ini:1");
+  });
+
+  // --- Prefix coverage: ABIA / ACCA / A3T (previously untested) ------------
+
+  it("fails on a bare ABIA access key ID (AWS STS service bearer token, e.g. CodeArtifact, same shape as AKIA)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-abia-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const accessKeyId = "ABIA${"X".repeat(16)}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/config.ts:1");
+  });
+
+  it("fails on a bare ACCA access key ID (context-specific/imported credential, same shape as AKIA)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-acca-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const accessKeyId = "ACCA${"X".repeat(16)}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/config.ts:1");
+  });
+
+  it("fails on a bare A3T access key ID (legacy S3 access-grant prefix, `A3T` + 1 free char + 16-char tail)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-a3t-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const accessKeyId = "A3TZ${"X".repeat(16)}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/config.ts:1");
+  });
+
+  it("shared boundary negative: does NOT match an ABIA-prefixed run with 17 trailing uppercase/digit chars (one too many for the fixed 20-char shape)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-abia-boundary-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "build-id.ts"),
+      `const buildChecksum = "ABIA${"X".repeat(17)}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("pass");
+  });
+
+  // --- secret_key leading identifier boundary (decision B) -----------------
+
+  it("secret_key leading boundary: does NOT fail on `MY_SECRET_KEY` (a longer identifier ending in secret_key is not this AWS pattern's job)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-secretkey-my-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `const MY_SECRET_KEY = "${AWS_SECRET_ACCESS_KEY_VALUE}";\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("pass");
+  });
+
+  it("secret_key leading boundary: does NOT fail on `jwt_secret_key` (same reasoning, lowercase/snake_case identifier)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-secretkey-jwt-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.ts"),
+      `jwt_secret_key: "${AWS_SECRET_ACCESS_KEY_VALUE}"\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("pass");
+  });
+
+  it("secret_key documented 40-hex collision: still fails on standalone `secret_key` assigned a 40-hex value (accepted risk, see src/checks/secrets.ts comment)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-secretkey-hex-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    const hex40 = "f".repeat(40); // openssl rand -hex 20 / git-SHA-1-shaped
+    fs.writeFileSync(
+      path.join(repoPath, "src", "main.tf"),
+      `secret_key = "${hex40}"\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/main.tf:1");
+  });
+
   // --- Generic quoted-key blind spot (api_key / token / password) ----------
 
   it("generic pattern quoted-key fix: detects a quoted-key JSON `\"api_key\": \"<value>\"` (previously missed, same blind spot the AWS assignment pattern had)", async () => {
@@ -892,6 +1065,50 @@ describe("runSecretDetection — AWS credential coverage round 2 (agent-tasks 9e
 
     expect(result.checks[0]?.status).toBe("fail");
     expect(result.checks[0]?.details).toContain("src/config.ts:1");
+  });
+
+  it("generic pattern quoted-key FP class pin: deliberately blocks a quoted-key `\"token\": \"<40-hex commit SHA>\"` outside tests/ (documented false-positive class, not exempted)", async () => {
+    // Per round-2 review decision: this shape (a quoted-key JSON/YAML
+    // field named api_key/token/secret carrying a fixture-looking value —
+    // a commit SHA, a UUID, a recorded header value) is a known false-
+    // positive class for OpenAPI specs, Postman collections, and recorded
+    // HTTP fixtures. It is deliberately NOT exempted; this pins that
+    // choice so a later change does not silently soften it. The escape
+    // hatches (secretAllowlist / `pragma: allowlist secret`) remain
+    // available for a genuine fixture file.
+    const repoPath = makeTempDir("preflight-secrets-generic-token-hexsha-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    const commitSha = "a".repeat(40); // 40-hex, git-SHA-1-shaped
+    fs.writeFileSync(
+      path.join(repoPath, "src", "recorded-response.json"),
+      `{\n  "token": "${commitSha}"\n}\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/recorded-response.json:2");
+  });
+
+  it("generic pattern quoted-key FP class: the tests/-directory fixture downgrade still applies to a quoted-key form with a `test-`-prefixed value", async () => {
+    // The FP class above is a deliberate hard block in general, but the
+    // pre-existing tests/-fixture downgrade path (TEST_FIXTURE_VALUE_PATTERN
+    // + isTestPath) is unaffected by the quoted-key fix: a quoted-key
+    // match whose VALUE is itself test-/dummy-/fake-prefixed, under
+    // tests/, still downgrades to warn — same as the unquoted forms
+    // already covered above in this file.
+    const repoPath = makeTempDir("preflight-secrets-generic-token-fixture-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "tests"));
+    fs.writeFileSync(
+      path.join(repoPath, "tests", "recorded-response.json"),
+      `{\n  "token": "test-${"x".repeat(20)}"\n}\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("warn");
   });
 });
 

@@ -97,7 +97,7 @@ behavior, false-positive rate, or latency.
 
 | Class | In-tree regex | gitleaks | trufflehog |
 |---|:---:|:---:|:---:|
-| AWS access key (`AKIA...`) | MISS | HIT | HIT |
+| AWS access key (`AKIA`/`ASIA`/`ABIA`/`ACCA`/`A3T...`) | HIT (added agent-tasks 211f559c, widened 9ef05069 - out of date with the rest of this snapshot, see CHANGELOG) | HIT | HIT |
 | GitHub classic PAT (`ghp_`) | HIT | HIT | HIT |
 | GitHub fine-grained PAT (`github_pat_`) | MISS | HIT | HIT |
 | Stripe secret key (`sk_live_`/`sk_test_`) | MISS | HIT | HIT |
@@ -107,7 +107,7 @@ behavior, false-positive rate, or latency.
 | RSA private key (PEM) | HIT | HIT | HIT |
 | Generic `password = "..."` | HIT | MISS (value-dependent - see below) | MISS |
 | Generic `api_key = "..."` | HIT | HIT | MISS |
-| **Classes hit / 10** | **5** | **9** | **6** |
+| **Classes hit / 10** | **6** (was 5 at the time of this investigation; AWS moved to HIT after this doc was written) | **9** | **6** |
 
 > **Note (2026-08-18, superseding):** the AWS access-key row above
 > predates agent-tasks 211f559c; the in-tree regexes now HIT this class —
