@@ -211,10 +211,12 @@ const SECRET_PATTERNS = [
   // `jwt_secret_key`, `app_secret_key`, etc. That is a much broader,
   // much less AWS-specific identifier family than this pattern is meant
   // to cover; those belong (if anywhere) to a generic app-secret pattern,
-  // not this AWS-named one. `(?<![A-Za-z0-9_-])` in front of the optional
+  // not this AWS-named one. `(?<![A-Za-z0-9_])` in front of the optional
   // `aws[_-]?` requires the match to start at an actual identifier
-  // boundary — treating `_`/`-` as identifier-continuation characters,
-  // the same way a real variable-name boundary works — so only a
+  // boundary — treating `_` as an identifier-continuation character to
+  // block env-var-suffix cases like `MY_SECRET_KEY`, while permitting a
+  // leading hyphen (CLI flag / YAML dash forms `--secret-key=`, `-secret_key:`)
+  // to match, the same way a real variable-name boundary works — so only a
   // standalone `secret_key`/`secretkey`/`secret-key` identifier (or one
   // explicitly `aws_`/`aws-`-prefixed) matches; `MY_SECRET_KEY` and
   // `jwt_secret_key` are deliberately NOT this pattern's job now (see
@@ -233,7 +235,7 @@ const SECRET_PATTERNS = [
   // ordinary secret-value encoding), so declining to flag it would trade
   // a real detection for a narrower false-positive surface. See
   // tests/secrets.test.ts for the pinned `secret_key = "<40-hex>"` fail.
-  /(?<![A-Za-z0-9_-])(?:aws[_-]?)?secret[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])["']?/i,
+  /(?<![A-Za-z0-9_])(?:aws[_-]?)?secret[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])["']?/i,
 ];
 
 // High-confidence secret SHAPES (review finding 2, fix-round on agent-tasks

@@ -1003,6 +1003,53 @@ describe("runSecretDetection — AWS credential coverage round 2 (agent-tasks 9e
     expect(result.checks[0]?.details).toContain("src/main.tf:1");
   });
 
+  it("secret_key CLI flag form: detects `--secret-key=<40 chars>` (CLI flag with hyphen, should be detected)", async () => {
+    // The leading lookbehind fix permits a leading hyphen (CLI/YAML dash)
+    // while still blocking underscore suffixes (env-var case).
+    const repoPath = makeTempDir("preflight-secrets-aws-cli-flag-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.sh"),
+      `./script --secret-key="${AWS_SECRET_ACCESS_KEY_VALUE}"\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/config.sh:1");
+  });
+
+  it("secret_key CLI flag variant: detects `--aws-secret-key=<40 chars>` (aws- prefixed CLI flag)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-cli-flag-aws-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "deploy.sh"),
+      `deploy --aws-secret-key="${AWS_SECRET_ACCESS_KEY_VALUE}"\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/deploy.sh:1");
+  });
+
+  it("secret_key YAML dash form: detects `-secret_key: <40 chars>` (YAML list item with leading dash)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-aws-yaml-dash-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "src"));
+    fs.writeFileSync(
+      path.join(repoPath, "src", "config.yml"),
+      `- secret_key: "${AWS_SECRET_ACCESS_KEY_VALUE}"\n`,
+    );
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("src/config.yml:1");
+  });
+
   // --- Generic quoted-key blind spot (api_key / token / password) ----------
 
   it("generic pattern quoted-key fix: detects a quoted-key JSON `\"api_key\": \"<value>\"` (previously missed, same blind spot the AWS assignment pattern had)", async () => {
