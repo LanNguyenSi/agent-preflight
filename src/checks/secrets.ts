@@ -12,9 +12,19 @@ interface CheckSetResult { checks: CheckResult[]; limitations: string[]; }
 // PLACEHOLDER_PATTERNS check against the *matched text* in scanDir, plus
 // the diff-scoped / `.md` / gitignored severity tiering.
 const SECRET_PATTERNS = [
-  /(?:api[_-]?key|apikey)\s*[:=]\s*["']?[a-zA-Z0-9_-]{20,}["']?/i,
-  /(?:password|passwd|pwd)\s*[:=]\s*["'][^"']{8,}["']/i,
-  /(?:secret|token)\s*[:=]\s*["'][a-zA-Z0-9_-]{20,}["']/i,
+  // Quoted-key blind spot (fix-round, agent-tasks 9ef05069, mirrors the
+  // AWS assignment pattern's F1 fix below): an optional `["']?` sits
+  // directly after the identifier, on all three of these, so a
+  // quoted-key serialization — `"api_key": "<value>"` in JSON, or
+  // `'token': '<value>'` in quoted YAML/Python — is detected too.
+  // Without it, the identifier had to be followed immediately by
+  // `\s*[:=]` with nothing in between, which a quoted key never
+  // satisfies (its own closing quote sits in that gap). Unquoted forms
+  // (`apiKey = "<value>"`, a bare YAML `token: <value>`) are unaffected:
+  // the `["']?` is optional and matches zero characters there.
+  /(?:api[_-]?key|apikey)["']?\s*[:=]\s*["']?[a-zA-Z0-9_-]{20,}["']?/i,
+  /(?:password|passwd|pwd)["']?\s*[:=]\s*["'][^"']{8,}["']/i,
+  /(?:secret|token)["']?\s*[:=]\s*["'][a-zA-Z0-9_-]{20,}["']/i,
   /ghp_[a-zA-Z0-9]{36}/,
   /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
   // AWS access key ID: a fixed, unambiguous shape (`AKIA` + 16 uppercase
@@ -45,7 +55,36 @@ const SECRET_PATTERNS = [
   // prose, ...) is bounded by a non-alphanumeric-or-different-case
   // character on both sides already, so this narrows nothing real; see
   // tests/secrets.test.ts.
-  /(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![A-Z0-9])/,
+  //
+  // Prefix alternation widened (round 2, agent-tasks 9ef05069, R1
+  // reviewer probe of 211f559c): AKIA alone missed AWS's other 20-char
+  // access-key-ID-shaped credential prefixes. Decision per prefix
+  // (matches the well-known gitleaks/detect-secrets AWS-key regex,
+  // which uses this same four-prefix-plus-A3T set):
+  //   - ASIA (STS temporary/session credentials): included. Same
+  //     20-char `PREFIX + 16 [0-9A-Z]` shape as AKIA, same
+  //     false-positive reasoning, and a *more* urgent leak than a
+  //     long-lived AKIA key since it is minted from an active
+  //     assume-role session — the combined aws-sts-assume-role fixture
+  //     below is exactly this case.
+  //   - ABIA (AWS STS service bearer token, e.g. CodeArtifact) and ACCA
+  //     (context-specific / imported credentials): included. Both are
+  //     genuine AWS-issued bearer-credential prefixes with the identical
+  //     fixed 20-char shape — no keyword needed, same as AKIA/ASIA — so
+  //     the false-positive argument is unchanged: nothing else in
+  //     practice produces `ABIA`/`ACCA` followed by exactly 16
+  //     uppercase-alphanumeric characters.
+  //   - A3T (legacy S3 access-grant / account-ID-shaped credential
+  //     prefix): included via `A3T[A-Z0-9]` (3 fixed chars + 1 free
+  //     char, so the alternative is 4 chars wide like the others,
+  //     20 total with the shared 16-char tail) for the same reason.
+  //   - AIDA/AROA/AGPA/ANPA/ANVA (IAM user/role/group/policy/certificate
+  //     resource IDs) are deliberately NOT included: these identify an
+  //     IAM *resource*, not a bearer credential — leaking one names an
+  //     entity but grants no access on its own, so it does not belong
+  //     in a secret-detection pattern (a resource-ID leak is a
+  //     different, weaker risk class than a credential leak).
+  /(?<![A-Z0-9])(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![A-Z0-9])/,
   // AWS secret access key: an AWS_SECRET_ACCESS_KEY-style identifier
   // (aws/secret/access/key in order, any `_`/`-`/camelCase separator,
   // case-insensitive) assigned a 40-char base64-ish value, with an
@@ -74,6 +113,51 @@ const SECRET_PATTERNS = [
   // or `_` would make it reachable again — do that deliberately, not by
   // accident.
   /aws[_-]?secret[_-]?access[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?/i,
+  // AWS secret access key, round 2 (agent-tasks 9ef05069, R1 reviewer
+  // probe of 211f559c): the pattern above requires the literal word
+  // "aws" in the identifier and misses the same credential under the
+  // identifier names real AWS SDKs/tools actually emit without it —
+  // `secretAccessKey` (AWS JS SDK's own field name, e.g. in an
+  // `aws sts assume-role` JSON response's `Credentials` block) and
+  // `secret_access_key` (boto/AWS CLI config). `(?:aws[_-]?)?` makes the
+  // "aws" prefix optional instead of duplicating the whole pattern, so
+  // this one alternative also still matches every form the pattern
+  // above matches. Same anchoring rationale as above: still requires
+  // the full "secret ... access ... key" identifier, still not in
+  // HIGH_CONFIDENCE_PATTERNS (the value shape alone is not
+  // AWS-specific). Adds `(?![A-Za-z0-9/+=])` right after the 40-char
+  // value (a value-shape tightening this round-2 pattern introduces
+  // fresh, not present on the pattern above): without it, `{40}` finds
+  // any 40-char run as a PREFIX of a longer base64-ish value too — a
+  // 200-char JWT or session token beginning with 40 charset-compatible
+  // characters would false-positive as a 40-char AWS secret key. The
+  // lookahead requires the value to actually END at 40 characters.
+  /(?:aws[_-]?)?secret[_-]?access[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])["']?/i,
+  // AWS secret key, "no access" identifier variants (agent-tasks
+  // 9ef05069): `aws_secret_key` (Ansible's `aws_secret_key` module
+  // parameter) and bare `secret_key` (Terraform's conventional variable
+  // name for this same credential) both drop the word "access" from the
+  // identifier entirely. `secret[_-]?key` alone (no "access", no "aws")
+  // is a BROAD identifier — Django's `SECRET_KEY`, a Stripe
+  // `secret_key`/API key, a generic app signing key, etc. all use it —
+  // so per review-round constraint this is deliberately gated on the
+  // exact same 40-char-base64-ish, exactly-bounded value shape as the
+  // two patterns above (not added as a bare keyword match, and not
+  // added to HIGH_CONFIDENCE_PATTERNS). Residual false-positive
+  // reasoning for why this is still an acceptable risk at that value
+  // shape: Django's default `SECRET_KEY` generator draws from a ~70-char
+  // alphabet that includes `!@#$%^&*(-_=+)` — most of which (`!@#$%^&*(`
+  // plus the frequently-used `-`/`_`) fall OUTSIDE this pattern's
+  // `[A-Za-z0-9/+=]` charset, so a real Django-generated value breaks
+  // the match within the first few characters far more often than not;
+  // Stripe secret keys are `sk_live_`/`sk_test_`-prefixed and the
+  // underscores after `sk` break the charset-run immediately too. The
+  // residual case — an app's custom "secret key" happens to be exactly
+  // 40 chars of `[A-Za-z0-9/+=]` with no separator — is accepted as the
+  // same class of risk the pattern above already carries for
+  // `secret_access_key`, not a new one; see
+  // tests/secrets.test.ts for the Django-shaped negative control.
+  /(?:aws[_-]?)?secret[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])["']?/i,
 ];
 
 // High-confidence secret SHAPES (review finding 2, fix-round on agent-tasks
@@ -102,7 +186,13 @@ const HIGH_CONFIDENCE_PATTERNS = [
   // entry above for the full rationale, including the deliberate
   // no-exemption decision for AWS's canonical example access-key-id and
   // the boundary-anchoring rationale (fix-round review, finding F2).
-  /(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![A-Z0-9])/,
+  // Prefix alternation (AKIA/ASIA/ABIA/ACCA/A3T) widened in lockstep
+  // with the SECRET_PATTERNS entry, round 2, agent-tasks 9ef05069 — see
+  // that entry for the per-prefix decision. Kept in
+  // HIGH_CONFIDENCE_PATTERNS too: every one of these prefixes shares
+  // AKIA's fixed, unambiguous 20-char shape, so the same
+  // non-downgradable treatment applies to all of them, not just AKIA.
+  /(?<![A-Z0-9])(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![A-Z0-9])/,
 ];
 
 // Placeholder patterns that indicate example/template values (not real secrets)
