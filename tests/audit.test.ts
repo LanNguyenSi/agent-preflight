@@ -572,7 +572,7 @@ describe("npmAuditRunner real timeout (no mock: exercises execa's own timeout op
   // of the login shell and of npm on the machine at hand. (An earlier form
   // of this test raced a 100 ms bound against a dependency-free audit that
   // completes in about 200 ms; on a CI runner whose login shell alone takes
-  // about 120 ms to start, that race was lost once.)
+  // about 120 ms to start, that race can be lost.)
   //
   // A fake, PATH-shadowed `npm` binary was tried first and rejected: the
   // seam shells out via `bash -lc`, a login shell, and macOS's
@@ -584,6 +584,7 @@ describe("npmAuditRunner real timeout (no mock: exercises execa's own timeout op
   let repoPath: string;
   let originalTimeoutMs: number;
   let originalRegistry: string | undefined;
+  let originalNoProxy: string | undefined;
   let server: net.Server;
   const sockets = new Set<net.Socket>();
 
@@ -597,10 +598,13 @@ describe("npmAuditRunner real timeout (no mock: exercises execa's own timeout op
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const { port } = server.address() as net.AddressInfo;
     originalRegistry = process.env.npm_config_registry;
+    originalNoProxy = process.env.npm_config_noproxy;
     // Inherited by the child through execa's default env; an environment
     // variable outranks every .npmrc, so a user- or CI-level registry
-    // setting cannot redirect the request back to the real network.
+    // setting cannot redirect the request back to the real network, and
+    // loopback is exempted from any proxy the environment may configure.
     process.env.npm_config_registry = `http://127.0.0.1:${port}/`;
+    process.env.npm_config_noproxy = "127.0.0.1,localhost";
 
     repoPath = path.join(os.tmpdir(), `preflight-audit-real-timeout-${Date.now()}`);
     await fs.mkdir(repoPath, { recursive: true });
@@ -640,6 +644,8 @@ describe("npmAuditRunner real timeout (no mock: exercises execa's own timeout op
   afterAll(async () => {
     if (originalRegistry === undefined) delete process.env.npm_config_registry;
     else process.env.npm_config_registry = originalRegistry;
+    if (originalNoProxy === undefined) delete process.env.npm_config_noproxy;
+    else process.env.npm_config_noproxy = originalNoProxy;
     for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (repoPath) await fs.rm(repoPath, { recursive: true, force: true });
