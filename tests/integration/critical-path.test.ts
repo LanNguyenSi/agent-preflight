@@ -1,11 +1,24 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { runPreflight } from '../../src/runner.js';
 import { loadConfig } from '../../src/config.js';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as os from 'os';
+import { mockNpmAuditClean } from '../helpers/npm-audit-mock.js';
 
 describe('Critical Path Integration Tests', () => {
+  // Every runPreflight() call below either leaves `audit` at its default
+  // (on) or sets it explicitly to `true`, so without this the suite would
+  // reach the live npm registry. Installed/restored around every test (see
+  // src/checks/audit.ts's npmAuditRunner test seam).
+  let restoreNpmAudit: () => void;
+  beforeEach(() => {
+    restoreNpmAudit = mockNpmAuditClean();
+  });
+  afterEach(() => {
+    restoreNpmAudit();
+  });
+
   let testRepoPath: string;
   // Every runPreflight() call below enables typecheck against a fixture repo
   // that has a tsconfig.json but no local `typescript`/`tsc` and no
