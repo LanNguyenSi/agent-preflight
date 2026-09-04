@@ -116,14 +116,14 @@ function nonEmptyString(value: unknown): string | undefined {
 }
 
 // Severity counts come straight out of npm's JSON. They are normally
-// numbers, but this coerces via `Number()` rather than requiring
-// `typeof value === "number"`, so a numeric string (e.g. `{critical:"2",
-// high:"3"}`) still counts instead of being read as zero and silently
-// downgrading a real fail/warn to a false "no vulnerabilities" result.
-// Anything that does not coerce to a finite, non-negative integer -- NaN,
-// a negative number, `null`, `undefined`, a non-numeric string -- falls
-// back to 0.
+// numbers, but a numeric string (e.g. `{critical:"2", high:"3"}`) still
+// counts instead of being read as zero and silently downgrading a real
+// fail/warn to a false "no vulnerabilities" result. Only numbers and
+// strings are coerced; anything else (booleans, arrays, `null`,
+// `undefined`) and any string or number that is not a finite,
+// non-negative integer falls back to 0.
 function vulnerabilityCount(value: unknown): number {
+  if (typeof value !== "number" && typeof value !== "string") return 0;
   const n = Number(value);
   return Number.isInteger(n) && n >= 0 ? n : 0;
 }

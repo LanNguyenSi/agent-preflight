@@ -168,6 +168,19 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     expect(npm?.message).toBeUndefined();
   });
 
+  it("counts only numbers and numeric strings, never booleans or arrays", async () => {
+    restore = mockNpmAudit({
+      exitCode: 1,
+      stdout: JSON.stringify({ metadata: { vulnerabilities: { critical: true, high: ["3"] } } }),
+    });
+
+    const { checks } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("warn");
+    expect(npm?.message).toBeUndefined();
+  });
+
   it("reports skip with a limitation when the run times out", async () => {
     restore = mockNpmAudit({
       exitCode: 1,
