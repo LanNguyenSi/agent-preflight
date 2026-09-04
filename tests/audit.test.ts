@@ -167,10 +167,10 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     const npm = checks.find((c) => c.name === "npm-audit");
 
     expect(npm?.status).toBe("skip");
-    expect(npm?.message).toContain("registry advisory endpoint unavailable");
+    expect(npm?.message).toContain("npm returned no report");
     expect(npm?.message).toContain("timed out after");
     expect(
-      limitations.some((l) => l === "npm audit skipped: registry advisory endpoint unavailable (timed out after 90s)")
+      limitations.some((l) => l === "npm audit skipped: npm returned no report (timed out after 90s)")
     ).toBe(true);
   });
 
@@ -191,10 +191,10 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
 
       expect(npm?.status).toBe("skip");
       expect(npm?.message).toBe(
-        `npm audit not evaluated: registry advisory endpoint unavailable (${payload.expectedCause})`
+        `npm audit not evaluated: npm returned no report (${payload.expectedCause})`
       );
       expect(limitations).toEqual([
-        `npm audit skipped: registry advisory endpoint unavailable (${payload.expectedCause})`,
+        `npm audit skipped: npm returned no report (${payload.expectedCause})`,
       ]);
     });
   }
@@ -212,7 +212,7 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
 
     expect(npm?.status).toBe("skip");
     expect(limitations).toEqual([
-      "npm audit skipped: registry advisory endpoint unavailable (npm error audit endpoint returned an error)",
+      "npm audit skipped: npm returned no report (npm error audit endpoint returned an error)",
     ]);
   });
 
@@ -229,7 +229,7 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
 
     expect(npm?.status).toBe("skip");
     expect(
-      limitations.some((l) => l.startsWith("npm audit skipped: registry advisory endpoint unavailable"))
+      limitations.some((l) => l.startsWith("npm audit skipped: npm returned no report"))
     ).toBe(true);
   });
 
@@ -322,7 +322,7 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
 
     expect(npm?.status).toBe("skip");
     expect(limitations).toEqual([
-      "npm audit skipped: registry advisory endpoint unavailable (connect ECONNREFUSED)",
+      "npm audit skipped: npm returned no report (connect ECONNREFUSED)",
     ]);
   });
 
@@ -361,7 +361,7 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     expect(npm?.status).toBe("skip");
     expect(npm?.message).toContain("E503");
     expect(
-      limitations.some((l) => l === "npm audit skipped: registry advisory endpoint unavailable (E503)")
+      limitations.some((l) => l === "npm audit skipped: npm returned no report (E503)")
     ).toBe(true);
   });
 
@@ -429,7 +429,7 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
 
     expect(npm?.status).toBe("skip");
     expect(limitations).toEqual([
-      "npm audit skipped: registry advisory endpoint unavailable (exit code 1)",
+      "npm audit skipped: npm returned no report (exit code 1)",
     ]);
   });
 
@@ -449,7 +449,7 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
 
     expect(npm?.status).toBe("skip");
     expect(limitations).toEqual([
-      "npm audit skipped: registry advisory endpoint unavailable (exit code unknown)",
+      "npm audit skipped: npm returned no report (exit code unknown)",
     ]);
   });
 });
@@ -526,11 +526,11 @@ describe("npmAuditRunner real timeout (no mock: exercises execa's own timeout op
     const npm = checks.find((c) => c.name === "npm-audit");
 
     expect(npm?.status).toBe("skip");
-    expect(npm?.message).toContain("registry advisory endpoint unavailable");
+    expect(npm?.message).toContain("npm returned no report");
     // Sub-second bounds render in milliseconds, not as a rounded "0s".
     expect(npm?.message).toContain("timed out after 100ms");
     expect(
-      limitations.some((l) => l === "npm audit skipped: registry advisory endpoint unavailable (timed out after 100ms)")
+      limitations.some((l) => l === "npm audit skipped: npm returned no report (timed out after 100ms)")
     ).toBe(true);
   }, 10_000);
 });
@@ -593,7 +593,7 @@ describe("npm audit unavailable outcome through runPreflight", () => {
     expect(npmCheck?.status).toBe("skip");
     expect(
       skippedResult.limitations.filter((l) => l.startsWith("npm audit skipped:"))
-    ).toEqual([`npm audit skipped: registry advisory endpoint unavailable (${refused.expectedCause})`]);
+    ).toEqual([`npm audit skipped: npm returned no report (${refused.expectedCause})`]);
     expect(skippedResult.confidence).toBeLessThan(cleanResult.confidence);
   });
 });

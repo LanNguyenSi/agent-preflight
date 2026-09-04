@@ -317,11 +317,11 @@ export async function runAuditChecks(
           name: "npm-audit",
           kind: "audit",
           status: "skip",
-          message: `npm audit not evaluated: registry advisory endpoint unavailable (${cause})`,
+          message: `npm audit not evaluated: npm returned no report (${cause})`,
           durationMs: Date.now() - start,
           confidenceContribution: 0.15,
         });
-        limitations.push(`npm audit skipped: registry advisory endpoint unavailable (${cause})`);
+        limitations.push(`npm audit skipped: npm returned no report (${cause})`);
       } else {
         checks.push({
           name: "npm-audit",
