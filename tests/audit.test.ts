@@ -123,50 +123,79 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
 });
 
 describe("npmAuditRunner real timeout (no mock: exercises execa's own timeout option)", () => {
+  // Drives a REAL `npm audit --json` (no `npmAuditRunner.run` mock) against
+  // a repo with a minimal, dependency-free but valid package-lock.json, so
+  // an unbounded run completes quickly on its own (~150-250ms measured
+  // locally: no lockfile at all makes npm fail immediately with an
+  // "ENOLOCK" JSON error envelope, which this check already classifies as
+  // `skip` on its own — that would make this test unable to tell a real
+  // timeout kill apart from a fast local error, since both land on `skip`.
+  // A clean, complete-able audit that resolves to `pass` on its own gives
+  // the timeout mutation something to break). `npmAuditRunner.timeoutMs` is
+  // lowered far below that real completion time for this test only, so
+  // execa's own `timeout` kills the real child process before npm can
+  // finish — proving the timeout option is actually wired up, not just
+  // documented.
+  //
+  // A fake, PATH-shadowed `npm` binary was tried first and rejected: `npm
+  // audit`'s seam shells out via `bash -lc`, a login shell, and macOS's
+  // `/usr/libexec/path_helper` (sourced from /etc/profile) rebuilds PATH on
+  // every login-shell invocation, always placing /usr/local/bin and
+  // /opt/homebrew/bin (where the real `npm` lives) ahead of anything
+  // prepended to PATH beforehand — verified empirically (`bash -lc npm
+  // audit --json` against a fake npm dir prepended to PATH still ran the
+  // real npm). Shadowing it would require writing into /usr/local/bin,
+  // which is root-owned here.
   let repoPath: string;
-  let binDir: string;
-  let originalPath: string | undefined;
   let originalTimeoutMs: number;
 
   beforeAll(async () => {
     repoPath = path.join(os.tmpdir(), `preflight-audit-real-timeout-${Date.now()}`);
     await fs.mkdir(repoPath, { recursive: true });
-    await fs.writeFile(path.join(repoPath, "package.json"), JSON.stringify({ name: "fixture" }));
-
-    // A fake `npm` that sleeps far longer than the lowered timeoutMs below,
-    // placed first on PATH so `bash -lc "npm audit --json"` resolves to it
-    // instead of the real npm.
-    binDir = path.join(os.tmpdir(), `preflight-audit-fake-npm-${Date.now()}`);
-    await fs.mkdir(binDir, { recursive: true });
-    const fakeNpm = path.join(binDir, "npm");
-    await fs.writeFile(fakeNpm, "#!/bin/sh\nsleep 5\necho '{}'\n");
-    await fs.chmod(fakeNpm, 0o755);
-
-    originalPath = process.env.PATH;
-    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    await fs.writeFile(
+      path.join(repoPath, "package.json"),
+      JSON.stringify({ name: "audit-real-timeout-fixture", version: "1.0.0", private: true })
+    );
+    // A minimal, self-consistent, dependency-free lockfile: real `npm
+    // audit --json` resolves this without reaching the network (nothing to
+    // check against advisories) and exits 0 with a clean report.
+    await fs.writeFile(
+      path.join(repoPath, "package-lock.json"),
+      JSON.stringify({
+        name: "audit-real-timeout-fixture",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "audit-real-timeout-fixture", version: "1.0.0" },
+        },
+      })
+    );
   });
 
   afterAll(async () => {
-    process.env.PATH = originalPath;
     if (repoPath) await fs.rm(repoPath, { recursive: true, force: true });
-    if (binDir) await fs.rm(binDir, { recursive: true, force: true });
   });
 
   beforeEach(() => {
     originalTimeoutMs = npmAuditRunner.timeoutMs;
-    npmAuditRunner.timeoutMs = 300;
+    // Comfortably below the ~150-250ms a real, complete `npm audit --json`
+    // run against the fixture above takes, and comfortably above bare
+    // process-spawn time, so the kill is reliable in both directions.
+    npmAuditRunner.timeoutMs = 100;
   });
 
   afterEach(() => {
     npmAuditRunner.timeoutMs = originalTimeoutMs;
   });
 
-  it("kills the hung npm audit and reports skip with a limitation", async () => {
+  it("kills the real npm audit before it completes and reports skip with a limitation", async () => {
     const { checks, limitations } = await runAuditChecks(repoPath, {});
     const npm = checks.find((c) => c.name === "npm-audit");
 
     expect(npm?.status).toBe("skip");
     expect(npm?.message).toContain("registry advisory endpoint unavailable");
+    expect(npm?.message).toContain("timed out after");
     expect(
       limitations.some((l) => l.startsWith("npm audit skipped: registry advisory endpoint unavailable"))
     ).toBe(true);
