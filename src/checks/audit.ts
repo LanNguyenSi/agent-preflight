@@ -69,7 +69,7 @@ export const npmAuditRunner = {
 // without a parsed report means the audit did not answer (`skip`), and
 // only a code in this list turns that into a `warn` naming a local
 // failure.
-const LOCAL_USAGE_ERROR_CODES = [
+export const LOCAL_USAGE_ERROR_CODES = [
   "ENOLOCK",
   "EUSAGE",
   "EAUDITNOPJSON",
@@ -110,15 +110,22 @@ function clampCause(text: string): string {
 }
 
 function nonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
-// Severity counts come straight out of npm's JSON, so a missing or
-// non-numeric value must not leak into the `critical + high` arithmetic
-// (a stringy count would concatenate rather than add, turning "0" + "0"
-// into a truthy blocking count).
+// Severity counts come straight out of npm's JSON. They are normally
+// numbers, but this coerces via `Number()` rather than requiring
+// `typeof value === "number"`, so a numeric string (e.g. `{critical:"2",
+// high:"3"}`) still counts instead of being read as zero and silently
+// downgrading a real fail/warn to a false "no vulnerabilities" result.
+// Anything that does not coerce to a finite, non-negative integer -- NaN,
+// a negative number, `null`, `undefined`, a non-numeric string -- falls
+// back to 0.
 function vulnerabilityCount(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 ? n : 0;
 }
 
 function timeoutCause(timeoutMs: number): string {
@@ -185,11 +192,15 @@ interface AuditClassification {
 
 // Classification order (each step only runs if the previous one did not
 // already decide the outcome):
-//   1. timedOut -> skip, unconditionally: a timeout pre-empts everything
-//      else regardless of what happened to reach it.
-//   2. stdout parsed to a report carrying `metadata.vulnerabilities` ->
+//   1. stdout parsed to a report carrying `metadata.vulnerabilities` ->
 //      the audit answered. Judge it purely on that data (pass/fail/warn)
-//      and never call it unavailable, whatever stderr says.
+//      and never call it unavailable, whatever stderr says or whatever
+//      `timedOut` reports -- a complete, parsed report is a real result
+//      even from a run that was later killed for taking too long to
+//      finish flushing (e.g. exiting slowly after writing its JSON).
+//   2. timedOut -> skip, unconditionally, for anything step 1 did not
+//      already resolve: a timeout with no parsable report means the audit
+//      did not answer.
 //   3. exit 0 without such a report -> pass. Nothing here indicates a
 //      problem of any kind, and npm signalled success itself.
 //   4. exit non-zero (`undefined` counts as non-zero) without such a
@@ -225,16 +236,16 @@ function classifyAuditResult(params: {
     payloadMessage,
   } = params;
 
-  if (timedOut) {
-    return { status: "skip", unavailableCause: timeoutCause(timeoutMs) };
-  }
-
   if (hasVulnerabilityMetadata) {
     const blockingCount = criticalCount + highCount;
     return {
       status: exitCode === 0 ? "pass" : blockingCount > 0 ? "fail" : "warn",
       message: blockingCount > 0 ? `${criticalCount} critical, ${highCount} high vulnerabilities found` : undefined,
     };
+  }
+
+  if (timedOut) {
+    return { status: "skip", unavailableCause: timeoutCause(timeoutMs) };
   }
 
   if (exitCode === 0) {

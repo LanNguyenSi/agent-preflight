@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as os from "os";
-import { runAuditChecks, npmAuditRunner } from "../src/checks/audit.js";
+import { runAuditChecks, npmAuditRunner, LOCAL_USAGE_ERROR_CODES } from "../src/checks/audit.js";
 import { runPreflight } from "../src/runner.js";
 import { mockNpmAudit } from "./helpers/npm-audit-mock.js";
 
@@ -139,13 +139,26 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     expect(npm?.status).toBe("warn");
   });
 
-  it("treats non-numeric severity counts as zero instead of concatenating them", async () => {
-    // A stringy count would make `critical + high` the string "00", which
-    // is truthy-length but not > 0 numerically; a naive read would produce
-    // a nonsense "0 critical, 0 high" fail message.
+  it("coerces numeric-string severity counts instead of reading them as zero", async () => {
+    // A `typeof value === "number"` guard would read a numeric-string
+    // count as zero, silently downgrading a real fail to a false "no
+    // vulnerabilities" warn.
     restore = mockNpmAudit({
       exitCode: 1,
-      stdout: JSON.stringify({ metadata: { vulnerabilities: { critical: "0", high: null } } }),
+      stdout: JSON.stringify({ metadata: { vulnerabilities: { critical: "2", high: "3" } } }),
+    });
+
+    const { checks } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("fail");
+    expect(npm?.message).toBe("2 critical, 3 high vulnerabilities found");
+  });
+
+  it("reports warn with zero counts when severity counts do not coerce to a number", async () => {
+    restore = mockNpmAudit({
+      exitCode: 1,
+      stdout: JSON.stringify({ metadata: { vulnerabilities: { critical: "x", high: null } } }),
     });
 
     const { checks } = await runAuditChecks(repoPath, {});
@@ -172,6 +185,25 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     expect(
       limitations.some((l) => l === "npm audit skipped: npm returned no report (timed out after 90s)")
     ).toBe(true);
+  });
+
+  it("reports fail with the count, not skip, when a killed run still left a complete parsed report", async () => {
+    // A complete report is a real result even from a run execa later
+    // killed for the timeout; a timeout with no report is the only case
+    // that stays skip.
+    restore = mockNpmAudit({
+      exitCode: 1,
+      stdout: JSON.stringify({ metadata: { vulnerabilities: { critical: 5, high: 5 } } }),
+      stderr: "",
+      timedOut: true,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("fail");
+    expect(npm?.message).toBe("5 critical, 5 high vulnerabilities found");
+    expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
   });
 
   // Replays of the recorded payloads above. These are the primary outage
@@ -303,6 +335,46 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
 
     expect(npm?.status).toBe("warn");
     expect(npm?.message).toBe("npm audit failed: EUSAGE");
+    expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
+  });
+
+  // Every one of npm's own local usage codes, not just the two spot-checked
+  // above, must warn naming the local failure (with an empty summary, so
+  // the message falls back to the code itself).
+  for (const code of LOCAL_USAGE_ERROR_CODES) {
+    it(`reports warn naming the local failure for npm's own ${code} usage code`, async () => {
+      restore = mockNpmAudit({
+        exitCode: 1,
+        stdout: JSON.stringify({ error: { code, summary: "" } }),
+        stderr: "",
+        timedOut: false,
+      });
+
+      const { checks, limitations } = await runAuditChecks(repoPath, {});
+      const npm = checks.find((c) => c.name === "npm-audit");
+
+      expect(npm?.status).toBe("warn");
+      expect(npm?.message).toBe(`npm audit failed: ${code}`);
+      expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
+    });
+  }
+
+  it("reports warn, not skip, when error.code is padded with whitespace", async () => {
+    // `nonEmptyString` must return the TRIMMED value: a padded code that
+    // still equals a local usage code once trimmed must not fall through
+    // to the untrimmed lookup and miss the list.
+    restore = mockNpmAudit({
+      exitCode: 1,
+      stdout: JSON.stringify({ error: { code: " ENOLOCK ", summary: "" } }),
+      stderr: "",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("warn");
+    expect(npm?.message).toBe("npm audit failed: ENOLOCK");
     expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
   });
 
