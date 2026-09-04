@@ -120,6 +120,118 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
       limitations.some((l) => l.startsWith("npm audit skipped: registry advisory endpoint unavailable"))
     ).toBe(true);
   });
+
+  // Negative controls (round 2 review): a fail-open classifier that matches
+  // unavailable markers regardless of what parsed, or that never checks the
+  // exit code, keeps making these five green -- each one pins a boundary the
+  // classifier must respect.
+
+  it("reports fail with the count, not skip, when a real finding's exit carries a registry-marker stderr warning", async () => {
+    restore = mockNpmAudit({
+      exitCode: 1,
+      stdout: JSON.stringify({ metadata: { vulnerabilities: { critical: 2, high: 3 } } }),
+      stderr: "npm warn registry Using stale data due to ECONNRESET during revalidation",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("fail");
+    expect(npm?.message).toBe("2 critical, 3 high vulnerabilities found");
+    expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
+  });
+
+  it("reports pass, not skip, on a clean exit-0 report with a benign stderr retry warning", async () => {
+    restore = mockNpmAudit({
+      exitCode: 0,
+      stdout: JSON.stringify({ metadata: { vulnerabilities: { critical: 0, high: 0 } } }),
+      stderr: "npm warn registry request to https://registry.npmjs.org failed, reason: ETIMEDOUT (retrying)",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("pass");
+    expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
+  });
+
+  it("reports warn naming the local failure, not skip, on a real ENOLOCK error envelope", async () => {
+    restore = mockNpmAudit({
+      exitCode: 1,
+      stdout: JSON.stringify({
+        error: {
+          code: "ENOLOCK",
+          summary: "This command requires an existing lockfile.",
+          detail: "Try creating one first with: npm i --package-lock-only",
+        },
+      }),
+      stderr: "",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("warn");
+    expect(npm?.message).toBe("npm audit failed: This command requires an existing lockfile.");
+    expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
+  });
+
+  it("reports fail, not skip, when a marker token only appears inside the parsed report body", async () => {
+    restore = mockNpmAudit({
+      exitCode: 1,
+      stdout: JSON.stringify({
+        metadata: { vulnerabilities: { critical: 1, high: 0 } },
+        advisories: {
+          "1": { title: "Unhandled ECONNRESET leads to DoS", severity: "critical" },
+        },
+      }),
+      stderr: "",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("fail");
+    expect(npm?.message).toBe("1 critical, 0 high vulnerabilities found");
+    expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
+  });
+
+  it("reports skip naming E503 on a registry-attributable error envelope with no summary", async () => {
+    restore = mockNpmAudit({
+      exitCode: 1,
+      stdout: JSON.stringify({ error: { code: "E503" } }),
+      stderr: "",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("skip");
+    expect(npm?.message).toContain("E503");
+    expect(
+      limitations.some((l) => l === "npm audit skipped: registry advisory endpoint unavailable (E503)")
+    ).toBe(true);
+  });
+
+  it("reports warn, not skip, on a non-zero exit with no JSON and no marker text at all", async () => {
+    restore = mockNpmAudit({
+      exitCode: undefined,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("warn");
+    expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
+  });
 });
 
 describe("npmAuditRunner real timeout (no mock: exercises execa's own timeout option)", () => {

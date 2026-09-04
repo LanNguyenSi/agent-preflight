@@ -162,7 +162,7 @@ This is stdio-only — no remote/HTTP transport, no new checks beyond what `pref
 }
 ```
 
-If no commands are configured, agent-preflight auto-detects common Node, Python, PHP, and Java manifests and picks reasonable defaults. The full toggle, override, and monorepo guidance lives in [docs/checks.md](docs/checks.md). Sandbox image profiles, apt packages, and act flags are covered in [docs/architecture.md](docs/architecture.md#sandbox). The `npm-audit` check runs with a bounded timeout and reports `skip` (not `warn`) with a `limitations` entry when the registry's advisory endpoint is unreachable, so an outage there never hangs the run or is misread as a real finding.
+If no commands are configured, agent-preflight auto-detects common Node, Python, PHP, and Java manifests and picks reasonable defaults. The full toggle, override, and monorepo guidance lives in [docs/checks.md](docs/checks.md). Sandbox image profiles, apt packages, and act flags are covered in [docs/architecture.md](docs/architecture.md#sandbox). The `npm-audit` check runs with a bounded timeout and reports `skip` (not `warn`) with a `limitations` entry when the registry's advisory endpoint times out or is unreachable, or npm reports a registry-side error, so an outage there never hangs the run or is misread as a real finding; a local npm failure unrelated to the registry (e.g. no lockfile present) stays a `warn` naming that failure instead.
 
 When a shell-based check (lint, typecheck, test, audit, custom) fails, its
 complete stdout+stderr is written best-effort to
