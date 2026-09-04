@@ -1,8 +1,22 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { runPreflight } from '../../src/runner.js';
 import type { PreflightResult, CheckResult } from '../../src/types.js';
+import { mockNpmAuditClean } from '../helpers/npm-audit-mock.js';
 
 describe('Contract Tests - JSON Output Stability', () => {
+  // Every runPreflight('.') call below leaves `audit` at its default (on)
+  // or sets it explicitly to `true`, so without this the whole suite would
+  // reach the live npm registry. Installed/restored around every test so
+  // no test here depends on network availability (see src/checks/audit.ts's
+  // npmAuditRunner test seam).
+  let restoreNpmAudit: () => void;
+  beforeEach(() => {
+    restoreNpmAudit = mockNpmAuditClean();
+  });
+  afterEach(() => {
+    restoreNpmAudit();
+  });
+
   // All tests in this suite may run lint/checks — increase timeout for CI runners
   it('should maintain stable JSON schema for agent consumption', async () => {
     const config = {

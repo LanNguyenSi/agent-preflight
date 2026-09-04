@@ -1,9 +1,22 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { runPreflight } from '../../src/runner.js';
 import { loadConfig } from '../../src/config.js';
 import * as path from 'path';
+import { mockNpmAuditClean } from '../helpers/npm-audit-mock.js';
 
 describe('Error Handling Integration Tests', () => {
+  // Several runPreflight() calls below leave `audit` at its default (on) or
+  // set it explicitly to `true`, so without this the suite would reach the
+  // live npm registry. Installed/restored around every test (see
+  // src/checks/audit.ts's npmAuditRunner test seam).
+  let restoreNpmAudit: () => void;
+  beforeEach(() => {
+    restoreNpmAudit = mockNpmAuditClean();
+  });
+  afterEach(() => {
+    restoreNpmAudit();
+  });
+
   it('should handle missing repository path gracefully', async () => {
     const nonExistentPath = '/tmp/does-not-exist-' + Date.now();
     const config = {

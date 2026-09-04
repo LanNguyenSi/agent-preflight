@@ -15,7 +15,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: npx tsc --noEmit --skipLibCheck
       - run: npx tsc --noEmit -p tsconfig.test.json
       - run: npx vitest run --coverage
