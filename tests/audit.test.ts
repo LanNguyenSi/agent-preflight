@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as os from "os";
+import * as net from "net";
 import { runAuditChecks, npmAuditRunner, LOCAL_USAGE_ERROR_CODES } from "../src/checks/audit.js";
 import { runPreflight } from "../src/runner.js";
 import { mockNpmAudit } from "./helpers/npm-audit-mock.js";
@@ -560,42 +561,60 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
 });
 
 describe("npmAuditRunner real timeout (no mock: exercises execa's own timeout option)", () => {
-  // Drives a REAL `npm audit --json` (no `npmAuditRunner.run` mock) against
-  // a repo with a minimal, dependency-free but valid package-lock.json, so
-  // an unbounded run completes quickly on its own (~150-250ms measured
-  // locally). No lockfile at all would make npm fail immediately with an
-  // "ENOLOCK" JSON error envelope, which this check classifies as `warn`
-  // (a local usage failure, not an unreachable registry) -- but a `warn`
-  // would still not be the `skip` this test is trying to prove, and a
-  // failing-fast npm gives the timeout nothing to interrupt. A clean,
-  // complete-able audit that resolves to `pass` on its own gives the
-  // timeout mutation something to break. `npmAuditRunner.timeoutMs` is
-  // lowered far below that real completion time for this test only, so
-  // execa's own `timeout` kills the real child process before npm can
-  // finish -- proving the timeout option is actually wired up, not just
-  // documented.
+  // The seam's `timeout` option is the one line this whole change hangs on,
+  // so one test drives the REAL `npm audit --json` through `bash -lc` and
+  // lets execa kill it. For that kill to be deterministic the child must be
+  // unable to finish on its own: a fixture with one dependency makes npm
+  // ask the registry for advisories, and `npm_config_registry` points it at
+  // a loopback server that accepts the connection and never answers. npm
+  // then waits on that socket for far longer than the bound, so the timeout
+  // is the only thing that can end the run, whatever the process-start cost
+  // of the login shell and of npm on the machine at hand. (An earlier form
+  // of this test raced a 100 ms bound against a dependency-free audit that
+  // completes in about 200 ms; on a CI runner whose login shell alone takes
+  // about 120 ms to start, that race was lost once.)
   //
-  // A fake, PATH-shadowed `npm` binary was tried first and rejected: `npm
-  // audit`'s seam shells out via `bash -lc`, a login shell, and macOS's
+  // A fake, PATH-shadowed `npm` binary was tried first and rejected: the
+  // seam shells out via `bash -lc`, a login shell, and macOS's
   // `/usr/libexec/path_helper` (sourced from /etc/profile) rebuilds PATH on
   // every login-shell invocation, always placing the system bin directories
   // (where the real `npm` lives) ahead of anything prepended to PATH
-  // beforehand -- verified empirically (`bash -lc npm audit --json` against
-  // a fake npm dir prepended to PATH still ran the real npm). Shadowing it
-  // would require writing into a root-owned system bin directory.
+  // beforehand -- verified empirically. Shadowing it would require writing
+  // into a root-owned system bin directory.
   let repoPath: string;
   let originalTimeoutMs: number;
+  let originalRegistry: string | undefined;
+  let server: net.Server;
+  const sockets = new Set<net.Socket>();
 
   beforeAll(async () => {
+    server = net.createServer((socket) => {
+      // Accept, read, never reply: the client is left waiting for a response.
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => undefined);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as net.AddressInfo;
+    originalRegistry = process.env.npm_config_registry;
+    // Inherited by the child through execa's default env; an environment
+    // variable outranks every .npmrc, so a user- or CI-level registry
+    // setting cannot redirect the request back to the real network.
+    process.env.npm_config_registry = `http://127.0.0.1:${port}/`;
+
     repoPath = path.join(os.tmpdir(), `preflight-audit-real-timeout-${Date.now()}`);
     await fs.mkdir(repoPath, { recursive: true });
     await fs.writeFile(
       path.join(repoPath, "package.json"),
-      JSON.stringify({ name: "audit-real-timeout-fixture", version: "1.0.0", private: true })
+      JSON.stringify({
+        name: "audit-real-timeout-fixture",
+        version: "1.0.0",
+        private: true,
+        dependencies: { "left-pad": "1.3.0" },
+      })
     );
-    // A minimal, self-consistent, dependency-free lockfile: real `npm
-    // audit --json` resolves this without reaching the network (nothing to
-    // check against advisories) and exits 0 with a clean report.
+    // One dependency in a self-consistent lockfile: `npm audit` reads it
+    // without node_modules and has something to ask the registry about.
     await fs.writeFile(
       path.join(repoPath, "package-lock.json"),
       JSON.stringify({
@@ -604,39 +623,47 @@ describe("npmAuditRunner real timeout (no mock: exercises execa's own timeout op
         lockfileVersion: 3,
         requires: true,
         packages: {
-          "": { name: "audit-real-timeout-fixture", version: "1.0.0" },
+          "": {
+            name: "audit-real-timeout-fixture",
+            version: "1.0.0",
+            dependencies: { "left-pad": "1.3.0" },
+          },
+          "node_modules/left-pad": {
+            version: "1.3.0",
+            resolved: `http://127.0.0.1:${port}/left-pad/-/left-pad-1.3.0.tgz`,
+          },
         },
       })
     );
   });
 
   afterAll(async () => {
+    if (originalRegistry === undefined) delete process.env.npm_config_registry;
+    else process.env.npm_config_registry = originalRegistry;
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     if (repoPath) await fs.rm(repoPath, { recursive: true, force: true });
   });
 
   beforeEach(() => {
     originalTimeoutMs = npmAuditRunner.timeoutMs;
-    // Comfortably below the ~150-250ms a real, complete `npm audit --json`
-    // run against the fixture above takes, and comfortably above bare
-    // process-spawn time, so the kill is reliable in both directions.
-    npmAuditRunner.timeoutMs = 100;
+    // Sub-second on purpose: this also pins the millisecond rendering of
+    // the cause text. The bound is generous against process start-up and
+    // irrelevant to completion, which the silent registry rules out.
+    npmAuditRunner.timeoutMs = 500;
   });
 
   afterEach(() => {
     npmAuditRunner.timeoutMs = originalTimeoutMs;
   });
 
-  it("kills the real npm audit before it completes and reports skip with a limitation", async () => {
+  it("kills the real npm audit that is waiting on a silent registry and reports skip with a limitation", async () => {
     const { checks, limitations } = await runAuditChecks(repoPath, {});
     const npm = checks.find((c) => c.name === "npm-audit");
 
     expect(npm?.status).toBe("skip");
-    expect(npm?.message).toContain("npm returned no report");
-    // Sub-second bounds render in milliseconds, not as a rounded "0s".
-    expect(npm?.message).toContain("timed out after 100ms");
-    expect(
-      limitations.some((l) => l === "npm audit skipped: npm returned no report (timed out after 100ms)")
-    ).toBe(true);
+    expect(npm?.message).toBe("npm audit not evaluated: npm returned no report (timed out after 500ms)");
+    expect(limitations).toContain("npm audit skipped: npm returned no report (timed out after 500ms)");
   }, 10_000);
 });
 
