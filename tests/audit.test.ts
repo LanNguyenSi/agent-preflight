@@ -338,6 +338,26 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
   });
 
+  it("pins the exact set of npm's local usage codes", () => {
+    // Iterating LOCAL_USAGE_ERROR_CODES below to generate one test per code
+    // cannot by itself catch a code silently dropped from the list: doing
+    // so only removes the generated test, it does not fail any surviving
+    // one, so the suite would just get one test smaller and still pass.
+    // This fixed assertion is what actually fails when the list shrinks.
+    expect(LOCAL_USAGE_ERROR_CODES).toEqual([
+      "ENOLOCK",
+      "EUSAGE",
+      "EAUDITNOPJSON",
+      "EAUDITNOLOCK",
+      "ENOAUDIT",
+      "EJSONPARSE",
+      "ENOENT",
+      "EACCES",
+      "EPERM",
+      "ENOTDIR",
+    ]);
+  });
+
   // Every one of npm's own local usage codes, not just the two spot-checked
   // above, must warn naming the local failure (with an empty summary, so
   // the message falls back to the code itself).
