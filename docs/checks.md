@@ -41,6 +41,8 @@ If no `commands.*` entries are configured, the runner walks the repo root for kn
 
 Unknown stacks emit a `limitation` rather than a `fail`, so the runner still produces a score. See [confidence-scoring.md](./confidence-scoring.md) for how skips and limitations affect the result.
 
+For Node projects, `package.json` `scripts.lint` takes precedence over dependency detection. If ESLint is only detected as a dependency, the runner invokes it only when the repository root contains a supported flat `eslint.config.*` or legacy `.eslintrc*` file. Otherwise it reports the missing ESLint configuration as a limitation and does not run ESLint.
+
 ## Monorepos and workspaces
 
 For npm, yarn, or pnpm workspace layouts where the root has no `tsconfig.json` or `.eslintrc` (per-package configs live under `packages/*` or `apps/*`), declare `scripts.typecheck` and `scripts.lint` in the root `package.json` that fan out to the workspaces. `agent-preflight` prefers these over root-level tool detection:

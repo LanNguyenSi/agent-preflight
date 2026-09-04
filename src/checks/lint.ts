@@ -16,6 +16,33 @@ import {
   runShellCheck,
 } from "./shared.js";
 
+const ESLINT_FLAT_CONFIGS = [
+  "eslint.config.js",
+  "eslint.config.mjs",
+  "eslint.config.cjs",
+  "eslint.config.ts",
+  "eslint.config.mts",
+  "eslint.config.cts",
+];
+const ESLINT_LEGACY_CONFIGS = [
+  ".eslintrc",
+  ".eslintrc.js",
+  ".eslintrc.cjs",
+  ".eslintrc.json",
+  ".eslintrc.yaml",
+  ".eslintrc.yml",
+];
+
+function findEslintConfig(repoPath: string): { kind: "flat" | "legacy"; name: string } | undefined {
+  const flatConfig = ESLINT_FLAT_CONFIGS.find((name) => fileExists(repoPath, name));
+  if (flatConfig) {
+    return { kind: "flat", name: flatConfig };
+  }
+
+  const legacyConfig = ESLINT_LEGACY_CONFIGS.find((name) => fileExists(repoPath, name));
+  return legacyConfig ? { kind: "legacy", name: legacyConfig } : undefined;
+}
+
 export async function runLintChecks(
   repoPath: string,
   config: PreflightConfig
@@ -49,18 +76,28 @@ export async function runLintChecks(
         limitations.push(result.limitation);
       }
     } else if (hasNodeDependency(context, "eslint")) {
-      const result = await runShellCheck({
-        repoPath,
-        name: "eslint",
-        kind: "lint",
-        command: "npx eslint . --ext .ts,.tsx,.js,.jsx,.cjs,.mjs --format json",
-        weight: 0.15,
-        failureMessage: "eslint failed",
-        missingLimitation: "npx not installed; Node lint check skipped",
-        logDir: config.logDir,
-      });
-      if (result.check) {
-        checks.push(result.check);
+      const eslintConfig = findEslintConfig(repoPath);
+      if (!eslintConfig) {
+        limitations.push(
+          "ESLint dependency found but no supported ESLint config file exists; Node lint check skipped"
+        );
+      } else {
+        const result = await runShellCheck({
+          repoPath,
+          name: "eslint",
+          kind: "lint",
+          command:
+            eslintConfig.kind === "flat"
+              ? "npx eslint . --format json"
+              : "npx eslint . --ext .ts,.tsx,.js,.jsx,.cjs,.mjs --format json",
+          weight: 0.15,
+          failureMessage: "eslint failed",
+          missingLimitation: "npx not installed; Node lint check skipped",
+          logDir: config.logDir,
+        });
+        if (result.check) {
+          checks.push(result.check);
+        }
       }
     } else if (context.hasTsconfig) {
       const result = await runShellCheck({
