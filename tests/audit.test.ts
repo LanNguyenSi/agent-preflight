@@ -6,6 +6,77 @@ import { runAuditChecks, npmAuditRunner } from "../src/checks/audit.js";
 import { runPreflight } from "../src/runner.js";
 import { mockNpmAudit } from "./helpers/npm-audit-mock.js";
 
+// `npm audit --json` failure payloads captured by pointing the real npm at
+// a refusing port, an unresolvable host, and a local stub answering 503.
+// These are recordings, not hand-written approximations, and two npm
+// majors are represented because the advisory endpoint path changed
+// between them (`.../security/audits/quick` -> `.../security/advisories/bulk`).
+// Only insignificant JSON whitespace was removed; the 503 payload's
+// `headers` block is elided because it is irrelevant to classification and
+// carries capture-time values.
+//
+// The one structural fact that drives the whole classifier: NONE of them
+// carries an `error.code`. The human-readable reason sits in a TOP-LEVEL
+// `message`, `error.summary`/`error.detail` are empty strings, and the
+// HTTP-status case adds a top-level `statusCode`. That is why registry
+// failures are not enumerated: there is nothing stable to enumerate. A
+// non-zero exit without a parsed report is "the audit did not answer"
+// (skip) by default, and only npm's own local usage codes turn it into a
+// warn.
+const REAL_UNAVAILABLE_PAYLOADS: {
+  label: string;
+  stdout: string;
+  stderr: string;
+  expectedCause: string;
+}[] = [
+  {
+    label: "connection refused, quick-audit endpoint",
+    stdout:
+      '{"message":"request to http://127.0.0.1:9/-/npm/v1/security/audits/quick failed, reason: connect ECONNREFUSED 127.0.0.1:9","error":{"summary":"","detail":""}}',
+    stderr: "npm error audit endpoint returned an error",
+    expectedCause:
+      "request to http://127.0.0.1:9/-/npm/v1/security/audits/quick failed, reason: connect ECONNREFUSED 127.0.0.1:9",
+  },
+  {
+    label: "unresolvable registry host, quick-audit endpoint",
+    stdout:
+      '{"message":"request to http://registry.does-not-exist-xyz.invalid/-/npm/v1/security/audits/quick failed, reason: getaddrinfo ENOTFOUND registry.does-not-exist-xyz.invalid","error":{"summary":"","detail":""}}',
+    stderr: "npm error audit endpoint returned an error",
+    expectedCause:
+      "request to http://registry.does-not-exist-xyz.invalid/-/npm/v1/security/audits/quick failed, reason: getaddrinfo ENOTFOUND registry.does-not-exist-xyz.invalid",
+  },
+  {
+    label: "connection refused, bulk-advisories endpoint",
+    stdout:
+      '{"message":"request to http://127.0.0.1:9/-/npm/v1/security/advisories/bulk failed, reason: connect ECONNREFUSED 127.0.0.1:9","error":{"summary":"","detail":""}}',
+    stderr:
+      "npm warn audit request to http://127.0.0.1:9/-/npm/v1/security/advisories/bulk failed, reason: connect ECONNREFUSED 127.0.0.1:9\nnpm error audit endpoint returned an error",
+    expectedCause:
+      "request to http://127.0.0.1:9/-/npm/v1/security/advisories/bulk failed, reason: connect ECONNREFUSED 127.0.0.1:9",
+  },
+  {
+    // 161 characters: the only replay that exercises the one-line cause
+    // clamp, so the limitation stays readable instead of carrying a full
+    // npm message.
+    label: "unresolvable registry host, bulk-advisories endpoint",
+    stdout:
+      '{"message":"request to http://registry.does-not-exist-xyz.invalid/-/npm/v1/security/advisories/bulk failed, reason: getaddrinfo ENOTFOUND registry.does-not-exist-xyz.invalid","error":{"summary":"","detail":""}}',
+    stderr:
+      "npm warn audit request to http://registry.does-not-exist-xyz.invalid/-/npm/v1/security/advisories/bulk failed, reason: getaddrinfo ENOTFOUND registry.does-not-exist-xyz.invalid\nnpm error audit endpoint returned an error",
+    expectedCause:
+      "request to http://registry.does-not-exist-xyz.invalid/-/npm/v1/security/advisories/bulk failed, reason: getaddrinfo ENOTFOUND registry.does-not-exist-xyz.inv...",
+  },
+  {
+    label: "registry answering HTTP 503",
+    stdout:
+      '{"message":"503 Service Unavailable - POST http://127.0.0.1:19503/-/npm/v1/security/advisories/bulk - Service Unavailable","method":"POST","uri":"http://127.0.0.1:19503/-/npm/v1/security/advisories/bulk","statusCode":503,"body":{"error":"Service Unavailable"},"error":{"summary":"","detail":""}}',
+    stderr:
+      "npm warn audit 503 Service Unavailable - POST http://127.0.0.1:19503/-/npm/v1/security/advisories/bulk - Service Unavailable\nnpm error audit endpoint returned an error",
+    expectedCause:
+      "503 Service Unavailable - POST http://127.0.0.1:19503/-/npm/v1/security/advisories/bulk - Service Unavailable",
+  },
+];
+
 describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
   let repoPath: string;
   let restore: (() => void) | undefined;
@@ -68,6 +139,22 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     expect(npm?.status).toBe("warn");
   });
 
+  it("treats non-numeric severity counts as zero instead of concatenating them", async () => {
+    // A stringy count would make `critical + high` the string "00", which
+    // is truthy-length but not > 0 numerically; a naive read would produce
+    // a nonsense "0 critical, 0 high" fail message.
+    restore = mockNpmAudit({
+      exitCode: 1,
+      stdout: JSON.stringify({ metadata: { vulnerabilities: { critical: "0", high: null } } }),
+    });
+
+    const { checks } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("warn");
+    expect(npm?.message).toBeUndefined();
+  });
+
   it("reports skip with a limitation when the run times out", async () => {
     restore = mockNpmAudit({
       exitCode: 1,
@@ -87,6 +174,31 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     ).toBe(true);
   });
 
+  // Replays of the recorded payloads above. These are the primary outage
+  // case, and the shape that a code-list classifier gets wrong: exit 1, no
+  // vulnerability report, no `error.code`.
+  for (const payload of REAL_UNAVAILABLE_PAYLOADS) {
+    it(`reports skip naming the reason on the real ${payload.label} payload`, async () => {
+      restore = mockNpmAudit({
+        exitCode: 1,
+        stdout: payload.stdout,
+        stderr: payload.stderr,
+        timedOut: false,
+      });
+
+      const { checks, limitations } = await runAuditChecks(repoPath, {});
+      const npm = checks.find((c) => c.name === "npm-audit");
+
+      expect(npm?.status).toBe("skip");
+      expect(npm?.message).toBe(
+        `npm audit not evaluated: registry advisory endpoint unavailable (${payload.expectedCause})`
+      );
+      expect(limitations).toEqual([
+        `npm audit skipped: registry advisory endpoint unavailable (${payload.expectedCause})`,
+      ]);
+    });
+  }
+
   it("reports skip with a limitation on an endpoint error printed to stderr with empty stdout", async () => {
     restore = mockNpmAudit({
       exitCode: 1,
@@ -99,9 +211,9 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     const npm = checks.find((c) => c.name === "npm-audit");
 
     expect(npm?.status).toBe("skip");
-    expect(
-      limitations.some((l) => l.startsWith("npm audit skipped: registry advisory endpoint unavailable"))
-    ).toBe(true);
+    expect(limitations).toEqual([
+      "npm audit skipped: registry advisory endpoint unavailable (npm error audit endpoint returned an error)",
+    ]);
   });
 
   it("reports skip on a JSON error envelope with no vulnerability metadata", async () => {
@@ -121,10 +233,9 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     ).toBe(true);
   });
 
-  // Negative controls (round 2 review): a fail-open classifier that matches
-  // unavailable markers regardless of what parsed, or that never checks the
-  // exit code, keeps making these five green -- each one pins a boundary the
-  // classifier must respect.
+  // Negative controls: a fail-open classifier that matches unavailable
+  // markers regardless of what parsed, or that never checks the exit code,
+  // keeps these green -- each pins a boundary the classifier must respect.
 
   it("reports fail with the count, not skip, when a real finding's exit carries a registry-marker stderr warning", async () => {
     restore = mockNpmAudit({
@@ -179,6 +290,42 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
   });
 
+  it("reports warn naming the code when a local-usage envelope carries no summary", async () => {
+    restore = mockNpmAudit({
+      exitCode: 1,
+      stdout: JSON.stringify({ error: { code: "EUSAGE", summary: "", detail: "" } }),
+      stderr: "",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("warn");
+    expect(npm?.message).toBe("npm audit failed: EUSAGE");
+    expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
+  });
+
+  it("reports skip, not warn, on an envelope whose code is a network errno rather than a local usage code", async () => {
+    // Only npm's own local usage codes are enumerated. An errno-shaped
+    // code describes the transport, not the audit tool refusing to run, so
+    // it must land on "not evaluated" like every other non-local failure.
+    restore = mockNpmAudit({
+      exitCode: 1,
+      stdout: JSON.stringify({ error: { code: "ECONNREFUSED", summary: "connect ECONNREFUSED" } }),
+      stderr: "",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("skip");
+    expect(limitations).toEqual([
+      "npm audit skipped: registry advisory endpoint unavailable (connect ECONNREFUSED)",
+    ]);
+  });
+
   it("reports fail, not skip, when a marker token only appears inside the parsed report body", async () => {
     restore = mockNpmAudit({
       exitCode: 1,
@@ -200,7 +347,7 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
   });
 
-  it("reports skip naming E503 on a registry-attributable error envelope with no summary", async () => {
+  it("reports skip naming E503 on an error envelope with no summary", async () => {
     restore = mockNpmAudit({
       exitCode: 1,
       stdout: JSON.stringify({ error: { code: "E503" } }),
@@ -218,7 +365,78 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     ).toBe(true);
   });
 
-  it("reports warn, not skip, on a non-zero exit with no JSON and no marker text at all", async () => {
+  // Exit 0 without a parseable report is `pass`, unconditionally. npm
+  // signalled success itself, so there is nothing here to report as a
+  // finding and nothing that went unevaluated. These three pin that the
+  // exit-code branch is real: a classifier that dropped it would send all
+  // three into the "did not answer" path.
+
+  it("reports pass, not skip, on exit 0 with empty stdout", async () => {
+    restore = mockNpmAudit({
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("pass");
+    expect(limitations).toEqual([]);
+  });
+
+  it("reports pass, not skip, on exit 0 with output that is not JSON at all", async () => {
+    restore = mockNpmAudit({
+      exitCode: 0,
+      stdout: "found 0 vulnerabilities",
+      stderr: "",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("pass");
+    expect(limitations).toEqual([]);
+  });
+
+  it("reports pass, not skip, on exit 0 with empty stdout and a marker line on stderr", async () => {
+    restore = mockNpmAudit({
+      exitCode: 0,
+      stdout: "",
+      stderr: "npm warn audit request to https://registry.npmjs.org failed, reason: ETIMEDOUT (retrying)",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("pass");
+    expect(limitations).toEqual([]);
+  });
+
+  it("reports skip naming the exit code on a non-zero exit with no JSON and no marker text at all", async () => {
+    restore = mockNpmAudit({
+      exitCode: 1,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+    });
+
+    const { checks, limitations } = await runAuditChecks(repoPath, {});
+    const npm = checks.find((c) => c.name === "npm-audit");
+
+    expect(npm?.status).toBe("skip");
+    expect(limitations).toEqual([
+      "npm audit skipped: registry advisory endpoint unavailable (exit code 1)",
+    ]);
+  });
+
+  it("reports skip naming a missing exit code when the child left none and did not time out", async () => {
+    // execa leaves `exitCode` undefined on a signal kill. Undefined counts
+    // as non-zero: npm never reported success, so the audit did not
+    // answer.
     restore = mockNpmAudit({
       exitCode: undefined,
       stdout: "",
@@ -229,8 +447,10 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
     const { checks, limitations } = await runAuditChecks(repoPath, {});
     const npm = checks.find((c) => c.name === "npm-audit");
 
-    expect(npm?.status).toBe("warn");
-    expect(limitations.some((l) => l.includes("npm audit"))).toBe(false);
+    expect(npm?.status).toBe("skip");
+    expect(limitations).toEqual([
+      "npm audit skipped: registry advisory endpoint unavailable (exit code unknown)",
+    ]);
   });
 });
 
@@ -238,26 +458,26 @@ describe("npmAuditRunner real timeout (no mock: exercises execa's own timeout op
   // Drives a REAL `npm audit --json` (no `npmAuditRunner.run` mock) against
   // a repo with a minimal, dependency-free but valid package-lock.json, so
   // an unbounded run completes quickly on its own (~150-250ms measured
-  // locally: no lockfile at all makes npm fail immediately with an
-  // "ENOLOCK" JSON error envelope, which this check already classifies as
-  // `skip` on its own — that would make this test unable to tell a real
-  // timeout kill apart from a fast local error, since both land on `skip`.
-  // A clean, complete-able audit that resolves to `pass` on its own gives
-  // the timeout mutation something to break). `npmAuditRunner.timeoutMs` is
+  // locally). No lockfile at all would make npm fail immediately with an
+  // "ENOLOCK" JSON error envelope, which this check classifies as `warn`
+  // (a local usage failure, not an unreachable registry) -- but a `warn`
+  // would still not be the `skip` this test is trying to prove, and a
+  // failing-fast npm gives the timeout nothing to interrupt. A clean,
+  // complete-able audit that resolves to `pass` on its own gives the
+  // timeout mutation something to break. `npmAuditRunner.timeoutMs` is
   // lowered far below that real completion time for this test only, so
   // execa's own `timeout` kills the real child process before npm can
-  // finish — proving the timeout option is actually wired up, not just
+  // finish -- proving the timeout option is actually wired up, not just
   // documented.
   //
   // A fake, PATH-shadowed `npm` binary was tried first and rejected: `npm
   // audit`'s seam shells out via `bash -lc`, a login shell, and macOS's
   // `/usr/libexec/path_helper` (sourced from /etc/profile) rebuilds PATH on
-  // every login-shell invocation, always placing /usr/local/bin and
-  // /opt/homebrew/bin (where the real `npm` lives) ahead of anything
-  // prepended to PATH beforehand — verified empirically (`bash -lc npm
-  // audit --json` against a fake npm dir prepended to PATH still ran the
-  // real npm). Shadowing it would require writing into /usr/local/bin,
-  // which is root-owned here.
+  // every login-shell invocation, always placing the system bin directories
+  // (where the real `npm` lives) ahead of anything prepended to PATH
+  // beforehand -- verified empirically (`bash -lc npm audit --json` against
+  // a fake npm dir prepended to PATH still ran the real npm). Shadowing it
+  // would require writing into a root-owned system bin directory.
   let repoPath: string;
   let originalTimeoutMs: number;
 
@@ -307,9 +527,10 @@ describe("npmAuditRunner real timeout (no mock: exercises execa's own timeout op
 
     expect(npm?.status).toBe("skip");
     expect(npm?.message).toContain("registry advisory endpoint unavailable");
-    expect(npm?.message).toContain("timed out after");
+    // Sub-second bounds render in milliseconds, not as a rounded "0s".
+    expect(npm?.message).toContain("timed out after 100ms");
     expect(
-      limitations.some((l) => l.startsWith("npm audit skipped: registry advisory endpoint unavailable"))
+      limitations.some((l) => l === "npm audit skipped: registry advisory endpoint unavailable (timed out after 100ms)")
     ).toBe(true);
   }, 10_000);
 });
@@ -348,10 +569,13 @@ describe("npm audit unavailable outcome through runPreflight", () => {
   };
 
   it("stays ready and does not count a skipped audit as passed", async () => {
+    // The recorded connection-refused payload, i.e. the non-timeout
+    // unavailable path end to end rather than through the classifier alone.
+    const refused = REAL_UNAVAILABLE_PAYLOADS[0];
     restore = mockNpmAudit({
       exitCode: 1,
-      stdout: "",
-      stderr: "npm error audit endpoint returned an error",
+      stdout: refused.stdout,
+      stderr: refused.stderr,
       timedOut: false,
     });
 
@@ -367,6 +591,9 @@ describe("npm audit unavailable outcome through runPreflight", () => {
     expect(skippedResult.ready).toBe(true);
     const npmCheck = skippedResult.checks.find((c) => c.name === "npm-audit");
     expect(npmCheck?.status).toBe("skip");
+    expect(
+      skippedResult.limitations.filter((l) => l.startsWith("npm audit skipped:"))
+    ).toEqual([`npm audit skipped: registry advisory endpoint unavailable (${refused.expectedCause})`]);
     expect(skippedResult.confidence).toBeLessThan(cleanResult.confidence);
   });
 });
