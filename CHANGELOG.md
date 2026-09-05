@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **TDD counterpart checks now compare paths relative to `workingDir`.** Git
+  diff paths were repository-root-relative while discovered tests were
+  target-relative, producing false missing-test warnings for nested packages.
+  The check now resolves the real git/worktree root, rebases changed sources
+  into the evaluated target, and excludes sibling paths by directory segment.
+
 ## [0.5.0] - 2026-09-04
 
 ### Added

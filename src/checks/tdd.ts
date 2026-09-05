@@ -28,6 +28,26 @@ async function getChangedSourceFiles(repoPath: string): Promise<string[]> {
     .filter((f) => !TEST_PATTERN.test(f));
 }
 
+/** Return git's real worktree root so linked worktrees and path aliases agree. */
+async function getGitRoot(repoPath: string): Promise<string | null> {
+  const { execa } = await import("execa");
+  const { stdout, exitCode } = await execa(
+    "git", ["rev-parse", "--show-toplevel"],
+    { cwd: repoPath, reject: false },
+  );
+  if (exitCode !== 0 || !stdout.trim()) return null;
+  try { return fs.realpathSync(stdout.trim()); } catch { return null; }
+}
+
+/** Rebase a git-root-relative path into target coordinates, rejecting siblings. */
+function toTargetRelativePath(gitRoot: string, targetPath: string, file: string): string | null {
+  const relative = path.relative(targetPath, path.join(gitRoot, file));
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return null;
+  }
+  return relative;
+}
+
 /** Collect all test files in the repo */
 function collectTestFiles(repoPath: string): Set<string> {
   const testFiles = new Set<string>();
@@ -87,8 +107,17 @@ export async function runTddCheck(
   const limitations: string[] = [];
   const start = Date.now();
 
+  // Use physical paths for both sides: git reports root-relative names while
+  // the directory walk reports paths relative to the evaluated target.
+  let targetPath: string;
+  try { targetPath = fs.realpathSync(repoPath); } catch { targetPath = repoPath; }
+  const gitRoot = await getGitRoot(targetPath);
+  const changedFiles = gitRoot
+    ? (await getChangedSourceFiles(gitRoot))
+      .map((file) => toTargetRelativePath(gitRoot, targetPath, file))
+      .filter((file): file is string => file !== null)
+    : [];
   const exceptions = new Set(config.tddExceptions ?? DEFAULT_EXCEPTIONS);
-  const changedFiles = await getChangedSourceFiles(repoPath);
 
   // Filter out exceptions
   const filesToCheck = changedFiles.filter(
@@ -107,7 +136,7 @@ export async function runTddCheck(
     return { checks, limitations };
   }
 
-  const testFiles = collectTestFiles(repoPath);
+  const testFiles = collectTestFiles(targetPath);
   const missing = filesToCheck.filter((f) => !hasTestCounterpart(f, testFiles));
 
   checks.push({
