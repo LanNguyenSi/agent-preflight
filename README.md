@@ -162,6 +162,12 @@ This is stdio-only — no remote/HTTP transport, no new checks beyond what `pref
 }
 ```
 
+The TDD counterpart check associates filenames only; it does not establish
+coverage or prove a TDD workflow. For a direct nested target or `workingDir`,
+changed sources and test counterparts are both evaluated relative to that
+directory. Sources in sibling packages (including similarly prefixed paths)
+are outside that target.
+
 If no commands are configured, agent-preflight auto-detects common Node, Python, PHP, and Java manifests and picks reasonable defaults. The full toggle, override, and monorepo guidance lives in [docs/checks.md](docs/checks.md). Sandbox image profiles, apt packages, and act flags are covered in [docs/architecture.md](docs/architecture.md#sandbox). The `npm-audit` check runs with a bounded timeout, and an audit that did not answer is reported as `skip` (not `warn`) with a `limitations` entry naming the cause: a timeout with no parsable report, or npm exiting non-zero without producing a report, which is what an unreachable or failing registry produces. That is the default direction rather than a list of recognized registry errors, so an outage never hangs the run, and an unfamiliar failure degrades to "not evaluated" instead of being misread as a real finding. npm's own usage errors, such as a missing lockfile, name themselves in `error.code` and stay a `warn` naming that failure.
 
 When a shell-based check (lint, typecheck, test, audit, custom) fails, its
