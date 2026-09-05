@@ -19,7 +19,7 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: npm run build
       - run: npx tsc --noEmit --skipLibCheck
       - run: npx vitest run
