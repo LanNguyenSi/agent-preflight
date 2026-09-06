@@ -250,27 +250,52 @@ Two things have to be true at once, and neither is enough on its own.
      the same file to the OS and still does not corroborate. That is the safe
      direction (the check stays a blocking `fail`), and no case-folding is
      applied to keep the rule identical on every platform;
+   - nothing corroborates at all unless the **build-output directory** the
+     missing artifact identifies (the directory of `dist/index.js`; a bare
+     `dist` or a tsconfig `outDir` itself) is **absent, or empty**. Any entry
+     in it -- one file, a placeholder, anything -- means a build ran, so the
+     package is partially built rather than unbuilt (see below);
    - the resolved path is accepted when it **is** the missing artifact, or
-     when it **is, or lies inside, the build-output directory that artifact
-     identifies** *and is itself not present on disk* (`dist/index.js`
-     accepts anything absent under that `dist/`, including a report naming
-     `./dist/` itself; a bare `dist` or a tsconfig `outDir` accepts anything
-     absent under it; an artifact declared at the package root,
-     `main: "index.js"`, accepts only itself), **and** it is inside the
-     repository, **and** it has no `node_modules` segment, **and** it belongs
-     to this package rather than a neighbouring or nested one.
+     when it **is, or lies inside, that build-output directory** *and is
+     itself not present on disk* (`dist/index.js` accepts anything absent
+     under that `dist/`, including a report naming `./dist/` itself; a bare
+     `dist` or a tsconfig `outDir` accepts anything absent under it; an
+     artifact declared at the package root, `main: "index.js"`, identifies no
+     build-output directory at all, so it is not subject to the rule above and
+     accepts only itself), **and** it is inside the repository, **and** it has
+     no `node_modules` segment, **and** it belongs to this package rather than
+     a neighbouring or nested one.
 
-   The "not present on disk" half is what keeps a **partially built** package
+   The **absent-or-empty** rule is what keeps a **partially built** package
    honest. A package can declare an artifact its build never emits -- a
    `types: "dist/index.d.ts"` next to a JavaScript-only build, an `exports`
    subpath that was dropped, a `bin` that moved -- so the precondition above
    holds permanently while the real `dist/` is on disk and is exactly what the
-   tests load. Without it, a genuine runtime failure in that built output
-   corroborated through its own stack frame (`<pkg>/dist/index.js:1`) and the
-   repo was reported `ready: true`, and stayed that way after a successful
-   `npm run build`, because the build does not produce the missing artifact
-   either. A path that is present cannot be why a *missing build* broke the
-   run.
+   tests load. Without it, that package's own failures corroborated as "not
+   built yet": a genuine runtime failure's stack frame in the built output
+   (`<pkg>/dist/index.js:1`), an `ENOENT` on a template the build never copies,
+   a `Cannot find module` for the never-emitted `bin` itself. The repo was
+   reported `ready: true`, and stayed that way after a successful
+   `npm run build`, because that build does not produce the missing artifact
+   either. An output directory holding *anything* is evidence that a build ran
+   and did not produce the artifact, which no further build fixes.
+
+   **The deliberate consequence:** a *stale* partial output directory -- an
+   older build missing a newly added entry, a `dist/` carrying a checked-in
+   file or a `.keep` placeholder -- now **blocks** instead of skipping, and the
+   message names both the directory and the artifact:
+
+   ```
+   npm test failed: the build output directory (dist) of this repo exists and
+   is not empty, but a declared build artifact (dist/cli.js) is missing from
+   it, so a build ran and did not produce that artifact; the failure is
+   reported as a real failure
+   ```
+
+   The remedy is the same build, and blocking is the safe direction for a tool
+   whose `ready: true` opens push gates. The rule counts entries rather than
+   judging which of them are "real" build output, so it reads the same way in
+   every repository.
 
    That covers both shapes this actually takes -- a package's own guard
    printing `<abs>/dist/index.js is missing. Run the build first` with no error
@@ -295,17 +320,18 @@ Two things have to be true at once, and neither is enough on its own.
      was). A test in a nested directory requiring `../dist/index.js` therefore
      resolves outside the package and does **not** corroborate: the check
      stays a blocking `fail`, which is the safe direction.
-   - **The residual case this cannot decide**: a genuine failure whose own
-     error path names a file that is genuinely **missing** from the package's
-     own missing build output -- a stale reference to a `dist/old.js` that a
-     build would not recreate either -- is indistinguishable from "not built
-     yet", because nothing on disk separates the two until a build has
-     actually run. It is reported as the named skip. The remedy that skip
-     names (run the build, or rerun with `--setup`) resolves it either way:
-     after the build, the same failure comes back as a blocker, because a
-     successful build means every later test failure is genuine. A failure
-     naming a path that *is* on disk is not this case and never was: it does
-     not corroborate at all.
+   - **The residual case this cannot decide**: a package whose build-output
+     directory is **absent or empty**, failing on a path inside that
+     directory that a build would not create either -- a stale reference to a
+     `dist/old.js`. That is indistinguishable from "not built yet", because
+     nothing on disk separates the two until a build has actually run, and it
+     is reported as the named skip. The remedy that skip names (run the build,
+     or rerun with `--setup`) resolves it either way: after the build the
+     output directory holds entries, so the same failure comes back as a
+     blocker. Two shapes that look similar are *not* this case: a failure
+     naming a path that *is* on disk never corroborated, and a package whose
+     output directory already holds something is a partially built package,
+     which blocks.
 
 An npm-workspaces monorepo's `npm test` fan-out is judged **per workspace**,
 not as one blob: the combined output is split at each workspace's own `>
@@ -347,22 +373,34 @@ Each of these stays a blocking `fail`, and each has a fixture in
   would be a dead end);
 - a package whose `tsconfig.json` has comments (so its `outDir` cannot be read
   and the fallback `dist/` applies) failing on a path in a different directory;
-- a **partially built** package -- one declaring a `types` its JavaScript-only
-  build never emits, and one declaring an `exports` subpath the build dropped
-  -- whose genuine runtime bug throws from inside the built `dist/` the tests
-  load. Its precondition holds forever, so only the "must itself be absent"
-  half of the path rule separates it from a missing build; the fixture asserts
-  the verdict is the same before and after a successful `npm run build`;
+- five **partially built** packages, each declaring an artifact its build never
+  emits -- a `types` next to a JavaScript-only build, a dropped `exports`
+  subpath, a `bin` that is never emitted while the test loads exactly it, a
+  stale `types` next to a template the build never copies, and that last shape
+  again as a workspace under a root `--workspaces --if-present` fan-out. Their
+  preconditions hold forever, so only the absent-or-empty rule separates them
+  from a missing build. Each fixture is asserted in **both** states, and they
+  differ: unbuilt (no `dist/` at all) each one is the named skip, and after a
+  successful build each one is a blocking `fail` naming the output directory
+  and the artifact -- including after a second build, which cannot create the
+  artifact either;
+- a package whose declared `dist/` holds a single placeholder file: any entry
+  makes it partially built, so it blocks (the same fixture with an **empty**
+  `dist/` is the named skip);
 - a failing test whose output prints a pathological path-shaped token (30000
-  segments on one line): the run still produces its JSON verdict, with the
-  test failure as the blocker;
+  segments on one line): the classification no longer aborts the run, and the
+  test failure is the blocker;
 - any failure after `--setup`'s own build step ran, whether it failed or
   succeeded (see below).
 
 Two positive controls have fixtures of their own as well: a package whose
 declared `dist` is a **symlink** to the directory its build really writes
 (both sides canonicalize to the same file, so a plainly unbuilt package is not
-reported as broken), and the same package after a build, which passes.
+reported as broken), and the same package after a build, which passes. The
+symlink fixture pins the cost of the absent-or-empty rule from the other side
+too: with the `.keep` placeholder that lets git carry its empty output
+directory left in place, the same unbuilt package reads as partially built and
+blocks.
 
 The artifact named in these messages is always spelled relative to the
 repository path **as you passed it**; canonicalization stays inside the

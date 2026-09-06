@@ -1,0 +1,13 @@
+{
+  "name": "fixture-single-package-bin-never-emitted",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "bin": {
+    "mytool": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "node build.js",
+    "test": "node test.js"
+  }
+}

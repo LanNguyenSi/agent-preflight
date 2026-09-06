@@ -1,0 +1,11 @@
+{
+  "name": "fixture-single-package-partial-build-uncopied-asset",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node test.js"
+  }
+}
