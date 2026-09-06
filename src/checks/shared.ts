@@ -301,6 +301,25 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
 // the build -- a package that compiles to `dist/` but runs its tests from
 // source (this very repo) would report `ready: true` for a genuinely broken
 // suite.
+//
+// The corroboration is a PATH rule, never a text match. Every path-shaped
+// token on a line is resolved (absolute as printed, `./`/`../` against the
+// failing package's own directory) and accepted only when the resolved path
+// is the missing artifact or lies inside the build-output directory that
+// artifact identifies, is inside the repository, carries no `node_modules`
+// segment, and belongs to the failing package rather than a neighbour. A
+// substring test in its place accepted a stale relative require in an unbuilt
+// package, a dependency missing under `node_modules/<lib>/dist/`, another
+// workspace's artifact, and any runner stack frame through
+// `node_modules/vitest/dist/` -- each of them hiding a genuinely broken
+// package behind `ready: true`.
+//
+// What stays indistinguishable, by construction: a genuine failure whose own
+// error path lies inside the package's own missing build output (a stale
+// reference to a `dist/old.js` that a build would not recreate). Nothing on
+// disk separates that from "not built yet" until a build has run, and the
+// remedy the skip names -- run the build, or rerun with `--setup` -- is
+// exactly what resolves it either way.
 
 // `exports` conditions whose targets are treated as declared build output.
 // Other conditions (`node-addons`, `browser`, custom ones) are not walked:
@@ -383,18 +402,23 @@ function buildArtifactExists(absPath: string): boolean {
   );
 }
 
-// How a root `build` script is resolved as covering a workspace that has no
-// `build` script of its own: the root script must fan out over the workspaces
-// (`npm run build --workspaces ...`, `npm run build -ws`). Deliberately
-// generous -- an `--if-present` fan-out actually skips a workspace that has no
-// build script of its own -- because the precondition only decides whether a
-// build COULD change the outcome; the corroboration requirement above is what
-// keeps that generosity from downgrading an unrelated failure. A root build
-// with any other shape (a `tsc -b` over project references, a Makefile) is not
-// recognized, and such a workspace's precondition is then simply not met.
+// Whether a root `build` script fans out over the workspaces
+// (`npm run build --workspaces ...`, `npm run build -ws`). This decides only
+// WHICH REMEDY a skip message names -- `npm run build` at the root, which is
+// also all `--setup` ever runs, versus a workspace-scoped build -- never
+// whether a package counts as covered by a build script.
+//
+// It deliberately does NOT grant a build script to a workspace that has none
+// of its own. An `--if-present` fan-out skips exactly such a workspace, so the
+// build it promises is a no-op there; and a fan-out WITHOUT `--if-present`
+// would fail outright on a workspace with no `build` script, so a repo that
+// runs one has a build script in every workspace anyway. Either way the
+// workspace's own `scripts.build` is the honest test, and requiring it is what
+// keeps a genuinely broken workspace (which typically has no build at all)
+// from being read as "not built yet".
 const ROOT_WORKSPACES_BUILD_PATTERN = /\brun\s+build\b[^\n]*?(?:--workspaces\b|(?:^|\s)-ws(?:\s|$))/i;
 
-function rootBuildScriptFansOutToWorkspaces(rootPkg: PackageJson | undefined): boolean {
+export function rootBuildScriptFansOutToWorkspaces(rootPkg: PackageJson | undefined): boolean {
   const script = rootPkg?.scripts?.build;
   return typeof script === "string" && ROOT_WORKSPACES_BUILD_PATTERN.test(script);
 }
@@ -409,16 +433,14 @@ export interface BuildPreconditionResult {
 }
 
 // The filesystem precondition (see the block comment above). `pkgDir` is the
-// package the failure was attributed to -- a workspace directory, or
-// `repoPath` itself for a single-package repo or an unattributable failure.
-export function evaluateBuildPrecondition(pkgDir: string, repoPath: string): BuildPreconditionResult {
+// package the failure was attributed to -- a workspace directory, or the repo
+// root itself for a single-package repo or an unattributable failure. It is a
+// property of that package alone: only its own manifest and its own files on
+// disk decide, which is why no repository path is needed here.
+export function evaluateBuildPrecondition(pkgDir: string): BuildPreconditionResult {
   const pkg = readJsonFile<PackageJson>(path.join(pkgDir, "package.json"));
-  const isRoot = path.resolve(pkgDir) === path.resolve(repoPath);
-  const rootPkg = isRoot ? pkg : readJsonFile<PackageJson>(path.join(repoPath, "package.json"));
 
-  const hasBuildScript = Boolean(
-    pkg?.scripts?.build || (!isRoot && rootBuildScriptFansOutToWorkspaces(rootPkg))
-  );
+  const hasBuildScript = Boolean(pkg?.scripts?.build);
   if (!hasBuildScript) {
     return { met: false, hasBuildScript: false };
   }
@@ -492,12 +514,23 @@ function workspaceNameFromSegment(segment: string): string | undefined {
 // `packages/`.
 function buildPackageDirIndex(repoPath: string): Map<string, string> {
   const index = new Map<string, string>();
-  for (const relative of findNestedFiles(repoPath, "package.json", 3)) {
-    const dir = path.join(repoPath, path.dirname(relative));
+  for (const dir of collectPackageDirs(repoPath)) {
     const pkg = readJsonFile<PackageJson>(path.join(dir, "package.json"));
     if (pkg?.name && !index.has(pkg.name)) index.set(pkg.name, dir);
   }
   return index;
+}
+
+// Every directory in the repo that holds a `package.json`, root first
+// (`findNestedFiles` skips the root's own file, and skips `node_modules`,
+// `dist` and the other build/vendor directories). Used to decide which
+// package a path in the output belongs to.
+function collectPackageDirs(repoPath: string): string[] {
+  const dirs = [path.resolve(repoPath)];
+  for (const relative of findNestedFiles(repoPath, "package.json", 3)) {
+    dirs.push(path.resolve(repoPath, path.dirname(relative)));
+  }
+  return dirs;
 }
 
 interface FailingUnit {
@@ -530,8 +563,6 @@ function resolveFailingUnits(repoPath: string, output: string, rootPkg: PackageJ
   });
 }
 
-const MODULE_NOT_FOUND_PATTERN = /Cannot find module ['"]([^'"]+)['"]/i;
-const ENOENT_OPEN_PATTERN = /ENOENT[^\n]*?open ['"]([^'"]+)['"]/i;
 const MAX_EVIDENCE_LENGTH = 160;
 
 function clampEvidence(text: string): string {
@@ -541,71 +572,221 @@ function clampEvidence(text: string): string {
     : trimmed;
 }
 
-// A quoted module specifier only corroborates a missing build artifact when it
-// is path-shaped and not resolved through `node_modules`: a bare specifier
-// (`lodash`) or a path inside `node_modules` names a dependency problem, which
-// a build of this repo would not fix. An absolute path must also point inside
-// the repo.
-function isRepoBuildOutputPath(rawPath: string, repoPath: string): boolean {
-  const normalized = rawPath.replace(/\\/g, "/");
-  if (normalized.includes("node_modules/")) return false;
-  if (normalized.startsWith("./") || normalized.startsWith("../")) return true;
+// Path-shaped tokens on one line of runner output: an absolute POSIX path, a
+// Windows drive path, a `file://` URL, or a `./` / `../` relative specifier.
+// A BARE specifier is deliberately not a token -- neither `lodash` nor
+// `dist/index.js`: Node resolves both through `node_modules`, so they name a
+// dependency rather than this package's own build output. Everything the
+// corroboration reads goes through here, so no rule downstream can ever be
+// satisfied by a substring that is not a path.
+const PATH_TOKEN_PATTERN = /(?:file:\/\/)?(?:[A-Za-z]:[\\/]|\/|\.{1,2}[\\/])[^\s'"`,;()[\]<>]*/g;
 
-  const isAbsolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
-  if (!isAbsolute) return false;
+// Decoration a path picks up in real output: a `file://` scheme, a stack
+// frame's `:line:col` suffix, and sentence punctuation after the path.
+function cleanPathToken(raw: string): string {
+  return raw
+    .replace(/^file:\/\//, "")
+    .replace(/:\d+(?::\d+)?$/, "")
+    .replace(/[.,;:'"`]+$/, "");
+}
 
-  const resolvedRepo = path.resolve(repoPath);
-  const resolved = path.resolve(rawPath);
-  return resolved === resolvedRepo || resolved.startsWith(resolvedRepo + path.sep);
+// In observation mode there is no artifact to anchor to, so the whole package
+// is the acceptance region and a line has to earn its way in by actually
+// REPORTING a missing file. Without this, an ordinary assertion failure's own
+// stack frame (which of course points inside the failing package) would be
+// quoted as "the output reports a missing module".
+const MISSING_FILE_REPORT_PATTERN = /Cannot find (?:module|package)|ENOENT|MODULE_NOT_FOUND/i;
+
+function extractPathTokens(line: string): string[] {
+  return (line.match(PATH_TOKEN_PATTERN) ?? [])
+    .map(cleanPathToken)
+    .filter((token) => token.length > 0);
+}
+
+// Resolves one token to an absolute path, or returns undefined when the token
+// is not resolvable against a directory (a bare specifier).
+function resolvePathToken(token: string, pkgDir: string): string | undefined {
+  const normalized = token.replace(/\\/g, "/");
+  if (normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized)) {
+    return path.resolve(normalized);
+  }
+  if (normalized.startsWith("./") || normalized.startsWith("../")) {
+    return path.resolve(pkgDir, normalized);
+  }
+  return undefined;
+}
+
+// Resolves symlinks in the longest existing prefix of a path and keeps the
+// missing tail. Needed because the two sides being compared come from
+// different places: the repo path as the caller spelled it, and a path a test
+// runner printed from inside the process (already canonical). On macOS a
+// temporary checkout under `/var/folders/...` is printed back as
+// `/private/var/folders/...`, and without this every absolute token from such
+// a repo would read as "outside the repo".
+function canonicalizePath(target: string, cache: Map<string, string>): string {
+  const cached = cache.get(target);
+  if (cached) return cached;
+
+  let resolved: string;
+  try {
+    resolved = fs.realpathSync.native(target);
+  } catch {
+    const parent = path.dirname(target);
+    resolved = parent === target ? target : path.join(canonicalizePath(parent, cache), path.basename(target));
+  }
+  cache.set(target, resolved);
+  return resolved;
+}
+
+function isInside(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function containsNodeModulesSegment(absPath: string): boolean {
+  return absPath.replace(/\\/g, "/").split("/").includes("node_modules");
+}
+
+// The package a path belongs to: the LONGEST package directory containing it.
+// Longest, not first, because packages nest (every workspace sits inside the
+// root package), and the innermost one is the owner.
+function nearestPackageDir(target: string, packageDirs: string[]): string | undefined {
+  let best: string | undefined;
+  for (const dir of packageDirs) {
+    if (target === dir || isInside(dir, target)) {
+      if (best === undefined || dir.length > best.length) best = dir;
+    }
+  }
+  return best;
+}
+
+// Where a corroborating path is allowed to point: the missing artifact itself,
+// or anything inside the build-output directory that artifact identifies.
+interface ArtifactAnchor {
+  /** Absolute paths that ARE the missing artifact (including Node's resolution candidates). */
+  exact: string[];
+  /** Absolute build-output directory, when the artifact identifies one. */
+  region?: string;
+}
+
+// Derives the anchor from ONE declared artifact, package-relative as declared:
+//
+// - `dist/index.js` (a file): the file itself, and its directory `dist/` as
+//   the region -- a package that is not built is missing everything in there,
+//   so a sibling of the declared entry point (`dist/cli.js`) corroborates.
+// - `dist` / a tsconfig `outDir` (no extension): the directory itself is the
+//   region, and Node's extension candidates cover the other reading of an
+//   extensionless declaration (`main: "./dist/index"`).
+//
+// A region that is not strictly BELOW the package directory is dropped, so an
+// artifact declared at the package root (`main: "index.js"`) corroborates by
+// exact match only instead of accepting every path in the package.
+function artifactAnchor(pkgDir: string, missingArtifact: string): ArtifactAnchor {
+  const artifactAbs = path.resolve(pkgDir, missingArtifact);
+  const exact = [artifactAbs];
+  let region: string | undefined;
+
+  if (path.extname(artifactAbs).length > 0) {
+    region = path.dirname(artifactAbs);
+  } else {
+    region = artifactAbs;
+    for (const extension of ARTIFACT_RESOLUTION_EXTENSIONS) exact.push(artifactAbs + extension);
+    exact.push(path.join(artifactAbs, "index.js"));
+  }
+
+  return { exact, region: region && isInside(pkgDir, region) ? region : undefined };
+}
+
+function matchesArtifactAnchor(resolved: string, anchor: ArtifactAnchor): boolean {
+  if (anchor.exact.includes(resolved)) return true;
+  return anchor.region !== undefined && isInside(anchor.region, resolved);
+}
+
+interface CorroborationContext {
+  repoPath: string;
+  pkgDir: string;
+  packageDirs: string[];
+  anchor: ArtifactAnchor;
+}
+
+// The one path rule both corroboration shapes go through (a package's own
+// guard message and Node's own module-resolution failure both just put a path
+// on a line). Each condition is necessary:
+//
+// - no `node_modules` segment: a path resolved through `node_modules` names a
+//   dependency, which a build of THIS repo does not produce;
+// - inside the repository: an absolute path from somewhere else on the machine
+//   says nothing about this checkout;
+// - owned by the failing package: another workspace's artifact is that
+//   workspace's problem, not evidence about this one;
+// - anchored to the missing artifact: the path is the artifact, or lies in the
+//   build-output directory the artifact identifies.
+function isCorroboratingPath(resolved: string, context: CorroborationContext): boolean {
+  if (containsNodeModulesSegment(resolved)) return false;
+  if (!isInside(context.repoPath, resolved)) return false;
+  if (nearestPackageDir(resolved, context.packageDirs) !== context.pkgDir) return false;
+  return matchesArtifactAnchor(resolved, context.anchor);
 }
 
 // Text corroboration, never the decision (see the block comment above): does
 // this failing unit's own output actually blame the missing artifact?
 //
-// - A line naming the missing artifact itself, by the path the package
-//   declared (`dist/index.js`, or `dist/` when the artifact is the output
-//   directory). This is the shape a package's own guard prints ("<abs>/dist/
-//   index.js is missing. Run `npm run build` ..."), and a test runner prints
-//   such a message with no `Error:` prefix of its own, so no prefix is
-//   required here: the declared artifact path is the specific token.
-// - Node's own module-resolution failure (`Cannot find module '<path>'`,
-//   `ENOENT ... open '<path>'`) for a path-shaped specifier that is not
-//   resolved through `node_modules`.
+// Every path-shaped token on every line is resolved against the failing
+// package's own directory and then tested by `isCorroboratingPath`. That
+// covers both shapes the reported friction produces -- a package's own guard
+// printing "<abs>/dist/index.js is missing. Run `npm run build` first" with no
+// error prefix at all, and Node's own `Cannot find module './dist/index.js'` /
+// `ENOENT ... open '<path>'`, whose quoted specifier is just another token on
+// the line -- without either of them ever being decided by a substring.
+//
+// Two modes:
+//   - `missingArtifact` set (the only mode a downgrade is ever decided in):
+//     the path must be anchored to that artifact;
+//   - `missingArtifact` absent: MESSAGE ONLY, used to quote what an otherwise
+//     blocking failure observed. The path must still belong to the failing
+//     package and stay out of `node_modules`, but any path inside that package
+//     is quotable -- so here the LINE must additionally be a missing-file
+//     report, or an ordinary assertion failure's own stack frame would be
+//     quoted as one.
+//
+// A relative specifier is resolved against the package directory, not against
+// the file that raised it, because the raising file is not in the output. A
+// test in a nested directory (`test/unit.js` requiring `../dist/index.js`)
+// therefore resolves outside the package and does not corroborate: the check
+// stays a blocking `fail`, the safe direction.
 //
 // Returns the matched line, clamped, for the message.
 export function findMissingArtifactEvidence(
   output: string | undefined,
-  options: { repoPath: string; missingArtifact?: string }
+  options: { repoPath: string; pkgDir?: string; missingArtifact?: string; packageDirs?: string[] }
 ): string | undefined {
   if (!output) return undefined;
 
-  const needle = options.missingArtifact
-    ? normalizeArtifactNeedle(options.missingArtifact)
-    : undefined;
+  const cache = new Map<string, string>();
+  const repoPath = canonicalizePath(path.resolve(options.repoPath), cache);
+  const pkgDir = canonicalizePath(path.resolve(options.pkgDir ?? options.repoPath), cache);
+  const packageDirs = (options.packageDirs ?? collectPackageDirs(options.repoPath))
+    .map((dir) => canonicalizePath(path.resolve(dir), cache))
+    .concat(repoPath, pkgDir);
+  const anchor = options.missingArtifact
+    ? artifactAnchor(pkgDir, options.missingArtifact)
+    : { exact: [], region: pkgDir };
+  const context: CorroborationContext = { repoPath, pkgDir, packageDirs, anchor };
+  const accepts = (token: string): boolean => {
+    const resolved = resolvePathToken(token, pkgDir);
+    return resolved !== undefined && isCorroboratingPath(canonicalizePath(resolved, cache), context);
+  };
+
+  const isCandidateLine = (line: string): boolean =>
+    options.missingArtifact !== undefined || MISSING_FILE_REPORT_PATTERN.test(line);
 
   for (const rawLine of output.split("\n")) {
     const line = rawLine.trim();
-    if (!line) continue;
-
-    if (needle && line.replace(/\\/g, "/").includes(needle)) {
-      return clampEvidence(line);
-    }
-
-    const quoted = MODULE_NOT_FOUND_PATTERN.exec(line)?.[1] ?? ENOENT_OPEN_PATTERN.exec(line)?.[1];
-    if (quoted && isRepoBuildOutputPath(quoted, options.repoPath)) {
-      return clampEvidence(line);
-    }
+    if (!line || !isCandidateLine(line)) continue;
+    if (extractPathTokens(line).some(accepts)) return clampEvidence(line);
   }
 
   return undefined;
-}
-
-// The declared artifact as it appears inside an error message: `./dist/x.js`
-// and `dist/x.js` both appear as `dist/x.js`, and a bare output DIRECTORY gets
-// a trailing slash so `dist` does not match every word containing "dist".
-function normalizeArtifactNeedle(artifact: string): string {
-  const normalized = artifact.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
-  return path.extname(normalized).length > 0 ? normalized : `${normalized}/`;
 }
 
 export interface BuildRequiredEvaluation {
@@ -665,22 +846,27 @@ export function evaluateBuildRequiredTestFailure(options: {
 
   const rootPkg = readJsonFile<PackageJson>(path.join(repoPath, "package.json"));
   const units = resolveFailingUnits(repoPath, output ?? "", rootPkg);
+  const packageDirs = collectPackageDirs(repoPath);
 
+  // The corroboration is only ever asked the decision question -- "is THIS
+  // failure about THAT missing artifact" -- so it is called with the artifact
+  // the precondition found, and not called at all when there is none.
   const evaluated = units.map((unit) => {
-    const precondition = evaluateBuildPrecondition(unit.pkgDir, repoPath);
-    return {
-      unit,
-      precondition,
-      evidence: findMissingArtifactEvidence(unit.segment, {
-        repoPath,
-        missingArtifact: precondition.missingArtifact,
-      }),
-    };
+    const precondition = evaluateBuildPrecondition(unit.pkgDir);
+    const evidence = precondition.met
+      ? findMissingArtifactEvidence(unit.segment, {
+          repoPath,
+          pkgDir: unit.pkgDir,
+          missingArtifact: precondition.missingArtifact,
+          packageDirs,
+        })
+      : undefined;
+    return { unit, precondition, evidence };
   });
 
   const blocking = evaluated.find((entry) => !entry.precondition.met || !entry.evidence);
   if (blocking) {
-    return { downgrade: false, note: describeBlockingUnit(blocking, repoPath) };
+    return { downgrade: false, note: describeBlockingUnit(blocking, repoPath, packageDirs) };
   }
 
   const first = evaluated[0];
@@ -690,7 +876,7 @@ export function evaluateBuildRequiredTestFailure(options: {
   );
   const others =
     evaluated.length > 1
-      ? ` and ${evaluated.length - 1} other failing workspace${evaluated.length > 2 ? "s" : ""}`
+      ? `, and ${evaluated.length - 1} other failing workspace${evaluated.length > 2 ? "s are" : " is"} in the same state`
       : "";
   const workspaceNames = evaluated
     .map((entry) => entry.unit.workspaceName)
@@ -698,7 +884,7 @@ export function evaluateBuildRequiredTestFailure(options: {
 
   return {
     downgrade: true,
-    cause: `${artifact} has not been built${others}; the test output reports: ${first.evidence}`,
+    cause: `a declared build artifact (${artifact}) is missing${others}; the test output reports: ${first.evidence}`,
     workspaceNames: workspaceNames.length > 0 ? workspaceNames : undefined,
     note: setupBuildOutcome?.timedOut
       ? "the `--setup` build step (`npm run build`) timed out, so the build was not evaluated either" +
@@ -712,16 +898,21 @@ export function evaluateBuildRequiredTestFailure(options: {
 // suite keeps its plain "npm test failed" message.
 function describeBlockingUnit(
   entry: { unit: FailingUnit; precondition: BuildPreconditionResult; evidence?: string },
-  repoPath: string
+  repoPath: string,
+  packageDirs: string[]
 ): string | undefined {
   const where = entry.unit.workspaceName ? `workspace \`${entry.unit.workspaceName}\`` : "this repo";
 
   if (!entry.precondition.met) {
-    // `evidence` was computed against this unit's missing artifact, which does
-    // not exist when the precondition failed; re-check for a bare
-    // missing-module report so the observation can still be named.
-    const observation =
-      entry.evidence ?? findMissingArtifactEvidence(entry.unit.segment, { repoPath });
+    // No missing artifact to anchor to (there is none, or no build script at
+    // all), so this asks the message-only question instead: did this package
+    // report a missing file of its own worth quoting? It cannot reach the
+    // downgrade -- the precondition already decided this unit blocks.
+    const observation = findMissingArtifactEvidence(entry.unit.segment, {
+      repoPath,
+      pkgDir: entry.unit.pkgDir,
+      packageDirs,
+    });
     if (!observation) return undefined;
     return entry.precondition.hasBuildScript
       ? `the output reports a missing module (${observation}), but ${where}'s declared build artifacts are all present on disk, so a build is not what is missing`
@@ -732,7 +923,7 @@ function describeBlockingUnit(
     repoPath,
     path.resolve(entry.unit.pkgDir, entry.precondition.missingArtifact ?? DEFAULT_BUILD_OUTPUT_DIR)
   );
-  return `${artifact} has not been built, but the failure in ${where} does not name it, so it is reported as a real failure`;
+  return `a declared build artifact (${artifact}) is missing, but the failure in ${where} does not name it, so it is reported as a real failure`;
 }
 
 // Build-invocation / test-invocation shapes recognized in a single-line

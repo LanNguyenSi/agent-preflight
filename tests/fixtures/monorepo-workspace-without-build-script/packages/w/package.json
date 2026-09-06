@@ -1,0 +1,9 @@
+{
+  "name": "w",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "node test.js"
+  }
+}

@@ -71,6 +71,29 @@ describe("validateConfig", () => {
     ]);
   });
 
+  // `setup.buildTimeoutMs` is the budget the `--setup` build step runs under.
+  // A value that is not a positive integer is dropped rather than merged, so a
+  // typo can neither disable the timeout nor make the build expire instantly.
+  it.each([
+    [0, "number"],
+    [-1, "number"],
+    [300.5, "number"],
+    ["300", "string"],
+    [true, "boolean"],
+  ])("drops a setup.buildTimeoutMs that is not a positive integer (%p)", (value, type) => {
+    const { config, warnings } = validateConfig({ setup: { enabled: true, buildTimeoutMs: value } });
+    expect(config.setup).toEqual({ enabled: true });
+    expect(warnings).toEqual([
+      `setup.buildTimeoutMs: expected a positive integer, got ${type}; ignoring this field`,
+    ]);
+  });
+
+  it("keeps a positive integer setup.buildTimeoutMs", () => {
+    const { config, warnings } = validateConfig({ setup: { enabled: true, buildTimeoutMs: 60_000 } });
+    expect(config.setup).toEqual({ enabled: true, buildTimeoutMs: 60_000 });
+    expect(warnings).toEqual([]);
+  });
+
   it("drops a malformed enum field (commitConvention: not one of the allowed values) and names the received value (FIX 5)", () => {
     const { config, warnings } = validateConfig({ commitConvention: "yolo" });
     expect(config.commitConvention).toBeUndefined();

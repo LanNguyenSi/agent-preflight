@@ -1,0 +1,10 @@
+{
+  "name": "needs-build",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node test.js"
+  }
+}

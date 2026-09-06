@@ -8,6 +8,7 @@ import {
   evaluateBuildPrecondition,
   evaluateBuildRequiredTestFailure,
   findMissingArtifactEvidence,
+  rootBuildScriptFansOutToWorkspaces,
   splitWorkspaceSegments,
   workflowTextShowsBuildBeforeTest,
 } from "../src/checks/shared.js";
@@ -76,7 +77,7 @@ describe("unbuilt workspace, build required (fixture: monorepo-build-required)",
       const testCheck = testCheckOf(result);
       expect(testCheck?.status).toBe("skip");
       expect(testCheck?.message).toMatch(/build required before test/);
-      expect(testCheck?.message).toMatch(/packages\/needs-build\/dist has not been built/);
+      expect(testCheck?.message).toMatch(/a declared build artifact \(packages\/needs-build\/dist\) is missing/);
       expect(testCheck?.message).toMatch(/npm run build/);
       expect(testCheck?.message).toMatch(/--setup/);
 
@@ -125,7 +126,7 @@ describe("single package, mixed output (fixture: single-package-build-required-m
 
       const testCheck = testCheckOf(result);
       expect(testCheck?.status).toBe("skip");
-      expect(testCheck?.message).toMatch(/dist\/index\.js has not been built/);
+      expect(testCheck?.message).toMatch(/a declared build artifact \(dist\/index\.js\) is missing/);
       expect(result.ready).toBe(true);
       expect(result.blockers).toEqual([]);
     });
@@ -334,6 +335,138 @@ describe("--setup with no CI build-before-test signal (fixture: monorepo-build-r
   });
 });
 
+// ---------------------------------------------------------------------------
+// Adversarial fixtures: everything that has to STAY a blocker although the
+// filesystem precondition holds, plus the one shape that legitimately skips.
+// Each of these reproduces a way a text-matching corroboration was defeated:
+// the failing package is unbuilt and its output names a path, and the only
+// thing separating "not built yet" from a genuine bug is WHERE that path
+// resolves to.
+// ---------------------------------------------------------------------------
+
+// Asserts the shape every blocking case here shares: a real blocker, and a
+// message that never claims the run was not evaluated for a missing build.
+function expectBlockingFailure(result: { ready: boolean; blockers: string[]; checks: { kind: string; status: string; message?: string }[] }) {
+  const testCheck = testCheckOf(result);
+  expect(testCheck?.status).toBe("fail");
+  expect(result.ready).toBe(false);
+  expect(result.blockers.some((blocker) => blocker.startsWith("npm test failed"))).toBe(true);
+  expect(testCheck?.message).not.toMatch(/build required before test/);
+  expect(testCheck?.message).not.toMatch(/not evaluated/);
+  return testCheck;
+}
+
+describe("unbuilt package, stale relative require (fixture: single-package-stale-relative-require)", () => {
+  it("stays a blocking fail: the missing path is in the package's source tree, not its build output", async () => {
+    await withFixture("single-package-stale-relative-require", async (repoPath, logDir) => {
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+
+      const testCheck = expectBlockingFailure(result);
+      expect(testCheck?.message).toMatch(/does not name it/);
+    });
+  });
+});
+
+describe("mixed monorepo, both workspaces unbuilt (fixture: monorepo-stale-relative-require)", () => {
+  it("stays a blocking fail and names the broken workspace, although its precondition holds too", async () => {
+    await withFixture("monorepo-stale-relative-require", async (repoPath, logDir) => {
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+
+      const testCheck = expectBlockingFailure(result);
+      expect(testCheck?.message).toMatch(/workspace `broken`/);
+      expect(testCheck?.message).toMatch(/does not name it/);
+    });
+  });
+});
+
+describe("unbuilt package, missing dependency (fixture: single-package-missing-dependency)", () => {
+  it("stays a blocking fail: a node_modules path names a dependency, not this repo's build output", async () => {
+    await withFixture("single-package-missing-dependency", async (repoPath, logDir) => {
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+
+      expectBlockingFailure(result);
+    });
+  });
+});
+
+describe("unbuilt package with no declarations, runner frame (fixture: single-package-fallback-runner-frame)", () => {
+  it("stays a blocking fail: a node_modules stack frame is not evidence about the fallback dist/", async () => {
+    await withFixture("single-package-fallback-runner-frame", async (repoPath, logDir) => {
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+
+      expectBlockingFailure(result);
+    });
+  });
+});
+
+describe("unbuilt workspace naming a neighbour's artifact (fixture: monorepo-cross-workspace-artifact)", () => {
+  it("stays a blocking fail: another package's artifact says nothing about this one", async () => {
+    await withFixture("monorepo-cross-workspace-artifact", async (repoPath, logDir) => {
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+
+      const testCheck = expectBlockingFailure(result);
+      expect(testCheck?.message).toMatch(/workspace `a`/);
+    });
+  });
+});
+
+// The motivating shape from the report: a workspace test whose first assertion
+// is that the package was built, throwing its own message with the ABSOLUTE
+// artifact path. Both states, because this is the pair the feature exists for.
+describe("unbuilt workspace, absolute guard path (fixture: monorepo-absolute-guard-path)", () => {
+  it("is the named skip while the workspace is unbuilt", async () => {
+    await withFixture("monorepo-absolute-guard-path", async (repoPath, logDir) => {
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+
+      const testCheck = testCheckOf(result);
+      expect(testCheck?.status).toBe("skip");
+      expect(testCheck?.message).toMatch(/build required before test/);
+      expect(testCheck?.message).toMatch(/a declared build artifact \(packages\/needs-build\/dist\/index\.js\) is missing/);
+      expect(testCheck?.message).toMatch(/the test output reports: Error: \//);
+      expect(result.ready).toBe(true);
+      expect(result.blockers).toEqual([]);
+    });
+  });
+
+  it("passes once the workspace has been built", async () => {
+    await withFixture("monorepo-absolute-guard-path", async (repoPath, logDir) => {
+      execSync("npm run build --workspaces --if-present", { cwd: repoPath });
+
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+      expect(testCheckOf(result)?.status).toBe("pass");
+      expect(result.ready).toBe(true);
+    });
+  });
+});
+
+describe("workspace without a build script of its own (fixture: monorepo-workspace-without-build-script)", () => {
+  it("stays a blocking fail: an --if-present root fan-out skips it, so no build covers it", async () => {
+    await withFixture("monorepo-workspace-without-build-script", async (repoPath, logDir) => {
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+
+      const testCheck = expectBlockingFailure(result);
+      expect(testCheck?.message).toMatch(/no `build` script was found for workspace `w`/);
+      // The quoted observation is this package's own missing module, not the
+      // dependency under its node_modules and not the nested package's path.
+      expect(testCheck?.message).toMatch(/\.\/dist\/index\.js/);
+      expect(testCheck?.message).not.toMatch(/node_modules/);
+      expect(testCheck?.message).not.toMatch(/tools/);
+    });
+  });
+});
+
+describe("unparseable tsconfig, failure in another directory (fixture: single-package-jsonc-tsconfig)", () => {
+  it("stays a blocking fail: the failing path is not the declared output the precondition found missing", async () => {
+    await withFixture("single-package-jsonc-tsconfig", async (repoPath, logDir) => {
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+
+      const testCheck = expectBlockingFailure(result);
+      expect(testCheck?.message).toMatch(/does not name it/);
+      expect(testCheck?.message).not.toMatch(/lib\/index\.js/);
+    });
+  });
+});
+
 function withTempPackage<T>(files: Record<string, string>, body: (dir: string) => T): T {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-precondition-"));
   try {
@@ -355,7 +488,7 @@ describe("evaluateBuildPrecondition (unit)", () => {
     withTempPackage(
       { "package.json": pkg({ name: "x", main: "dist/index.js", scripts: { build: "tsc" } }) },
       (dir) => {
-        const result = evaluateBuildPrecondition(dir, dir);
+        const result = evaluateBuildPrecondition(dir);
         expect(result.met).toBe(true);
         expect(result.missingArtifact).toBe("dist/index.js");
       }
@@ -368,13 +501,13 @@ describe("evaluateBuildPrecondition (unit)", () => {
         "package.json": pkg({ name: "x", main: "dist/index.js", scripts: { build: "tsc" } }),
         "dist/index.js": "module.exports = {};\n",
       },
-      (dir) => expect(evaluateBuildPrecondition(dir, dir).met).toBe(false)
+      (dir) => expect(evaluateBuildPrecondition(dir).met).toBe(false)
     );
   });
 
   it("is not met without a build script, however missing the artifacts are", () => {
     withTempPackage({ "package.json": pkg({ name: "x", main: "dist/index.js" }) }, (dir) => {
-      const result = evaluateBuildPrecondition(dir, dir);
+      const result = evaluateBuildPrecondition(dir);
       expect(result.met).toBe(false);
       expect(result.hasBuildScript).toBe(false);
     });
@@ -382,7 +515,7 @@ describe("evaluateBuildPrecondition (unit)", () => {
 
   it("falls back to dist/ for a package that declares no entry points at all", () => {
     withTempPackage({ "package.json": pkg({ name: "x", scripts: { build: "node build.js" } }) }, (dir) => {
-      const result = evaluateBuildPrecondition(dir, dir);
+      const result = evaluateBuildPrecondition(dir);
       expect(result.met).toBe(true);
       expect(result.missingArtifact).toBe("dist");
     });
@@ -394,7 +527,7 @@ describe("evaluateBuildPrecondition (unit)", () => {
         "package.json": pkg({ name: "x", scripts: { build: "node build.js" } }),
         "dist/index.js": "module.exports = {};\n",
       },
-      (dir) => expect(evaluateBuildPrecondition(dir, dir).met).toBe(false)
+      (dir) => expect(evaluateBuildPrecondition(dir).met).toBe(false)
     );
   });
 
@@ -405,7 +538,7 @@ describe("evaluateBuildPrecondition (unit)", () => {
         "tsconfig.json": JSON.stringify({ compilerOptions: { outDir: "build" } }),
       },
       (dir) => {
-        const result = evaluateBuildPrecondition(dir, dir);
+        const result = evaluateBuildPrecondition(dir);
         expect(result.met).toBe(true);
         expect(result.missingArtifact).toBe("build");
       }
@@ -418,7 +551,7 @@ describe("evaluateBuildPrecondition (unit)", () => {
         "package.json": pkg({ name: "x", main: "./dist/index", scripts: { build: "tsc" } }),
         "dist/index.js": "module.exports = {};\n",
       },
-      (dir) => expect(evaluateBuildPrecondition(dir, dir).met).toBe(false)
+      (dir) => expect(evaluateBuildPrecondition(dir).met).toBe(false)
     );
   });
 
@@ -432,7 +565,7 @@ describe("evaluateBuildPrecondition (unit)", () => {
         }),
       },
       (dir) => {
-        const result = evaluateBuildPrecondition(dir, dir);
+        const result = evaluateBuildPrecondition(dir);
         expect(result.met).toBe(true);
         expect(result.missingArtifact).toBe("./dist/index.mjs");
       }
@@ -442,11 +575,16 @@ describe("evaluateBuildPrecondition (unit)", () => {
   it("reads bin map values", () => {
     withTempPackage(
       { "package.json": pkg({ name: "x", scripts: { build: "tsc" }, bin: { cli: "dist/cli.js" } }) },
-      (dir) => expect(evaluateBuildPrecondition(dir, dir).missingArtifact).toBe("dist/cli.js")
+      (dir) => expect(evaluateBuildPrecondition(dir).missingArtifact).toBe("dist/cli.js")
     );
   });
 
-  it("accepts a root build script that fans out over the workspaces for a workspace with none of its own", () => {
+  // A root `--workspaces --if-present` fan-out SKIPS a workspace that has no
+  // build script of its own, so the build it appears to promise is a no-op
+  // there; a fan-out without `--if-present` would fail outright on such a
+  // workspace. Either way the workspace's own `scripts.build` is the only
+  // honest test, and a workspace without one never meets the precondition.
+  it("does not accept a root fan-out build script for a workspace with none of its own", () => {
     withTempPackage(
       {
         "package.json": pkg({
@@ -457,25 +595,41 @@ describe("evaluateBuildPrecondition (unit)", () => {
         "packages/w/package.json": pkg({ name: "w", main: "dist/index.js" }),
       },
       (dir) => {
-        const result = evaluateBuildPrecondition(path.join(dir, "packages", "w"), dir);
-        expect(result.hasBuildScript).toBe(true);
-        expect(result.met).toBe(true);
-      }
-    );
-  });
-
-  it("does not accept a root build script of any other shape for a workspace with none of its own", () => {
-    withTempPackage(
-      {
-        "package.json": pkg({ name: "root", workspaces: ["packages/*"], scripts: { build: "tsc -b" } }),
-        "packages/w/package.json": pkg({ name: "w", main: "dist/index.js" }),
-      },
-      (dir) => {
-        const result = evaluateBuildPrecondition(path.join(dir, "packages", "w"), dir);
+        const result = evaluateBuildPrecondition(path.join(dir, "packages", "w"));
         expect(result.hasBuildScript).toBe(false);
         expect(result.met).toBe(false);
       }
     );
+  });
+
+  it("is met for a workspace with its own build script and a missing artifact", () => {
+    withTempPackage(
+      {
+        "package.json": pkg({ name: "root", workspaces: ["packages/*"] }),
+        "packages/w/package.json": pkg({ name: "w", main: "dist/index.js", scripts: { build: "tsc" } }),
+      },
+      (dir) => {
+        const result = evaluateBuildPrecondition(path.join(dir, "packages", "w"));
+        expect(result.hasBuildScript).toBe(true);
+        expect(result.met).toBe(true);
+        expect(result.missingArtifact).toBe("dist/index.js");
+      }
+    );
+  });
+});
+
+describe("rootBuildScriptFansOutToWorkspaces (unit)", () => {
+  // Used for the REMEDY only: whether the root `npm run build` that `--setup`
+  // runs would reach the failing workspaces at all.
+  it("recognizes the --workspaces and -ws fan-out shapes", () => {
+    expect(rootBuildScriptFansOutToWorkspaces({ scripts: { build: "npm run build --workspaces --if-present" } })).toBe(true);
+    expect(rootBuildScriptFansOutToWorkspaces({ scripts: { build: "npm run build -ws" } })).toBe(true);
+  });
+
+  it("does not recognize a root build of any other shape, or none at all", () => {
+    expect(rootBuildScriptFansOutToWorkspaces({ scripts: { build: "tsc -b" } })).toBe(false);
+    expect(rootBuildScriptFansOutToWorkspaces({ scripts: {} })).toBe(false);
+    expect(rootBuildScriptFansOutToWorkspaces(undefined)).toBe(false);
   });
 });
 
@@ -494,6 +648,15 @@ describe("splitWorkspaceSegments (unit)", () => {
     const segments = splitWorkspaceSegments(workspaceRun, { name: "repo", version: "1.2.3" });
     expect(segments).toHaveLength(1);
     expect(segments?.[0].split("\n")[0]).toBe("> needs-build@1.0.0 test");
+  });
+
+  it("treats a preamble with the root's name but a different version as a workspace", () => {
+    // The root preamble is excluded by full identity, name AND version. A line
+    // whose version differs is not the root's own script line, so it stays a
+    // segment rather than being silently dropped.
+    const segments = splitWorkspaceSegments(workspaceRun, { name: "repo", version: "9.9.9" });
+    expect(segments).toHaveLength(2);
+    expect(segments?.[0].split("\n")[0]).toBe("> repo@1.2.3 test");
   });
 
   it("treats the versioned root preamble as a workspace when the root identity is unknown", () => {
@@ -518,45 +681,126 @@ describe("splitWorkspaceSegments (unit)", () => {
   });
 });
 
-describe("findMissingArtifactEvidence (unit)", () => {
+// Every case here calls the helper the way production calls it: with the
+// failing package's directory AND the artifact the precondition found missing.
+// An earlier round's rejection cases omitted `missingArtifact` and so never
+// exercised the branch a downgrade actually goes through.
+describe("findMissingArtifactEvidence (unit, the shape a downgrade is decided in)", () => {
   const repoPath = path.resolve("/repo");
+  const pkgDir = path.join(repoPath, "packages", "x");
+  const neighbour = path.join(repoPath, "packages", "y");
+  const nested = path.join(pkgDir, "tools");
+  const packageDirs = [repoPath, pkgDir, neighbour, nested];
 
-  it("matches a package's own guard message naming the declared artifact, with no Error: prefix", () => {
+  const decide = (output: string, missingArtifact = "dist/index.js"): string | undefined =>
+    findMissingArtifactEvidence(output, { repoPath, pkgDir, missingArtifact, packageDirs });
+
+  it("matches a package's own guard message naming the artifact by absolute path, with no Error: prefix", () => {
     // The real shape from the reported friction: a test that throws its own
     // message, printed by the runner without any Node error prefix.
-    const output =
-      "  /repo/packages/x/dist/index.js is missing. Run `npm run build` in packages/x before testing.";
-    expect(findMissingArtifactEvidence(output, { repoPath, missingArtifact: "dist/index.js" })).toMatch(
-      /dist\/index\.js is missing/
+    const output = `  ${path.join(pkgDir, "dist", "index.js")} is missing. Run \`npm run build\` in packages/x before testing.`;
+    expect(decide(output)).toMatch(/dist\/index\.js is missing/);
+  });
+
+  it("matches a relative module-resolution failure for the artifact", () => {
+    expect(decide("Error: Cannot find module './dist/index.js'")).toContain("Cannot find module");
+  });
+
+  it("matches a sibling of the declared entry point inside the same build output directory", () => {
+    // An unbuilt package is missing everything under dist/, not just the one
+    // path it happens to declare.
+    expect(decide("Error: Cannot find module './dist/cli.js'")).toContain("./dist/cli.js");
+  });
+
+  it("matches an ENOENT open of the artifact", () => {
+    expect(decide(`Error: ENOENT: no such file or directory, open '${path.join(pkgDir, "dist", "index.js")}'`)).toContain(
+      "ENOENT"
     );
   });
 
-  it("matches a relative module-resolution failure", () => {
-    const output = "Error: Cannot find module './dist/index.js'";
-    expect(findMissingArtifactEvidence(output, { repoPath })).toContain("Cannot find module");
-  });
-
   it("does not match a bare module specifier (an ordinary missing dependency)", () => {
-    expect(findMissingArtifactEvidence("Error: Cannot find module 'lodash'", { repoPath })).toBeUndefined();
+    expect(decide("Error: Cannot find module 'lodash'")).toBeUndefined();
   });
 
-  it("does not match a path resolved through node_modules", () => {
-    const output = "Error: Cannot find module '/repo/node_modules/some-lib/dist/index.js'";
-    expect(findMissingArtifactEvidence(output, { repoPath })).toBeUndefined();
+  it("does not match a bare package-relative specifier, which Node resolves through node_modules", () => {
+    expect(decide("Error: Cannot find module 'dist/index.js'")).toBeUndefined();
+  });
+
+  it("does not match a path under the package's own node_modules whose tail equals the artifact", () => {
+    const output = `Error: Cannot find module '${path.join(pkgDir, "node_modules", "some-lib", "dist", "index.js")}'`;
+    expect(decide(output)).toBeUndefined();
   });
 
   it("does not match an absolute path outside the repo", () => {
-    const output = "Error: Cannot find module '/elsewhere/dist/index.js'";
-    expect(findMissingArtifactEvidence(output, { repoPath })).toBeUndefined();
+    expect(decide("Error: Cannot find module '/elsewhere/packages/x/dist/index.js'")).toBeUndefined();
   });
 
-  it("does not match an assertion failure that names neither a module nor the artifact", () => {
-    const output = "AssertionError [ERR_ASSERTION]: 2 !== 3\n  at Object.<anonymous> (/repo/test.js:6:8)";
-    expect(findMissingArtifactEvidence(output, { repoPath, missingArtifact: "dist/index.js" })).toBeUndefined();
+  it("does not match another workspace's artifact", () => {
+    expect(decide("Error: Cannot find module '../y/dist/index.js'")).toBeUndefined();
+  });
+
+  it("does not match a nested package's artifact inside the failing package", () => {
+    expect(decide(`Error: Cannot find module '${path.join(nested, "dist", "index.js")}'`)).toBeUndefined();
+  });
+
+  it("does not match a stale relative require elsewhere in the same package", () => {
+    expect(decide("Error: Cannot find module './src/renamed-away.js'")).toBeUndefined();
+  });
+
+  it("does not match a runner stack frame through node_modules when the artifact is the fallback dist/", () => {
+    const output = [
+      "AssertionError [ERR_ASSERTION]: 2 !== 3",
+      "    at Object.<anonymous> (/opt/tools/node_modules/vitest/dist/chunks/runBaseTests.js:114:5)",
+      "    at file:///opt/tools/node_modules/vitest/dist/entry.js:12:9",
+    ].join("\n");
+    expect(decide(output, "dist")).toBeUndefined();
+  });
+
+  it("matches anything inside the fallback dist/ when that is the missing artifact", () => {
+    expect(decide("Error: Cannot find module './dist/foo.js'", "dist")).toContain("./dist/foo.js");
+  });
+
+  it("matches an extensionless declaration by Node's own resolution candidates", () => {
+    expect(decide("Error: Cannot find module './dist/index.js'", "./dist/index")).toContain("Cannot find module");
+  });
+
+  it("requires an exact match for an artifact declared at the package root", () => {
+    // `main: "index.js"` has no build-output directory of its own, so the
+    // package directory must not become the acceptance region.
+    expect(decide("Error: Cannot find module './src/other.js'", "index.js")).toBeUndefined();
+    expect(decide("Error: Cannot find module './index.js'", "index.js")).toContain("./index.js");
   });
 
   it("returns undefined for empty output", () => {
-    expect(findMissingArtifactEvidence(undefined, { repoPath })).toBeUndefined();
+    expect(findMissingArtifactEvidence(undefined, { repoPath, pkgDir, missingArtifact: "dist/index.js" })).toBeUndefined();
+  });
+});
+
+// The second, message-only mode: no artifact to anchor to (the precondition
+// already decided this unit blocks), so the question is only "did this package
+// report a missing file of its own worth quoting". It can never reach a
+// downgrade, but it must not quote someone else's problem as this package's.
+describe("findMissingArtifactEvidence (unit, message-only observation mode)", () => {
+  const repoPath = path.resolve("/repo");
+  const pkgDir = path.join(repoPath, "packages", "x");
+  const nested = path.join(pkgDir, "tools");
+  const observe = (output: string): string | undefined =>
+    findMissingArtifactEvidence(output, { repoPath, pkgDir, packageDirs: [repoPath, pkgDir, nested] });
+
+  it("quotes a missing path inside the failing package, wherever in it", () => {
+    expect(observe("Error: Cannot find module './src/renamed-away.js'")).toContain("./src/renamed-away.js");
+  });
+
+  it("does not quote a path under the package's own node_modules", () => {
+    expect(observe(`Error: Cannot find module '${path.join(pkgDir, "node_modules", "lib", "dist", "index.js")}'`)).toBeUndefined();
+  });
+
+  it("does not quote a nested package's path", () => {
+    expect(observe(`Error: Cannot find module '${path.join(nested, "dist", "index.js")}'`)).toBeUndefined();
+  });
+
+  it("does not quote a path outside the repo", () => {
+    expect(observe("Error: Cannot find module '/elsewhere/lib/index.js'")).toBeUndefined();
   });
 });
 

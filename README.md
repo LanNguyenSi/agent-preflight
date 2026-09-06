@@ -185,10 +185,10 @@ situation as a distinct, named outcome instead of a blocker: `status:
 "skip"` with the missing artifact and the remedy in the message, for example
 
 ```
-npm test not evaluated: build required before test (packages/needs-build/dist
-has not been built; the test output reports: Error: Cannot find module
-'./dist/index.js'); run `npm run build` first (or rerun preflight with
-`--setup`, which builds automatically when this repo's CI shows
+npm test not evaluated: build required before test (a declared build artifact
+(packages/needs-build/dist) is missing; the test output reports: Error: Cannot
+find module './dist/index.js'); run `npm run build` first (or rerun preflight
+with `--setup`, which builds automatically when this repo's CI shows
 build-before-test)
 ```
 
@@ -211,26 +211,71 @@ Two things have to be true at once, and neither is enough on its own.
    to "`dist/` does not exist"; a package with no build script never meets the
    precondition, whatever is missing.
 
+   The build script has to be the package's **own**. A root fan-out
+   (`npm run build --workspaces --if-present`) does not lend one to a workspace
+   that has none: `--if-present` skips exactly such a workspace, so the build it
+   appears to promise is a no-op there, and a fan-out *without* `--if-present`
+   would fail outright on such a workspace, so a repo that runs one has a build
+   script in every workspace anyway. A workspace built only by some other
+   mechanism (a root `tsc -b` over project references, a Makefile) is therefore
+   read as "no build script", and its failure stays a blocker.
+
    The precondition answers one question: **could running a build change this
    outcome at all?** It is decided by looking at the disk, not by reading the
    test runner's output, because output text alone cannot tell "this package
    was never built" from "this package is broken".
 
-2. **The failure has to blame the missing artifact.** The failing package's
-   own output must name it: a line containing the declared artifact path
-   (the shape a package's own guard throws, "packages/x/dist/index.js is
-   missing. Run the build first"), or one of Node's own module-resolution
-   failures (`Cannot find module '<path>'`, `ENOENT ... open '<path>'`) for a
-   path-shaped specifier that is not resolved through `node_modules`. A bare
-   specifier (`Cannot find module 'lodash'`) or a `node_modules` path names a
-   dependency problem a build of this repo would not fix, and neither counts.
+2. **The failure has to blame the missing artifact**, and that is decided as
+   a **path** rule, never as a text match. Every path-shaped token on every
+   line of the failing package's own output is resolved and then tested:
+
+   - a token is an absolute path, a `file://` URL, or a `./` / `../`
+     specifier. A bare specifier is not one -- neither `lodash` nor
+     `dist/index.js`, because Node resolves both through `node_modules`, so
+     they name a dependency rather than this package's build output;
+   - relative tokens are resolved against the failing package's own directory,
+     absolute ones as printed (symlinks are resolved on both sides, so a
+     checkout under a symlinked path still matches);
+   - the resolved path is accepted only when it **is** the missing artifact or
+     lies **inside the build-output directory that artifact identifies**
+     (`dist/index.js` accepts anything under that `dist/`; a bare `dist` or a
+     tsconfig `outDir` accepts anything under it; an artifact declared at the
+     package root, `main: "index.js"`, accepts only itself), **and** it is
+     inside the repository, **and** it has no `node_modules` segment, **and**
+     it belongs to this package rather than a neighbouring or nested one.
+
+   That covers both shapes this actually takes -- a package's own guard
+   printing `<abs>/dist/index.js is missing. Run the build first` with no error
+   prefix at all, and Node's own `Cannot find module './dist/index.js'` /
+   `ENOENT ... open '<path>'`, whose quoted specifier is simply another token
+   on the line.
 
    This second condition is what keeps the first one honest. Plenty of
    packages compile to `dist/` but run their tests from source (this repo is
    one), so in a fresh checkout the precondition holds for them permanently.
    Without requiring the failure to actually be about the missing artifact, a
    genuinely broken suite in such a package would be reported as `ready:
-   true`.
+   true`. An earlier substring form of this rule did exactly that for a stale
+   relative require, a dependency missing under `node_modules/<lib>/dist/`,
+   another workspace's artifact, and any test-runner stack frame through
+   `node_modules/vitest/dist/`.
+
+   Two consequences worth knowing:
+
+   - A relative specifier is resolved against the package directory, not
+     against the file that raised it (the output does not say which file that
+     was). A test in a nested directory requiring `../dist/index.js` therefore
+     resolves outside the package and does **not** corroborate: the check
+     stays a blocking `fail`, which is the safe direction.
+   - **The residual case this cannot decide**: a genuine failure whose own
+     error path lies inside the package's own missing build output -- a stale
+     reference to a `dist/old.js` that a build would not recreate -- is
+     indistinguishable from "not built yet", because nothing on disk separates
+     the two until a build has actually run. It is reported as the named skip.
+     The remedy that skip names (run the build, or rerun with `--setup`)
+     resolves it either way: after the build, the same failure comes back as a
+     blocker, because a successful build means every later test failure is
+     genuine.
 
 An npm-workspaces monorepo's `npm test` fan-out is judged **per workspace**,
 not as one blob: the combined output is split at each workspace's own `>
@@ -258,6 +303,20 @@ Each of these stays a blocking `fail`, and each has a fixture in
   the missing artifact;
 - a monorepo where one workspace is unbuilt and another is genuinely broken,
   in either order;
+- an unbuilt package whose failure is a stale relative require into its own
+  source tree, alone and next to an unbuilt workspace in a monorepo (both
+  packages then meet the precondition, so only the path rule separates them);
+- a missing dependency reported by a `node_modules` path whose tail is
+  byte-for-byte the declared artifact (`.../node_modules/some-lib/dist/index.js`);
+- a package that declares no entry points, failing an ordinary assertion whose
+  only `dist`-bearing line is the test runner's own stack frame inside
+  `node_modules`;
+- a workspace whose failure names a *neighbouring* workspace's artifact;
+- a workspace with no build script of its own under a root
+  `--workspaces --if-present` fan-out (nothing would build it, so the remedy
+  would be a dead end);
+- a package whose `tsconfig.json` has comments (so its `outDir` cannot be read
+  and the fallback `dist/` applies) failing on a path in a different directory;
 - any failure after `--setup`'s own build step ran, whether it failed or
   succeeded (see below).
 
@@ -318,11 +377,13 @@ installs share). Override it with `setup.buildTimeoutMs` in
   covers a build script that exits 0 without producing them, where "run the
   build first" would be a dead end.
 
-The remedy named in a skip message depends on what could actually fix it:
-`npm run build` and `--setup` when the repo's root `package.json` has a
-`build` script (`--setup` only ever builds at the repo root), and a
-workspace-scoped `npm run build -w <name>` (or `--workspaces --if-present`
-for more than one failing workspace) when only the workspaces have one.
+The remedy named in a skip message depends on what could actually fix it.
+`--setup` only ever runs `npm run build` at the repo root, so the message
+names that when the failing unit *is* the root package, or when the root build
+script fans out over the workspaces (`--workspaces`/`-ws`) and therefore
+reaches them. Otherwise it names a workspace-scoped `npm run build -w <name>`
+(or `--workspaces --if-present` for more than one failing workspace, each of
+which has its own build script by then) and says why `--setup` cannot help.
 
 Confidence score: a build-required skip is scored exactly like any other
 `skip` outcome (see [docs/confidence-scoring.md](docs/confidence-scoring.md)).

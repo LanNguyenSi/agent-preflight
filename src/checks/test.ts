@@ -11,6 +11,7 @@ import {
   hasPythonProject,
   hasComposerScript,
   runConfiguredCommands,
+  rootBuildScriptFansOutToWorkspaces,
   runShellCheck,
   fileExists,
   shouldSkipRecursiveNodeTest,
@@ -20,28 +21,31 @@ import {
 
 // Names what the operator should actually run to satisfy the build
 // precondition that `evaluateBuildRequiredTestFailure` found unmet. Reached
-// only for a downgrade, so a build script that covers every failing unit is
-// known to exist -- either at the repo root or in the attributed workspaces:
-// - Root has a `build` script: name it, and `--setup` (whose build step only
-//   ever runs `npm run build` at the repo root).
-// - Root has none, so the units are attributed workspaces with their own
-//   build scripts: name a workspace-scoped build instead, since `--setup`
-//   cannot help. Exactly one workspace gets `-w <name>` (precise); more than
-//   one falls back to `--workspaces --if-present` (naming every failing
-//   workspace would make the message unwieldy, and `--if-present` is a safe
-//   no-op for a workspace without a build script of its own).
+// only for a downgrade, so every failing unit has a `build` script of its own
+// -- the root package's, or each attributed workspace's. What the message may
+// name is narrower than that, because `--setup`'s build step only ever runs
+// `npm run build` at the repo ROOT:
+// - the failure is the root package's: name `npm run build` and `--setup`;
+// - the failures are workspaces' and the root script fans out over the
+//   workspaces: the same root build reaches them, so name it too;
+// - otherwise the root build would not touch them (or does not exist): name a
+//   workspace-scoped build instead, and say why `--setup` cannot help.
+//   Exactly one workspace gets `-w <name>` (precise); more than one falls back
+//   to `--workspaces --if-present`, which builds every failing workspace here
+//   since each one has its own build script.
 function buildRequiredRemedy(context: ProjectContext, workspaceNames: string[] | undefined): string {
-  if (context.packageJson?.scripts?.build) {
-    return "run `npm run build` first (or rerun preflight with `--setup`, which builds automatically when this repo's CI shows build-before-test)";
-  }
+  const rootBuild = "run `npm run build` first (or rerun preflight with `--setup`, which builds automatically when this repo's CI shows build-before-test)";
+  if (!workspaceNames || workspaceNames.length === 0) return rootBuild;
+  if (rootBuildScriptFansOutToWorkspaces(context.packageJson)) return rootBuild;
 
-  const rootHasNoBuildScript =
-    "this repo's root `package.json` has no `build` script, so `--setup` cannot build it automatically";
+  const whySetupCannotHelp = context.packageJson?.scripts?.build
+    ? "this repo's root `build` script does not fan out over the workspaces, so `--setup` cannot build them automatically"
+    : "this repo's root `package.json` has no `build` script, so `--setup` cannot build it automatically";
 
-  if (workspaceNames && workspaceNames.length === 1) {
-    return `run \`npm run build -w ${workspaceNames[0]}\` first (${rootHasNoBuildScript})`;
+  if (workspaceNames.length === 1) {
+    return `run \`npm run build -w ${workspaceNames[0]}\` first (${whySetupCannotHelp})`;
   }
-  return `run \`npm run build --workspaces --if-present\` first (${rootHasNoBuildScript})`;
+  return `run \`npm run build --workspaces --if-present\` first (${whySetupCannotHelp})`;
 }
 
 export async function runTestChecks(
