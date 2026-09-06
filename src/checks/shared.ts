@@ -164,6 +164,13 @@ interface ShellCheckOptions {
 interface ShellCheckRunResult {
   check?: CheckResult;
   limitation?: string;
+  // Full stdout+stderr of the command, when it actually ran (not set on the
+  // early missingLimitation short-circuit, since the command never
+  // executed). Not persisted on `CheckResult` itself -- it exists so a
+  // caller can run its own post-hoc classification on a `fail` result (see
+  // `classifyBuildRequiredFailure` and its use in checks/test.ts) without
+  // `runShellCheck` needing to know about that classification itself.
+  rawOutput?: string;
 }
 
 // Invariant: when `missingLimitation` is set, we first check that the primary
@@ -226,6 +233,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
         durationMs: Date.now() - start,
         confidenceContribution: options.weight,
       },
+      rawOutput: all,
     };
   } catch (err: unknown) {
     const error = err as NodeJS.ErrnoException & { all?: string };
@@ -245,8 +253,141 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
         durationMs: Date.now() - start,
         confidenceContribution: options.weight,
       },
+      rawOutput: error.all,
     };
   }
+}
+
+// Evidence patterns for `classifyBuildRequiredFailure` below: a test-check
+// failure is only ever reclassified from `fail` to `skip` when the
+// captured output NAMES a missing build artifact, never on a generic
+// non-zero exit. Kept narrow on purpose -- see the function's own comment
+// for the conservatism rationale and README's "Build-required test
+// classification" section for the documented limits.
+//
+// - Node's own `Cannot find module '<path>'` when `<path>` runs through a
+//   `dist/` (or `\dist\` on Windows) segment: the most common real-world
+//   shape (a workspace's test requiring its own package's build output).
+// - `ENOENT ... open '<path>'` naming a `dist/` path: a direct `fs` read of
+//   a build artifact that was never produced.
+// - A workspace's own assertion/thrown message that explicitly states the
+//   precondition ("dist/... is missing ... run `npm run build`"): covers a
+//   project that guards its own dist-dependent test with a clearer message
+//   than a bare module-resolution error. Bounded to a single line and
+//   requires BOTH a `dist/` mention and an explicit `npm run build`
+//   mention so an unrelated failure that happens to say "missing" or
+//   "not found" is never enough by itself.
+const DIST_MODULE_NOT_FOUND_PATTERN = /Cannot find module ['"][^'"]*[\\/]dist[\\/][^'"]*['"]/i;
+const DIST_ENOENT_PATTERN = /ENOENT[^\n]*[\\/]dist[\\/][^\n]*/i;
+const DIST_PRECONDITION_PATTERN = /\bdist[\\/][^\n]{0,120}\b(?:is|was|are)?\s*(?:missing|not found|does not exist)\b[^\n]{0,120}\bnpm run build\b/i;
+
+const MAX_BUILD_REQUIRED_CAUSE_LENGTH = 160;
+
+function clampBuildRequiredCause(text: string): string {
+  const trimmed = text.trim();
+  return trimmed.length > MAX_BUILD_REQUIRED_CAUSE_LENGTH
+    ? `${trimmed.slice(0, MAX_BUILD_REQUIRED_CAUSE_LENGTH - 3)}...`
+    : trimmed;
+}
+
+export interface BuildRequiredClassification {
+  matched: boolean;
+  /** The matched line/snippet, present only when `matched` is true. */
+  cause?: string;
+}
+
+// Classifies a FAILED test check's captured output as "build required"
+// (dist/ missing) vs. a genuine failure. Never called on its own -- the
+// caller (checks/test.ts) only invokes this after `runShellCheck` already
+// decided the check failed, and only reclassifies to `skip` when this
+// returns `matched: true`. Scanned line-by-line first for the two
+// module/file-not-found shapes (the common case, and the cheapest to
+// pinpoint to one line); the precondition phrasing is checked against the
+// full text afterwards since its "npm run build" mention can be pushed
+// onto in a wrapped stack-trace line by prefixed indentation in some
+// runners.
+export function classifyBuildRequiredFailure(output: string | undefined): BuildRequiredClassification {
+  if (!output) {
+    return { matched: false };
+  }
+
+  for (const rawLine of output.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (DIST_MODULE_NOT_FOUND_PATTERN.test(line) || DIST_ENOENT_PATTERN.test(line)) {
+      return { matched: true, cause: clampBuildRequiredCause(line) };
+    }
+  }
+
+  const preconditionMatch = output.match(DIST_PRECONDITION_PATTERN);
+  if (preconditionMatch) {
+    return { matched: true, cause: clampBuildRequiredCause(preconditionMatch[0]) };
+  }
+
+  return { matched: false };
+}
+
+// Build-invocation / test-invocation shapes recognized in a single-line
+// `run:` workflow step (see `ciShowsBuildBeforeTest`'s own comment for what
+// this does and does not model).
+const CI_BUILD_STEP_PATTERN = /\b(?:npm|yarn|pnpm)\s+run\s+build\b|\b(?:yarn|pnpm)\s+build\b/i;
+const CI_TEST_STEP_PATTERN = /\bnpm\s+test\b|\b(?:npm|yarn|pnpm)\s+run\s+test\b|\b(?:yarn|pnpm)\s+test\b/i;
+
+// Best-effort, conservative detection of "this repo's CI builds before it
+// tests", read from `.github/workflows/ci.yml` -- the exact file the
+// reported friction pointed at (a repo's real CI convention contradicting
+// preflight's own verdict). Deliberately narrow, and defaults to `false`
+// (no extra build step) whenever it cannot tell:
+//
+// - Only the single named file `.github/workflows/ci.yml` is read; other
+//   workflow files, reusable workflows, and composite actions are not
+//   consulted.
+// - Only single-line `run: <command>` steps are recognized (a YAML block
+//   scalar `run: |` followed by more lines is not parsed for its body).
+// - Ordering is by RAW LINE NUMBER in the file, not by GitHub Actions' own
+//   job/step/`needs:` execution graph -- a multi-job workflow where a
+//   later-listed job actually runs first (via `needs:`), or a matrix build,
+//   is not modeled. In the common single-job "steps: build, then test"
+//   shape (this project's own CI included) that is exactly the execution
+//   order too.
+// - The command must match one of the common `npm|yarn|pnpm run build`
+//   invocations; a custom build entry point (a Makefile target, a
+//   standalone script not run through the package manager) is not
+//   recognized.
+//
+// None of these gaps can produce a false "build before test": every one of
+// them can only make a real build-before-test convention go undetected,
+// which only costs the extra manual `npm run build` this feature exists to
+// avoid -- it never causes `--setup` to skip a build the repo actually
+// relies on, because a missed detection here just means `--setup` behaves
+// exactly as it did before this feature (dependency install only).
+export function ciShowsBuildBeforeTest(repoPath: string): boolean {
+  let text: string;
+  try {
+    text = fs.readFileSync(path.join(repoPath, ".github", "workflows", "ci.yml"), "utf-8");
+  } catch {
+    return false;
+  }
+  return workflowTextShowsBuildBeforeTest(text);
+}
+
+// Exported separately from `ciShowsBuildBeforeTest` so a test can exercise
+// the parsing logic directly against inline workflow text instead of
+// writing a fixture file to disk for every case.
+export function workflowTextShowsBuildBeforeTest(text: string): boolean {
+  const lines = text.split("\n");
+  let buildLine = -1;
+  let testLine = -1;
+
+  lines.forEach((line, index) => {
+    const stepMatch = /^\s*-?\s*run:\s*(.+)$/.exec(line);
+    if (!stepMatch) return;
+    const command = stepMatch[1];
+    if (buildLine === -1 && CI_BUILD_STEP_PATTERN.test(command)) buildLine = index;
+    if (testLine === -1 && CI_TEST_STEP_PATTERN.test(command)) testLine = index;
+  });
+
+  return buildLine !== -1 && testLine !== -1 && buildLine < testLine;
 }
 
 // Patterns emitted when a shell directly reports "this binary is missing
@@ -308,6 +449,25 @@ export async function ensureProjectSetup(repoPath: string): Promise<string[]> {
       limitations.push("package-lock.json found but node_modules/ is missing; npm ci skipped because npm is not available");
     } else if (exitCode !== 0) {
       limitations.push("npm ci failed while preparing Node checks");
+    }
+  }
+
+  // Option (a) from the build-required decision (see checks/test.ts and
+  // README's "Build-required test classification"): behind `--setup` only,
+  // and only when BOTH a `build` script exists AND this repo's own CI
+  // workflow demonstrably builds before it tests (`ciShowsBuildBeforeTest`,
+  // conservative by construction -- see that function's comment). Runs
+  // unconditionally when both hold (no "is dist already there" marker
+  // check, since a workspaces monorepo has no single root dist/ to probe):
+  // a redundant rebuild costs time but is otherwise harmless, whereas
+  // skipping it on a stale guess would reintroduce the very failure this
+  // feature exists to avoid.
+  if (hasNodeProject(context) && context.packageJson?.scripts?.build && ciShowsBuildBeforeTest(repoPath)) {
+    const exitCode = await runSetupCommand(repoPath, "npm run build");
+    if (exitCode === 127) {
+      limitations.push("package.json has a build script but npm is not available; --setup build step skipped");
+    } else if (exitCode !== 0) {
+      limitations.push("npm run build failed while preparing the test check (--setup)");
     }
   }
 

@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`--setup` builds the repo before the test check when CI shows build-before-test** (agent-tasks c5810885). `ensureProjectSetup` (`src/checks/shared.ts`) now runs `npm run build` when both hold: `package.json` has a `build` script, AND `.github/workflows/ci.yml` has a `run:` step invoking `npm run build`/`yarn build`/`pnpm build` earlier in the file than a step invoking the test script (`ciShowsBuildBeforeTest`/`workflowTextShowsBuildBeforeTest`). This is a best-effort, single-file, line-order read, not a real Actions execution-graph evaluator: reusable workflows, job `needs:` graphs, and `run: |` block scalars are not modeled. Every gap in that detection can only leave a real build-before-test convention undetected (in which case `--setup` behaves exactly as before, dependency install only), never produce a false positive, so a repo whose CI does not show that convention (this repo's own CI included; `vitest` runs TypeScript source directly) gets no extra build step.
+
 ### Fixed
+
+- **A `npm-test` failure that only means "run the build first" is no longer a blocker** (agent-tasks c5810885). Reproduced against a fixture npm-workspaces monorepo (`tests/fixtures/monorepo-build-required`): a workspace whose test requires its own package's `dist/` output failed the default `npm-test` check with a bare `fail`/"npm test failed" in a fresh, unbuilt checkout, exactly the shape reported against a real repo's own CI-verified build-before-test convention. `runTestChecks` (`src/checks/test.ts`) now classifies that failure by concrete evidence in the captured output only, via `classifyBuildRequiredFailure` (`src/checks/shared.ts`): Node's own `Cannot find module`/`ENOENT` naming a path through `dist/`, or a workspace's own single-line precondition message naming `dist/`, "missing"/"not found"/"does not exist", and `npm run build` together. A match downgrades the check from `fail` to a named `skip` outcome carrying the remedy in its message, so `ready` is no longer blocked by it; a genuine failure with none of that evidence (`tests/fixtures/monorepo-genuine-test-failure` is the negative control) stays a blocking `fail`, unchanged. Scored the same as any other `skip` (see `docs/confidence-scoring.md`): counted in the confidence denominator but not the numerator, plus the usual 0.03 `limitations` penalty; never scored as a `pass`. Scoped to the default auto-detected `npm run test` check only; a `commands.test` override in `.preflight.json` is not classified.
 
 - **TDD counterpart checks now compare paths relative to `workingDir`.** Git
   diff paths were repository-root-relative while discovered tests were

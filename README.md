@@ -170,6 +170,79 @@ are outside that target.
 
 If no commands are configured, agent-preflight auto-detects common Node, Python, PHP, and Java manifests and picks reasonable defaults. The full toggle, override, and monorepo guidance lives in [docs/checks.md](docs/checks.md). Sandbox image profiles, apt packages, and act flags are covered in [docs/architecture.md](docs/architecture.md#sandbox). The `npm-audit` check runs with a bounded timeout, and an audit that did not answer is reported as `skip` (not `warn`) with a `limitations` entry naming the cause: a timeout with no parsable report, or npm exiting non-zero without producing a report, which is what an unreachable or failing registry produces. That is the default direction rather than a list of recognized registry errors, so an outage never hangs the run, and an unfamiliar failure degrades to "not evaluated" instead of being misread as a real finding. npm's own usage errors, such as a missing lockfile, name themselves in `error.code` and stay a `warn` naming that failure.
 
+### Build-required test classification: `dist/` missing before a build
+
+Some Node workspaces only pass their own tests after a build: a test that
+imports its package's `dist/` output fails loudly (a bare `Cannot find
+module` or `ENOENT` naming a path through `dist/`) in a fresh checkout that
+has not been built yet, even though the repo's own CI always runs a build
+step first. Treating that as a blocking `fail`, the default before this
+feature, makes a correct push look broken purely because preflight itself
+skipped a build step the repo's own CI never skips.
+
+The default `npm-test` check (the auto-detected `npm run test`; a
+`commands.test` override in `.preflight.json` is not covered) now
+classifies a failure this way as a distinct, named outcome instead of a
+blocker: `status: "skip"` with a message naming the missing artifact and
+the remedy, for example:
+
+```
+npm test not evaluated: build required before test (Error: Cannot find
+module './dist/index.js'); run `npm run build` first (or rerun preflight
+with `--setup`, which builds automatically when this repo's CI shows
+build-before-test)
+```
+
+The classification only fires on concrete evidence in the check's captured
+output, never on a generic non-zero exit, so a genuine test failure always
+stays a blocking `fail`:
+
+- Node's own `Cannot find module '<path>'` where `<path>` runs through a
+  `dist/` segment.
+- An `ENOENT ... open '<path>'` naming a `dist/` path.
+- A workspace's own thrown/assertion message that states the precondition
+  on one line: a `dist/` mention, a "missing"/"not found"/"does not exist"
+  phrase, and an explicit `npm run build` mention, all together.
+
+A failure that only mentions "dist" or "missing" in isolation, an
+assertion comparing two strings that happen to contain "dist", for example,
+is never enough by itself and stays a blocker.
+
+Alongside the named outcome, `--setup` now also runs the repo's own build
+automatically before the test check, but only when both hold: `package.json`
+has a `build` script, AND `.github/workflows/ci.yml` shows a `run:` step
+invoking `npm run build` (or the `yarn`/`pnpm` equivalent) before a step
+invoking the test script, by raw line order in that one file. This is a
+deliberately conservative, best-effort read, not a real GitHub Actions
+execution-graph evaluator:
+
+- Only `.github/workflows/ci.yml` by that exact name is read; other
+  workflow files, reusable workflows, and composite actions are not
+  consulted.
+- Only single-line `run: <command>` steps are recognized; a YAML block
+  scalar (`run: |` followed by more lines) is not parsed for its body.
+- Ordering is by line number in the file, not GitHub Actions' actual
+  job/`needs:` execution graph: a multi-job workflow whose real
+  build-before-test order comes from job dependencies rather than from
+  top-to-bottom file order is not modeled.
+
+None of these gaps can produce a false positive: every one of them can only
+make a real build-before-test convention go undetected, in which case
+`--setup` simply behaves as it always did (dependency install only, via
+`npm ci`) and the test check falls back to the named skip outcome above.
+`--setup` without a detected build-before-test convention builds nothing
+new; this repo's own CI is one such case (`vitest` runs the TypeScript
+source directly, no build step at all), and is exercised in the test suite
+as a check against a false-positive default.
+
+Confidence score: a build-required skip is scored exactly like any other
+`skip` outcome (see [docs/confidence-scoring.md](docs/confidence-scoring.md)).
+Its weight (0.2 for the test check) counts toward the confidence
+denominator but not the numerator, and the accompanying `limitations` entry
+adds the usual 0.03 penalty (capped at 0.2 total across all limitations).
+It is not scored as a `pass`, and it is not scored more harshly than an
+`npm-audit` skip for the same reason (no report to judge).
+
 When a shell-based check (lint, typecheck, test, audit, custom) fails, its
 complete stdout+stderr is written best-effort to
 `~/.agent-preflight/logs/<check>-<epoch-ms>-<pid>-<sequence>.log` — override

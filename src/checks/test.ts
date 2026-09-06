@@ -1,6 +1,7 @@
 import { CheckResult, PreflightConfig } from "../types.js";
 import {
   CheckSetResult,
+  classifyBuildRequiredFailure,
   commandExists,
   createProjectContext,
   getConfiguredCommands,
@@ -55,7 +56,33 @@ export async function runTestChecks(
           logDir: config.logDir,
         });
         if (result.check) {
-          checks.push(result.check);
+          // Decision (c) (see README's "Build-required test classification"
+          // and CHANGELOG): a `npm test` failure whose captured output
+          // names a missing `dist/` artifact is a distinct, named outcome
+          // -- `skip` with the remedy in the message -- not a blocker,
+          // because it means the workspace's own test enforces a build
+          // precondition preflight has not met, not that the code under
+          // test is actually broken. Scoped to this default-detected
+          // `npm run test` check only: a configured `commands.test`
+          // override (the branch at the top of this function) is not
+          // classified. Only ever downgrades a `fail`; `classifyBuildRequiredFailure`
+          // requires concrete evidence (see its own comment), so a genuine
+          // failure is never reclassified.
+          const classification =
+            result.check.status === "fail" ? classifyBuildRequiredFailure(result.rawOutput) : { matched: false };
+          if (classification.matched) {
+            const cause = classification.cause ?? "dist/ appears to be missing";
+            const remedy =
+              "run `npm run build` first (or rerun preflight with `--setup`, which builds automatically when this repo's CI shows build-before-test)";
+            checks.push({
+              ...result.check,
+              status: "skip",
+              message: `npm test not evaluated: build required before test (${cause}); ${remedy}`,
+            });
+            limitations.push(`npm test skipped: build required before test (${cause}); ${remedy}`);
+          } else {
+            checks.push(result.check);
+          }
         }
         if (result.limitation) {
           limitations.push(result.limitation);
