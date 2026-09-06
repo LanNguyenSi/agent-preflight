@@ -347,22 +347,33 @@ describe("classifyBuildRequiredTestFailure (unit)", () => {
   });
 
   it("stays a blocker when one failing workspace has no build-required evidence, even if another does", () => {
+    // Deliberately orders the build-required workspace FIRST and the
+    // genuinely broken one SECOND: a mutant that disables the "every
+    // failing workspace must match" guard and instead only looks at the
+    // FIRST failing segment's own classification would still report
+    // `matched: false` by coincidence if the broken workspace happened to
+    // run first (its own classification is already `false`). Putting the
+    // build-required (`matched: true`) segment first means only the real
+    // guard -- not this ordering accident -- can produce `false` here (see
+    // the fixture's own directory naming for the same reasoning against
+    // the real npm fan-out: `packages/z-broken` sorts after
+    // `packages/needs-build`).
     const output = [
-      "> broken@1.0.0 test",
-      "> node test.js",
-      "",
-      "AssertionError [ERR_ASSERTION]: deliberately wrong assertion",
-      "2 !== 3",
-      "    at Object.<anonymous> (/repo/packages/broken/test.js:6:8)",
-      "npm error Lifecycle script `test` failed with error:",
-      "npm error command failed",
-      "",
       "> needs-build@1.0.0 test",
       "> node test.js",
       "",
       "Error: Cannot find module './dist/index.js'",
       "Require stack:",
       "- /repo/packages/needs-build/test.js",
+      "npm error Lifecycle script `test` failed with error:",
+      "npm error command failed",
+      "",
+      "> broken@1.0.0 test",
+      "> node test.js",
+      "",
+      "AssertionError [ERR_ASSERTION]: deliberately wrong assertion",
+      "2 !== 3",
+      "    at Object.<anonymous> (/repo/packages/broken/test.js:6:8)",
       "npm error Lifecycle script `test` failed with error:",
       "npm error command failed",
     ].join("\n");
