@@ -266,10 +266,21 @@ function pickBoolean(
   return undefined;
 }
 
-// A millisecond budget: any non-integer, zero, or negative value is rejected
-// rather than merged, so a typo can never disable a timeout or make one
-// expire instantly.
-function pickPositiveInteger(
+// Upper bound for every `*TimeoutMs` field the config exposes (currently only
+// `setup.buildTimeoutMs`). Node's timer APIs silently clamp an out-of-range
+// delay (e.g. 1e21 becomes ~24.8 days, per Node's 32-bit signed int32 clamp)
+// instead of throwing, so an absurdly large value would otherwise pass a
+// plain "is it a positive integer" check and take effect as something the
+// config never asked for. One day is far above any realistic build budget
+// while still catching that failure mode.
+const MAX_TIMEOUT_MS = 86_400_000; // one day, in milliseconds
+
+// Shared validator for every `*TimeoutMs` config field: finite, integer,
+// greater than zero, and no greater than `MAX_TIMEOUT_MS`. A value outside
+// this range is dropped (warn-and-drop convention) rather than merged, so a
+// typo or an absurd value can neither disable the timeout nor let it be
+// silently clamped by Node's timer implementation.
+function pickTimeoutMs(
   source: Record<string, unknown>,
   key: string,
   warnings: string[],
@@ -277,8 +288,17 @@ function pickPositiveInteger(
 ): number | undefined {
   if (!(key in source)) return undefined;
   const value = source[key];
-  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
-  warnings.push(`${label}: expected a positive integer, got ${describeType(value)}; ignoring this field`);
+  if (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value > 0 &&
+    value <= MAX_TIMEOUT_MS
+  ) {
+    return value;
+  }
+  warnings.push(
+    `${label}: expected a positive integer no greater than ${MAX_TIMEOUT_MS} (one day, in milliseconds), got ${describeType(value)}; ignoring this field`
+  );
   return undefined;
 }
 
@@ -386,7 +406,7 @@ function pickSetup(
   const setup: NonNullable<PreflightConfig["setup"]> = {};
   const enabled = pickBoolean(value, "enabled", warnings, "setup.enabled");
   if (enabled !== undefined) setup.enabled = enabled;
-  const buildTimeoutMs = pickPositiveInteger(value, "buildTimeoutMs", warnings, "setup.buildTimeoutMs");
+  const buildTimeoutMs = pickTimeoutMs(value, "buildTimeoutMs", warnings, "setup.buildTimeoutMs");
   if (buildTimeoutMs !== undefined) setup.buildTimeoutMs = buildTimeoutMs;
 
   warnUnknownKeys(value, SETUP_KEYS, "setup", warnings);

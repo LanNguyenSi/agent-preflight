@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   The check now resolves the real git/worktree root, rebases changed sources
   into the evaluated target, and excludes sibling paths by directory segment.
 
+- **`setup.buildTimeoutMs` now rejects non-finite, non-integer, non-positive
+  or absurdly large values instead of clamping** (task 17d1851f). Every
+  config field ending in `TimeoutMs` (currently the only one is
+  `setup.buildTimeoutMs`; `pickTimeoutMs` in `src/config.ts` is the one shared
+  validator every such field goes through) previously accepted any positive
+  number, including `1e21`, which Node's timer APIs would then silently clamp
+  to about 24.8 days or 1 ms depending on the API rather than honoring the
+  configured value or erroring. `pickTimeoutMs` now drops (warn-and-drop, so
+  the default applies) any value that is not a finite, integer, positive
+  number no greater than a new named upper bound, `MAX_TIMEOUT_MS` (86400000
+  ms, one day), naming the field and the accepted range in the warning.
+
 ## [0.5.0] - 2026-09-04
 
 ### Added

@@ -72,25 +72,45 @@ describe("validateConfig", () => {
   });
 
   // `setup.buildTimeoutMs` is the budget the `--setup` build step runs under.
-  // A value that is not a positive integer is dropped rather than merged, so a
-  // typo can neither disable the timeout nor make the build expire instantly.
+  // A value that is not a finite positive integer within the accepted range
+  // (task 17d1851f: up to one day, 86400000 ms) is dropped rather than
+  // merged, so a typo or an absurd value can neither disable the timeout nor
+  // let it be silently clamped by Node's timer implementation (e.g. 1e21
+  // clamps to ~24.8 days instead of throwing).
   it.each([
-    [0, "number"],
+    [1e21, "number"],
+    [Infinity, "number"],
+    [NaN, "number"],
     [-1, "number"],
-    [300.5, "number"],
-    ["300", "string"],
+    [0, "number"],
+    [1.5, "number"],
+    ["30000", "string"],
+    [86_400_001, "number"],
     [true, "boolean"],
-  ])("drops a setup.buildTimeoutMs that is not a positive integer (%p)", (value, type) => {
+  ])("drops a setup.buildTimeoutMs that is not a positive integer up to one day (%p)", (value, type) => {
     const { config, warnings } = validateConfig({ setup: { enabled: true, buildTimeoutMs: value } });
     expect(config.setup).toEqual({ enabled: true });
     expect(warnings).toEqual([
-      `setup.buildTimeoutMs: expected a positive integer, got ${type}; ignoring this field`,
+      "setup.buildTimeoutMs: expected a positive integer no greater than 86400000 (one day, in milliseconds), " +
+        `got ${type}; ignoring this field`,
     ]);
   });
 
   it("keeps a positive integer setup.buildTimeoutMs", () => {
     const { config, warnings } = validateConfig({ setup: { enabled: true, buildTimeoutMs: 60_000 } });
     expect(config.setup).toEqual({ enabled: true, buildTimeoutMs: 60_000 });
+    expect(warnings).toEqual([]);
+  });
+
+  it("keeps setup.buildTimeoutMs of 30000", () => {
+    const { config, warnings } = validateConfig({ setup: { enabled: true, buildTimeoutMs: 30_000 } });
+    expect(config.setup).toEqual({ enabled: true, buildTimeoutMs: 30_000 });
+    expect(warnings).toEqual([]);
+  });
+
+  it("keeps setup.buildTimeoutMs at exactly the one-day upper bound", () => {
+    const { config, warnings } = validateConfig({ setup: { enabled: true, buildTimeoutMs: 86_400_000 } });
+    expect(config.setup).toEqual({ enabled: true, buildTimeoutMs: 86_400_000 });
     expect(warnings).toEqual([]);
   });
 
