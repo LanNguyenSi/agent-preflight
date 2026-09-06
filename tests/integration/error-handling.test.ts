@@ -58,72 +58,77 @@ describe('Error Handling Integration Tests', () => {
     expect(config.checks).toBeDefined();
   });
 
-  it('should handle repositories without package.json', async () => {
+  it('should handle repositories without package.json', { timeout: 5000 }, async () => {
+    // 5000ms budget: a regression toward the shared-/tmp cause below (or
+    // any other walk of an unbounded tree) fails loudly instead of racing
+    // back up to the 30s per-test default.
     const config = {
       checks: {
         audit: true, // npm audit requires package.json
       },
     };
 
-    // The audit check itself resolves in milliseconds (measured directly:
-    // ~16ms). The case timed out (26-33s against the 30s per-test default)
-    // because it pointed runPreflight() at the shared, unfiltered `/tmp`
-    // (measured on this machine: 1133 top-level entries, ~22GB) while
-    // leaving every other checks.* toggle at its default (on): secrets.ts's
-    // scanDir() walks the whole target tree with no size/entry cap (only
-    // node_modules/.git/dist/etc. are skipped, not an arbitrary huge
-    // directory), so it alone measured ~29.9s here scanning all of /tmp,
-    // not anything under test. A fresh, empty mkdtemp directory has no
-    // package.json (preserving the case's intent) and nothing for
-    // secretDetection (or any other default-on check) to walk, so it
-    // resolves in milliseconds instead of racing the timeout.
+    // The case used to point runPreflight() at the shared, unfiltered
+    // `/tmp` while leaving every other checks.* toggle at its default
+    // (on): secrets.ts's scanDir() walks the whole target tree (only a
+    // per-file 2 MiB cap and a fixed SKIP_DIRS list, no cap on the tree
+    // itself), so the secret scan alone raced the 30s per-test timeout
+    // against everything else under /tmp, not anything under test. A
+    // fresh, empty mkdtemp directory has no package.json (preserving the
+    // case's intent) and nothing for secretDetection (or any other
+    // default-on check) to walk.
     const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-no-pkg-json-'));
     try {
-      // Should handle missing package.json gracefully
       const result = await runPreflight(emptyDir, config);
       expect(result).toBeDefined();
 
-      // Audit check should either skip or report missing package.json
+      // With no package.json, hasNodeProject() is false, so audit.ts never
+      // reaches a node-specific branch and falls through to its final
+      // catch-all: no audit check is emitted at all, and the skip reason
+      // is surfaced only as a limitation string.
       const auditChecks = result.checks.filter((c) =>
         c.name.toLowerCase().includes('audit')
       );
-      if (auditChecks.length > 0) {
-        // Should have some status (pass, fail, or warn)
-        expect(['pass', 'fail', 'warn']).toContain(auditChecks[0].status);
-      }
+      expect(auditChecks).toHaveLength(0);
+      expect(result.limitations).toContain(
+        'No supported audit command found; audit check skipped'
+      );
     } finally {
       fs.rmSync(emptyDir, { recursive: true, force: true });
     }
   });
 
-  it('should handle repositories without tsconfig.json', async () => {
+  it('should handle repositories without tsconfig.json', { timeout: 5000 }, async () => {
+    // Same cause and fix as the no-package.json case above; 5000ms budget
+    // for the same reason.
     const config = {
       checks: {
         typecheck: true, // TypeScript check requires tsconfig.json
       },
     };
 
-    // Same shared-/tmp cause as the "without package.json" case above:
-    // leaving every other checks.* toggle at its default (on) means
-    // secretDetection (and friends) walk the whole `/tmp` tree (measured
-    // on this machine: 1133 top-level entries, ~22GB), which alone
-    // measured ~29.9s in the sibling case; this case measured
-    // 31466ms/35837ms/37559ms here, timing out against the 30s default.
-    // A fresh, empty mkdtemp directory has no tsconfig.json (preserving
-    // the case's intent) and nothing for the other default-on checks to
-    // walk, so it resolves in milliseconds instead.
     const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-no-tsconfig-'));
     try {
+      // A minimal package.json makes hasNodeProject() true so typecheck.ts
+      // takes its "has a node project, but no tsconfig.json" branch
+      // (src/checks/typecheck.ts) instead of falling through to the
+      // no-node-project catch-all; it pushes a limitation and never spawns
+      // tsc, so this stays in the milliseconds.
+      fs.writeFileSync(
+        path.join(emptyDir, 'package.json'),
+        JSON.stringify({ name: 'preflight-no-tsconfig-fixture', version: '0.0.0' })
+      );
+
       const result = await runPreflight(emptyDir, config);
       expect(result).toBeDefined();
 
-      // Typecheck should either skip or report missing tsconfig
       const typecheckChecks = result.checks.filter((c) =>
         c.name.toLowerCase().includes('typecheck')
       );
-      if (typecheckChecks.length > 0) {
-        expect(['pass', 'fail', 'warn']).toContain(typecheckChecks[0].status);
-      }
+      expect(typecheckChecks).toHaveLength(0);
+      expect(result.limitations).toContain(
+        'No tsconfig.json found; TypeScript check skipped'
+      );
     } finally {
       fs.rmSync(emptyDir, { recursive: true, force: true });
     }
