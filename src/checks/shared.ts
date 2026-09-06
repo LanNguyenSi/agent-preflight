@@ -302,6 +302,11 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
 // source (this very repo) would report `ready: true` for a genuinely broken
 // suite.
 //
+// A third condition sits alongside them, and it is about the PACKAGE rather
+// than about any one path: a package that already holds build output is
+// partially built, not unbuilt, and never downgrades
+// (`evaluatePartialBuild`; see its own section comment).
+//
 // The corroboration is a PATH rule, never a text match. Every path-shaped
 // token on a line is resolved (absolute as printed, `./`/`../` against the
 // failing package's own directory) and accepted only when the resolved path
@@ -314,32 +319,32 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
 // stack frame through `node_modules/vitest/dist/` -- each of them hiding a
 // genuinely broken package behind `ready: true`.
 //
-// On top of all that, no path corroborates at all unless the package's
-// BUILD OUTPUT DIRECTORY is absent or empty (`matchesArtifactAnchor`). A
-// package can declare an artifact its build never emits (a stale `types`, a
-// dropped `exports` subpath, a `bin` that moved), so the precondition holds
-// forever while the real `dist/` is on disk and is what the tests load. A
-// directory holding anything at all means a build DID run and did not produce
-// that artifact, which no further build will fix -- so that state is not "not
-// built yet" and must not be reported as it. Every failure of such a package
-// (a stack frame inside the live `dist/`, an `ENOENT` on an asset the build
-// never copies, a `Cannot find module` for the never-emitted artifact itself)
-// used to read as a missing build and stayed `ready: true` even after a
-// successful `npm run build`.
+// On top of all that, nothing is downgraded for a package that is PARTIALLY
+// BUILT: one whose own output directories already hold something
+// (`evaluatePartialBuild`). A package can declare an artifact its build never
+// emits (a stale `types`, a dropped `exports` subpath, a `bin` that moved), so
+// the precondition holds forever while the real `dist/` is on disk and is what
+// the tests load. Output already on disk means a build DID run and did not
+// produce that artifact, which no further build will fix -- so that state is
+// not "not built yet" and must not be reported as it. Every failure of such a
+// package (a stack frame inside the live `dist/`, an `ENOENT` on an asset the
+// build never copies, a `Cannot find module` for the never-emitted artifact
+// itself) used to read as a missing build and stayed `ready: true` even after
+// a successful `npm run build`.
 //
 // The deliberate cost: a STALE partial output directory -- an older build
 // missing a newly added entry -- now blocks instead of skipping. The remedy is
 // the same build, and blocking is the safe direction for a verdict that opens
 // push gates.
 //
-// What stays indistinguishable, by construction: a package whose build-output
-// directory is ABSENT (or empty) and whose failure names a path inside that
-// directory -- a stale reference to a `dist/old.js` that a build would not
-// recreate either. Nothing on disk separates that from "not built yet" until a
-// build has run, and the remedy the skip names -- run the build, or rerun with
-// `--setup` -- is exactly what resolves it either way: after a successful build
-// the output directory holds entries, so every later failure is reported as
-// genuine.
+// What stays indistinguishable, by construction: a package with NO output on
+// disk at all (every output directory it identifies absent or empty) whose
+// failure names a path inside one of them -- a stale reference to a
+// `dist/old.js` that a build would not recreate either. Nothing on disk
+// separates that from "not built yet" until a build has run, and the remedy the
+// skip names -- run the build, or rerun with `--setup` -- is exactly what
+// resolves it either way: after a successful build the output directory holds
+// entries, so every later failure is reported as genuine.
 
 // `exports` conditions whose targets are treated as declared build output.
 // Other conditions (`node-addons`, `browser`, custom ones) are not walked:
@@ -735,15 +740,13 @@ function nearestPackageDir(target: string, packageDirs: string[]): string | unde
 }
 
 // Where a corroborating path is allowed to point: the missing artifact itself,
-// or anything inside the build-output directory that artifact identifies --
-// and only while that directory is absent or empty (see `matchesArtifactAnchor`).
+// or anything inside the build-output directory that artifact identifies which
+// is itself absent (see `matchesArtifactAnchor`).
 interface ArtifactAnchor {
   /** Absolute paths that ARE the missing artifact (including Node's resolution candidates). */
   exact: string[];
   /** Absolute build-output directory, when the artifact identifies one. */
   region?: string;
-  /** True when that directory exists and holds at least one entry: the package is PARTIALLY built. */
-  regionPopulated: boolean;
 }
 
 // The build-output directory ONE declared artifact identifies, spelled the way
@@ -759,34 +762,106 @@ function declaredOutputDir(missingArtifact: string): string {
   return path.extname(missingArtifact).length > 0 ? path.dirname(missingArtifact) : missingArtifact;
 }
 
-// Whether a build-output directory holds anything at all.
+// ---------------------------------------------------------------------------
+// Partially built: a property of the PACKAGE
+// ---------------------------------------------------------------------------
+//
+// "Has this package been built at all" is a property of the package, not of
+// the one artifact the precondition happens to report as missing. The build
+// output of a package lives in the directories its declared artifacts identify
+// (`dist/index.js` identifies `dist/`; a bare `dist` or a tsconfig `outDir`
+// identifies itself), plus the conventional `dist/` when it identifies none.
+// Anything at all in ANY of them means output is already on disk, so the
+// package is partially built rather than "not built yet", and none of its
+// failures may be downgraded.
+//
+// Deciding this from the missing artifact's own directory (the earlier rule)
+// read the wrong directory whenever a package declares output in more than one
+// place, and both shapes are ordinary: a package whose `main: dist/index.js`
+// is built while its `types: dist/types/index.d.ts` is never emitted has a
+// populated `dist/` and an absent `dist/types/`, and one whose `exports` name
+// `./dist/index.js` and `./lib/styles.css` has a populated `dist/` and an
+// absent `lib/`. Reading only the missing artifact's directory reported both
+// as unbuilt, which is the sticky false green this rule exists to end.
+//
+// Reading the DIRECTORIES rather than only the artifacts is deliberate, and it
+// covers the artifact reading: a declared artifact on disk necessarily makes
+// its own directory non-empty. What it also catches is the state the operator
+// asked for -- any entry counts -- so a stale or placeholder-only output
+// directory (an older build, a checked-in `.gitkeep`, an OS artefact such as
+// `.DS_Store`) counts as built as well. The cost is that such a package blocks
+// instead of skipping; the remedy is the same build, and blocking is the safe
+// direction for a verdict that opens push gates.
+
+/** How a read of one build-output directory answered. */
+type OutputDirState = "absent" | "empty" | "entries" | "unreadable";
+
+interface OutputDirReading {
+  /** The directory as the package declares it, relative to the package. */
+  dir: string;
+  state: OutputDirState;
+  /** The errno code, when the read failed for anything other than ENOENT. */
+  errorCode?: string;
+}
+
+// Reads ONE build-output directory.
 //
 // Only an ENOENT means "not there": that is the state this whole feature is
 // about, an output directory a build has not created yet. Every other failure
 // (a `dist` that is a FILE, a directory that cannot be read) leaves the state
-// unproven, and an unproven state must not license a downgrade -- reporting it
-// as populated keeps the check a blocking `fail`, the safe direction for a
-// verdict that opens push gates.
-function outputDirHasEntries(dir: string): boolean {
+// unproven, and an unproven state must not license a downgrade. It is reported
+// as its own `unreadable` state rather than folded into "not empty": it counts
+// as built for the decision, the safe direction, and the message then says
+// what was actually observed instead of claiming entries nobody counted.
+function readOutputDir(pkgDir: string, dir: string): OutputDirReading {
   try {
-    return fs.readdirSync(dir).length > 0;
+    return { dir, state: fs.readdirSync(path.resolve(pkgDir, dir)).length > 0 ? "entries" : "empty" };
   } catch (error) {
-    return (error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT";
+    const errorCode = (error as NodeJS.ErrnoException | undefined)?.code;
+    return errorCode === "ENOENT" ? { dir, state: "absent" } : { dir, state: "unreadable", errorCode };
   }
 }
 
-// Is the failing package PARTIALLY built rather than unbuilt: does the
-// build-output directory its missing artifact identifies exist and hold at
-// least one entry? Returns that directory (canonicalized) when it does.
-// `pkgDir` and `missingArtifact` are the caller's spellings; canonicalization
-// happens here, exactly as it does inside `findMissingArtifactEvidence`, so the
-// message and the decision read the same directory.
-function partiallyBuiltOutputDir(pkgDir: string, missingArtifact: string): string | undefined {
+// Every directory a package identifies as its own build output: the directory
+// of each artifact it declares, and the conventional `dist/` when it
+// identifies none of its own (a package that declares nothing, or declares
+// only artifacts at its own root -- a whole package is not build output, see
+// `declaredOutputDir`). Each candidate is canonicalized before the containment
+// test, so a `dist` symlinked out of the package cannot make a foreign
+// directory count as this package's output.
+function packageOutputDirs(pkgDir: string, pkg: PackageJson | undefined): string[] {
   const cache = new Map<string, string>();
   const canonicalize = (target: string): string => canonicalizePath(target, cache);
   const canonicalPkgDir = canonicalize(path.resolve(pkgDir));
-  const region = anchorRegion(canonicalPkgDir, missingArtifact, canonicalize);
-  return region !== undefined && outputDirHasEntries(region) ? region : undefined;
+  // The containment test runs on the CANONICAL path and applies to the
+  // fallback as well: a `dist` symlinked out of the package resolves to
+  // someone else's directory, and what is in there says nothing about whether
+  // this package was built.
+  const isOwnOutput = (dir: string): boolean =>
+    isInside(canonicalPkgDir, canonicalize(path.resolve(pkgDir, dir)));
+
+  const declared = [...new Set(declaredBuildArtifacts(pkgDir, pkg).map(declaredOutputDir))].filter(isOwnOutput);
+  return declared.length > 0 ? declared : [DEFAULT_BUILD_OUTPUT_DIR].filter(isOwnOutput);
+}
+
+export interface PartialBuildState {
+  /** True when this package already holds build output of its own. */
+  partiallyBuilt: boolean;
+  /** The reading that decided it, for the message. */
+  evidence?: OutputDirReading;
+}
+
+// The package-level rule (see the section comment above). The directory state
+// is read here, at classification time, which is AFTER the test run: a test
+// that writes into its package's output directory therefore makes that package
+// read as partially built. Nothing is snapshotted beforehand, because a
+// snapshot would answer a question about a directory the failing run no longer
+// had; the cost is documented in the README instead.
+export function evaluatePartialBuild(pkgDir: string): PartialBuildState {
+  const pkg = readJsonFile<PackageJson>(path.join(pkgDir, "package.json"));
+  const readings = packageOutputDirs(pkgDir, pkg).map((dir) => readOutputDir(pkgDir, dir));
+  const evidence = readings.find((reading) => reading.state === "entries" || reading.state === "unreadable");
+  return { partiallyBuilt: evidence !== undefined, evidence };
 }
 
 // The build-output region of an anchor: the declared output directory,
@@ -822,8 +897,7 @@ function anchorRegion(
 // A region that is not strictly BELOW the package directory is dropped (see
 // `anchorRegion`). An artifact declared at the package root
 // (`main: "index.js"`) therefore corroborates by exact match only, instead of
-// accepting every path in the package -- and, having no region, it is not
-// subject to the emptiness rule either.
+// accepting every path in the package.
 function artifactAnchor(
   pkgDir: string,
   missingArtifact: string,
@@ -837,49 +911,27 @@ function artifactAnchor(
     exact.push(path.join(artifactAbs, "index.js"));
   }
 
-  const region = anchorRegion(pkgDir, missingArtifact, canonicalize);
-  return {
-    exact: [...new Set(exact.map(canonicalize))],
-    region,
-    regionPopulated: region !== undefined && outputDirHasEntries(region),
-  };
+  return { exact: [...new Set(exact.map(canonicalize))], region: anchorRegion(pkgDir, missingArtifact, canonicalize) };
 }
 
-// A path is anchored when the package's build output is absent or empty AND
-// the path IS the missing artifact, or names something in the build-output
-// region that is ITSELF absent.
+// A path is anchored when it IS the missing artifact, or names something in
+// the build-output region that is ITSELF absent.
 //
-// The EMPTINESS rule (`regionPopulated`) is what keeps a PARTIALLY built
-// package honest. A package can declare an artifact its build legitimately
-// never emits (a `types: dist/index.d.ts` next to a JS-only build, a dropped
-// `exports` subpath, a `bin` that moved), so the precondition stays met
-// forever while the real `dist/` sits on disk and is exactly what the tests
-// load. An output directory that holds anything at all means a build DID run
-// and simply did not produce that artifact, which is a different problem from
-// "not built yet" and one a build does not fix: the missing artifact was never
-// going to appear. So no path corroborates at all in that state, neither the
-// artifact itself nor a sibling, and the check stays a blocking `fail` whose
-// message names both the directory and the artifact. Without this rule the
-// package's own failures -- a stack frame inside the live `dist/`, an
-// `ENOENT` on an asset the build never copies, a `Cannot find module` for the
-// never-emitted `bin` -- corroborated as "not built yet", and the run reported
-// `ready: true` and stayed that way after a successful `npm run build`.
+// This answers one question only -- can THIS path be evidence of a missing
+// build -- and deliberately not "has this package been built at all", which is
+// a property of the package and is answered by `evaluatePartialBuild` at the
+// decision site. Keeping them apart is what lets a blocking message say which
+// of the two refused the downgrade.
 //
-// The deliberate consequence: a STALE partial output directory (an older
-// build missing a newly added entry) blocks instead of skipping. The remedy is
-// the same build, and blocking is the safe direction for a verdict that opens
-// push gates.
-//
-// The absence test on the region arm is the older, narrower half of the same
-// idea, kept as an independent floor: a path that is present on disk cannot be
-// why a MISSING build broke the run. The exact arm needs no such test: the
-// precondition established those paths are missing before the anchor existed.
+// The absence test on the region arm is an independent floor: a path that is
+// present on disk cannot be why a MISSING build broke the run. The exact arm
+// needs no such test: the precondition established those paths are missing
+// before the anchor existed.
 //
 // Equality with the region counts, not just containment: an `ENOENT ...
 // scandir './dist/'` reports the build-output directory itself, which is the
 // same "not built yet" observation as a report about a file inside it.
 function matchesArtifactAnchor(resolved: string, anchor: ArtifactAnchor): boolean {
-  if (anchor.regionPopulated) return false;
   if (anchor.exact.includes(resolved)) return true;
   if (anchor.region === undefined) return false;
   if (resolved !== anchor.region && !isInside(anchor.region, resolved)) return false;
@@ -954,12 +1006,11 @@ export function findMissingArtifactEvidence(
     .map((dir) => canonicalize(path.resolve(dir)))
     .concat(repoPath, pkgDir);
   // Observation mode has no artifact to anchor to, so the whole package is the
-  // region -- and the emptiness rule is deliberately off there: a package
-  // directory always holds entries, and this mode only ever quotes a
-  // missing-file report from an already-blocking failure, it never downgrades.
+  // region: this mode only ever quotes a missing-file report from an
+  // already-blocking failure, it never downgrades.
   const anchor: ArtifactAnchor = options.missingArtifact
     ? artifactAnchor(pkgDir, options.missingArtifact, canonicalize)
-    : { exact: [], region: pkgDir, regionPopulated: false };
+    : { exact: [], region: pkgDir };
   const context: CorroborationContext = { repoPath, pkgDir, packageDirs, anchor };
   const accepts = (token: string): boolean => {
     const resolved = resolvePathToken(token, pkgDir);
@@ -1065,18 +1116,29 @@ export function evaluateBuildRequiredTestFailure(options: {
     }
   };
 
-  // The corroboration is only ever asked the decision question -- "is THIS
-  // failure about THAT missing artifact" -- so it is called with the artifact
-  // the precondition found, and not called at all when there is none.
-  const evaluated = units.map((unit) => {
+  // Three questions per failing unit, and all three must agree before anything
+  // is downgraded:
+  //   - the precondition: could a build change this outcome at all;
+  //   - the package state: has this package already been built (a partially
+  //     built package is not an unbuilt one, and never downgrades);
+  //   - the corroboration: is THIS failure about the missing artifact.
+  // The corroboration is asked even for a partially built package, whose
+  // verdict it can no longer change, because the blocking message says
+  // something different when the failure does not name the artifact at all.
+  const evaluated: EvaluatedUnit[] = units.map((unit) => {
     const precondition = evaluateBuildPrecondition(unit.pkgDir);
-    const evidence = precondition.met
-      ? corroborate(unit.segment, unit.pkgDir, precondition.missingArtifact)
-      : undefined;
-    return { unit, precondition, evidence };
+    if (!precondition.met) return { unit, precondition };
+    return {
+      unit,
+      precondition,
+      partial: evaluatePartialBuild(unit.pkgDir),
+      evidence: corroborate(unit.segment, unit.pkgDir, precondition.missingArtifact),
+    };
   });
 
-  const blocking = evaluated.find((entry) => !entry.precondition.met || !entry.evidence);
+  const blocking = evaluated.find(
+    (entry) => !entry.precondition.met || entry.partial?.partiallyBuilt === true || !entry.evidence
+  );
   if (blocking) {
     const note = describeBlockingUnit(blocking, repoPath, corroborate);
     return { downgrade: false, note, limitation: corroborationLimitation(corroborationFailures) };
@@ -1141,18 +1203,27 @@ function missingArtifactLabel(
   return path.relative(repoPath, path.resolve(pkgDir, missingArtifact ?? DEFAULT_BUILD_OUTPUT_DIR));
 }
 
-// The build-output directory as it is NAMED in a message, under the same
-// spelling discipline as `missingArtifactLabel` and derived from the same
-// `declaredOutputDir` the decision uses.
-function outputDirLabel(repoPath: string, pkgDir: string, missingArtifact: string): string {
-  return path.relative(repoPath, path.resolve(pkgDir, declaredOutputDir(missingArtifact)));
+// A build-output directory as it is NAMED in a message, under the same
+// spelling discipline as `missingArtifactLabel`. The directory comes from the
+// same reading the decision used, so the two can never disagree about which
+// directory is meant.
+function outputDirLabel(repoPath: string, pkgDir: string, outputDir: string): string {
+  return path.relative(repoPath, path.resolve(pkgDir, outputDir));
+}
+
+interface EvaluatedUnit {
+  unit: FailingUnit;
+  precondition: BuildPreconditionResult;
+  /** Only evaluated when the precondition is met. */
+  partial?: PartialBuildState;
+  evidence?: string;
 }
 
 // Explains why a failing unit blocks instead of downgrading -- but only when
 // its output actually mentions a missing artifact, so an ordinary failing
 // suite keeps its plain "npm test failed" message.
 function describeBlockingUnit(
-  entry: { unit: FailingUnit; precondition: BuildPreconditionResult; evidence?: string },
+  entry: EvaluatedUnit,
   repoPath: string,
   corroborate: (segment: string, pkgDir: string, missingArtifact?: string) => string | undefined
 ): string | undefined {
@@ -1174,18 +1245,22 @@ function describeBlockingUnit(
 
   const artifact = missingArtifactLabel(repoPath, entry.unit.pkgDir, entry.precondition.missingArtifact);
 
-  // Partially built, not unbuilt: the build-output directory is on disk and
-  // holds entries, so a build ran and simply did not produce this artifact.
-  // Worth saying explicitly, because the operator's own reading of the failure
-  // ("something under dist/ is missing") is exactly the one this verdict
-  // refuses, and the message has to say which directory made the difference.
-  const missingArtifact = entry.precondition.missingArtifact;
-  const outputDir = missingArtifact
-    ? partiallyBuiltOutputDir(entry.unit.pkgDir, missingArtifact)
-    : undefined;
-  if (outputDir !== undefined && missingArtifact !== undefined) {
-    const dir = outputDirLabel(repoPath, entry.unit.pkgDir, missingArtifact);
-    return `the build output directory (${dir}) of ${where} exists and is not empty, but a declared build artifact (${artifact}) is missing from it, so a build ran and did not produce that artifact; the failure is reported as a real failure`;
+  // Partially built, not unbuilt: this package already holds build output, so a
+  // build is not what is missing. Said explicitly only when the failure does
+  // name a path in that package's output, because that is the reading this
+  // verdict refuses ("something under dist/ is missing, so build it") and the
+  // message then has to name the directory that made the difference. The
+  // directory that decided it is not necessarily the missing artifact's own:
+  // a package whose `main` is built and whose `types` or second `exports`
+  // target never was has output in one directory and the gap in another.
+  const reading = entry.partial?.partiallyBuilt === true ? entry.partial.evidence : undefined;
+  if (reading && entry.evidence) {
+    const dir = outputDirLabel(repoPath, entry.unit.pkgDir, reading.dir);
+    const observed =
+      reading.state === "entries"
+        ? `the build output directory (${dir}) of ${where} exists and is not empty`
+        : `the build output directory (${dir}) of ${where} could not be read (${reading.errorCode ?? "unknown error"}), so whether ${where} is built at all is unproven`;
+    return `${observed}, but a declared build artifact (${artifact}) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale`;
   }
 
   return `a declared build artifact (${artifact}) is missing, but the failure in ${where} does not name it, so it is reported as a real failure`;

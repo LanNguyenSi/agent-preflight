@@ -1,0 +1,14 @@
+{
+  "name": "fixture-single-package-second-output-dir",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./styles": "./lib/styles.css"
+  },
+  "scripts": {
+    "build": "node build.js",
+    "test": "node test.js"
+  }
+}

@@ -12,11 +12,13 @@ import { runPreflight } from "../src/runner.js";
 import {
   evaluateBuildPrecondition,
   evaluateBuildRequiredTestFailure,
+  evaluatePartialBuild,
   findMissingArtifactEvidence,
   rootBuildScriptFansOutToWorkspaces,
   splitWorkspaceSegments,
   workflowTextShowsBuildBeforeTest,
 } from "../src/checks/shared.js";
+import type { BuildRequiredEvaluation } from "../src/checks/shared.js";
 
 // Fixture repro for agent-tasks c5810885: `preflight run` in a fresh worktree
 // of an npm-workspaces monorepo reported `ready: false`, blocker "npm test
@@ -203,10 +205,15 @@ describe("partially built package, declared `types` never emitted (fixture: sing
       const first = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
       expect(testCheckOf(first)?.status).toBe("fail");
       expect(testCheckOf(first)?.message).not.toMatch(/build required before test/);
+      // This failure is a genuine bug inside the live dist/, so the only path
+      // it names IS on disk and nothing in the package's output is blamed. The
+      // message therefore stays the plain one: the artifact is missing and the
+      // failure does not name it. Explaining a partially built output
+      // directory here would answer a question the failure never asked.
       expect(testCheckOf(first)?.message).toMatch(
-        /build output directory \(dist\) of this repo exists and is not empty/
+        /a declared build artifact \(dist\/index\.d\.ts\) is missing, but the failure in this repo does not name it/
       );
-      expect(testCheckOf(first)?.message).toMatch(/dist\/index\.d\.ts/);
+      expect(testCheckOf(first)?.message).not.toMatch(/exists and is not empty/);
       expect(first.ready).toBe(false);
       expect(first.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
 
@@ -238,11 +245,93 @@ describe("partially built package, `exports` subpath never emitted (fixture: sin
       const testCheck = testCheckOf(result);
       expect(testCheck?.status).toBe("fail");
       expect(testCheck?.message).not.toMatch(/build required before test/);
+      // As in the `types` fixture above: the regression is inside the live
+      // dist/index.js, so the failure names only a path that is on disk and
+      // the plain sentence applies.
+      expect(testCheck?.message).toMatch(
+        /a declared build artifact \(dist\/extra\.js\) is missing, but the failure in this repo does not name it/
+      );
+      expect(testCheck?.message).not.toMatch(/exists and is not empty/);
+      expect(result.ready).toBe(false);
+      expect(result.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
+    });
+  });
+});
+
+// The two shapes that read the WRONG directory while "partially built" was
+// decided from the missing artifact's own dirname: a declaration in a NESTED
+// output directory, and a second `exports` target in a different directory
+// altogether. In both, the build fills one directory the package declares and
+// never fills the other, so the missing artifact's own directory is absent
+// while the package is plainly built. Deciding it as a package property -- any
+// output directory this package identifies holding an entry -- is what
+// separates them from a genuinely unbuilt checkout, which is why both are
+// asserted in BOTH states.
+describe("nested artifact directory beside a populated one (fixture: single-package-nested-artifact-dir)", () => {
+  it("is the named skip while nothing is built, and a blocking fail once dist/ holds the build", async () => {
+    await withFixture("single-package-nested-artifact-dir", async (repoPath, logDir) => {
+      expect(fs.existsSync(path.join(repoPath, "dist"))).toBe(false);
+
+      const unbuilt = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+      expect(testCheckOf(unbuilt)?.status).toBe("skip");
+      expect(testCheckOf(unbuilt)?.message).toMatch(/build required before test/);
+      expect(unbuilt.ready).toBe(true);
+
+      execSync("npm run build", { cwd: repoPath });
+      expect(fs.readdirSync(path.join(repoPath, "dist"))).toEqual(["index.js"]);
+      expect(fs.existsSync(path.join(repoPath, "dist", "types"))).toBe(false);
+
+      const built = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+      const testCheck = testCheckOf(built);
+      expect(testCheck?.status).toBe("fail");
+      expect(testCheck?.message).not.toMatch(/build required before test/);
+      // The directory that decided it is the populated dist/, not the absent
+      // dist/types/ the missing artifact sits in.
       expect(testCheck?.message).toMatch(
         /build output directory \(dist\) of this repo exists and is not empty/
       );
-      expect(result.ready).toBe(false);
-      expect(result.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
+      expect(testCheck?.message).toMatch(/dist\/types\/index\.d\.ts/);
+      // The message names the remedy rather than only refusing the downgrade.
+      expect(testCheck?.message).toMatch(/rerun the build and preflight if this output is stale/);
+      expect(built.ready).toBe(false);
+      expect(built.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
+
+      // Sticky: a second build cannot emit the declaration either.
+      execSync("npm run build", { cwd: repoPath });
+      const again = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+      expect(testCheckOf(again)?.status).toBe("fail");
+      expect(again.ready).toBe(false);
+    });
+  });
+});
+
+describe("a second declared output directory (fixture: single-package-second-output-dir)", () => {
+  it("is the named skip while nothing is built, and a blocking fail once the first directory holds the build", async () => {
+    await withFixture("single-package-second-output-dir", async (repoPath, logDir) => {
+      expect(fs.existsSync(path.join(repoPath, "dist"))).toBe(false);
+      expect(fs.existsSync(path.join(repoPath, "lib"))).toBe(false);
+
+      const unbuilt = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+      expect(testCheckOf(unbuilt)?.status).toBe("skip");
+      expect(testCheckOf(unbuilt)?.message).toMatch(/build required before test/);
+      expect(unbuilt.ready).toBe(true);
+
+      execSync("npm run build", { cwd: repoPath });
+      expect(fs.readdirSync(path.join(repoPath, "dist"))).toEqual(["index.js"]);
+      expect(fs.existsSync(path.join(repoPath, "lib"))).toBe(false);
+
+      const built = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+      const testCheck = testCheckOf(built);
+      expect(testCheck?.status).toBe("fail");
+      expect(testCheck?.message).not.toMatch(/build required before test/);
+      // The populated directory and the missing artifact are in DIFFERENT
+      // directories here, and the message names both.
+      expect(testCheck?.message).toMatch(
+        /build output directory \(dist\) of this repo exists and is not empty/
+      );
+      expect(testCheck?.message).toMatch(/lib\/styles\.css/);
+      expect(built.ready).toBe(false);
+      expect(built.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
     });
   });
 });
@@ -1111,73 +1200,173 @@ describe("findMissingArtifactEvidence (unit, the shape a downgrade is decided in
   });
 });
 
-// The emptiness rule, and the absence rule underneath it. These use a REAL
-// directory, because both rules are about what is on disk.
-describe("findMissingArtifactEvidence (unit, a populated build output directory ends the corroboration)", () => {
+// The package-level partial-build rule, and the absence rule underneath it.
+// These use a REAL directory, because both rules are about what is on disk,
+// and they go through `evaluateBuildRequiredTestFailure` because that is where
+// the two are combined into the verdict.
+describe("the package-level partial-build rule (unit)", () => {
   // A partially built package: dist/index.js was emitted, the declared `types`
   // never was, so `dist/index.d.ts` is the missing artifact and the live dist/
-  // is the region.
+  // is what the tests load.
   const partiallyBuilt = {
     "package.json": pkg({ name: "x", main: "dist/index.js", types: "dist/index.d.ts", scripts: { build: "node build.js" } }),
     "dist/index.js": "module.exports = {};\n",
   };
 
-  it("rejects every path once the output directory holds an entry, the missing artifact included", () => {
-    withTempPackage(partiallyBuilt, (dir) => {
-      const options = { repoPath: dir, pkgDir: dir, missingArtifact: "dist/index.d.ts", packageDirs: [dir] };
+  const classify = (dir: string, output: string): BuildRequiredEvaluation =>
+    evaluateBuildRequiredTestFailure({ repoPath: dir, output });
 
+  it("refuses every downgrade once the package holds build output, the missing artifact included", () => {
+    withTempPackage(partiallyBuilt, (dir) => {
       // A genuine runtime failure's own stack frame inside the built output.
-      expect(findMissingArtifactEvidence(`    at Object.add (${path.join(dir, "dist", "index.js")}:2:9)`, options)).toBeUndefined();
+      expect(classify(dir, `    at Object.add (${path.join(dir, "dist", "index.js")}:2:9)`).downgrade).toBe(false);
       // An absent sibling inside the same populated dist/ (an asset the build
-      // never copies): accepted before the emptiness rule, rejected now.
-      expect(findMissingArtifactEvidence("Error: Cannot find module './dist/gone.js'", options)).toBeUndefined();
-      // The declared artifact itself, which the build never emits: this is the
-      // exact arm, and it is off too while the output directory holds entries.
-      expect(findMissingArtifactEvidence("Error: Cannot find module './dist/index.d.ts'", options)).toBeUndefined();
+      // never copies): corroborated before this rule, refused now.
+      expect(classify(dir, "Error: Cannot find module './dist/gone.js'").downgrade).toBe(false);
+      // The declared artifact itself, which the build never emits.
+      const artifact = classify(dir, "Error: Cannot find module './dist/index.d.ts'");
+      expect(artifact.downgrade).toBe(false);
+      expect(artifact.note).toMatch(/build output directory \(dist\) of this repo exists and is not empty/);
+      expect(artifact.note).toMatch(/rerun the build and preflight if this output is stale/);
       // And an ENOENT naming the output directory itself.
-      expect(findMissingArtifactEvidence("Error: ENOENT: no such file or directory, scandir './dist/'", options)).toBeUndefined();
+      expect(classify(dir, "Error: ENOENT: no such file or directory, scandir './dist/'").downgrade).toBe(false);
     });
   });
 
-  it("still corroborates while the output directory exists but is empty", () => {
+  it("reads EVERY output directory the package declares, not just the missing artifact's own", () => {
+    // dist/ is built and lib/ never is, so the missing artifact's own
+    // directory is absent while the package is plainly built.
     withTempPackage(
-      { "package.json": pkg({ name: "x", main: "dist/index.js", scripts: { build: "node build.js" } }) },
+      {
+        "package.json": pkg({
+          name: "x",
+          exports: { ".": "./dist/index.js", "./styles": "./lib/styles.css" },
+          scripts: { build: "node build.js" },
+        }),
+        "dist/index.js": "module.exports = {};\n",
+      },
+      (dir) => {
+        const result = classify(dir, "Error: ENOENT: no such file or directory, open './lib/styles.css'");
+        expect(result.downgrade).toBe(false);
+        // The message names the directory that decided it and the artifact
+        // that is missing, which here are two different directories.
+        expect(result.note).toMatch(/build output directory \(dist\) of this repo exists and is not empty/);
+        expect(result.note).toMatch(/lib\/styles\.css/);
+      }
+    );
+  });
+
+  it("reads a nested artifact directory the same way", () => {
+    withTempPackage(
+      {
+        "package.json": pkg({
+          name: "x",
+          main: "dist/index.js",
+          types: "dist/types/index.d.ts",
+          scripts: { build: "node build.js" },
+        }),
+        "dist/index.js": "module.exports = {};\n",
+      },
+      (dir) => {
+        const result = classify(dir, "Error: Cannot find module './dist/types/index.d.ts'");
+        expect(result.downgrade).toBe(false);
+        expect(result.note).toMatch(/build output directory \(dist\) of this repo exists and is not empty/);
+        expect(result.note).toMatch(/dist\/types\/index\.d\.ts/);
+      }
+    );
+  });
+
+  it("still downgrades while every directory the package identifies is absent or empty", () => {
+    withTempPackage(
+      {
+        "package.json": pkg({
+          name: "x",
+          main: "dist/index.js",
+          types: "types/index.d.ts",
+          scripts: { build: "node build.js" },
+        }),
+      },
       (dir) => {
         fs.mkdirSync(path.join(dir, "dist"));
-        const options = { repoPath: dir, pkgDir: dir, missingArtifact: "dist/index.js", packageDirs: [dir] };
-
-        expect(findMissingArtifactEvidence("Error: Cannot find module './dist/index.js'", options)).toContain("./dist/index.js");
-        expect(findMissingArtifactEvidence("Error: Cannot find module './dist/cli.js'", options)).toContain("./dist/cli.js");
+        expect(evaluatePartialBuild(dir).partiallyBuilt).toBe(false);
+        expect(classify(dir, "Error: Cannot find module './dist/index.js'").downgrade).toBe(true);
+        expect(classify(dir, "Error: Cannot find module './dist/cli.js'").downgrade).toBe(true);
       }
     );
   });
 
-  it("does not apply the rule to an artifact declared at the package root, which identifies no output directory", () => {
-    // `main: "index.js"` has no build-output directory of its own. The package
-    // directory always holds entries, so treating it as one would switch the
-    // corroboration off for every such package.
+  it("says what it observed when the output path is a FILE, instead of claiming entries", () => {
     withTempPackage(
-      { "package.json": pkg({ name: "x", main: "index.js", scripts: { build: "node build.js" } }) },
+      {
+        "package.json": pkg({ name: "x", main: "dist/index.js", scripts: { build: "node build.js" } }),
+        dist: "not a directory\n",
+      },
       (dir) => {
-        const evidence = findMissingArtifactEvidence("Error: Cannot find module './index.js'", {
-          repoPath: dir,
-          pkgDir: dir,
-          missingArtifact: "index.js",
-          packageDirs: [dir],
-        });
-        expect(evidence).toContain("./index.js");
+        const result = classify(dir, "Error: Cannot find module './dist/index.js'");
+        expect(result.downgrade).toBe(false);
+        expect(result.note).toMatch(/build output directory \(dist\) of this repo could not be read \(ENOTDIR\)/);
+        expect(result.note).not.toMatch(/exists and is not empty/);
       }
     );
   });
 
-  it("keeps the absence rule as an independent floor when the emptiness rule is blinded", () => {
+  it("keeps the plain sentence when a partially built package's failure names nothing in its output", () => {
+    withTempPackage(partiallyBuilt, (dir) => {
+      const result = classify(dir, "AssertionError [ERR_ASSERTION]: 2 !== 3");
+      expect(result.downgrade).toBe(false);
+      expect(result.note).toMatch(/a declared build artifact \(dist\/index\.d\.ts\) is missing, but the failure in this repo does not name it/);
+      expect(result.note).not.toMatch(/exists and is not empty/);
+    });
+  });
+
+  it("falls back to dist/ for a package that identifies no output directory of its own", () => {
+    // `main: "index.js"` has no build-output directory: its "directory" is the
+    // package, and a whole package is not build output. The conventional dist/
+    // decides instead, so the rule cannot be switched off by declaring an
+    // artifact at the package root.
+    withTempPackage(
+      {
+        "package.json": pkg({ name: "x", main: "index.js", scripts: { build: "node build.js" } }),
+        "dist/left-over.js": "module.exports = {};\n",
+      },
+      (dir) => {
+        const state = evaluatePartialBuild(dir);
+        expect(state.partiallyBuilt).toBe(true);
+        expect(state.evidence?.dir).toBe("dist");
+        expect(classify(dir, "Error: Cannot find module './index.js'").downgrade).toBe(false);
+      }
+    );
+  });
+
+  it("does not read a directory outside the package, however the package spells it", () => {
+    // A `dist` symlinked out of the package names someone else's directory,
+    // and what is in there says nothing about this package.
+    withTempPackage(
+      {
+        "package.json": pkg({ name: "x", main: "dist/index.js", scripts: { build: "node build.js" } }),
+        "outside/other.js": "module.exports = {};\n",
+      },
+      (dir) => {
+        const real = fs.realpathSync(dir);
+        fs.mkdirSync(path.join(real, "pkg"));
+        fs.writeFileSync(
+          path.join(real, "pkg", "package.json"),
+          pkg({ name: "y", main: "dist/index.js", scripts: { build: "node build.js" } })
+        );
+        fs.symlinkSync(path.join(real, "outside"), path.join(real, "pkg", "dist"));
+
+        expect(evaluatePartialBuild(path.join(real, "pkg")).partiallyBuilt).toBe(false);
+      }
+    );
+  });
+
+  it("keeps the absence rule as an independent floor when the directory read is blinded", () => {
     // The two rules answer different questions -- "has this package been built
     // at all" and "can THIS path be evidence of a missing build" -- and the
     // second must not quietly depend on the first. With the directory read
-    // reporting an empty dist/ (a race, or a future relaxation of the
-    // emptiness rule), a path that IS on disk still does not corroborate.
+    // reporting an empty dist/ (a race, or a future relaxation of the rule), a
+    // path that IS on disk still does not corroborate.
     withTempPackage(partiallyBuilt, (dir) => {
-      const options = { repoPath: dir, pkgDir: dir, missingArtifact: "dist/index.d.ts", packageDirs: [dir] };
       const realReaddir = fsDefault.readdirSync;
       const spy = vi
         .spyOn(fsDefault, "readdirSync")
@@ -1186,11 +1375,11 @@ describe("findMissingArtifactEvidence (unit, a populated build output directory 
             ? []
             : (realReaddir as (a: fs.PathLike, b?: unknown) => unknown)(target, options)) as typeof fs.readdirSync);
       try {
-        expect(findMissingArtifactEvidence(`    at Object.add (${path.join(dir, "dist", "index.js")}:2:9)`, options)).toBeUndefined();
-        // Control: with the emptiness rule blinded, an ABSENT path in the same
+        expect(classify(dir, `    at Object.add (${path.join(dir, "dist", "index.js")}:2:9)`).downgrade).toBe(false);
+        // Control: with the directory read blinded, an ABSENT path in the same
         // region does corroborate again, so the rejection above is the absence
         // rule's doing and not a side effect of the mock.
-        expect(findMissingArtifactEvidence("Error: Cannot find module './dist/gone.js'", options)).toContain("./dist/gone.js");
+        expect(classify(dir, "Error: Cannot find module './dist/gone.js'").downgrade).toBe(true);
       } finally {
         spy.mockRestore();
       }
