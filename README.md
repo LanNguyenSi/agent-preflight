@@ -267,6 +267,14 @@ Three things have to be true at once, and none of them is enough on its own.
      `.keep` that lets git carry an otherwise empty output directory), and so
      does an OS or tool artefact that happens to sit in it (a `.DS_Store`, an
      editor or bundler cache directory);
+   - so does a directory the package declares an artifact in that is not
+     build output at all (a checked-in `bin/` launcher beside a `dist/` the
+     build writes, an `exports` target inside a source directory): the rule
+     cannot tell source from output, so such a package blocks even when
+     nothing was ever built, and what fixes it is the declaration, not a
+     build. A declared directory under `node_modules` is the one exception
+     and is never read: installed dependencies say nothing about whether the
+     package was built, which is the rule condition 3 applies to paths too;
    - the directory state is read **after** the test run, when the failure is
      classified, and nothing is snapshotted beforehand: a test that itself
      writes into its package's output directory (a cache, a fixture, a
@@ -277,7 +285,8 @@ Three things have to be true at once, and none of them is enough on its own.
      case-sensitive **path** comparison in condition 3, and deliberately so:
      one asks the OS what is on disk, the other compares two strings.
 
-   In each case the remedy is the same build, and blocking is the safe
+   The remedy is the build, or, where a declaration names a directory that
+   is not build output, the declaration; either way blocking is the safe
    direction for a tool whose `ready: true` opens push gates. When such a
    package's failure does name a path in its own output, the message says so,
    naming the directory that decided it, the artifact that is missing, and the

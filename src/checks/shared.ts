@@ -837,8 +837,14 @@ function packageOutputDirs(pkgDir: string, pkg: PackageJson | undefined): string
   // fallback as well: a `dist` symlinked out of the package resolves to
   // someone else's directory, and what is in there says nothing about whether
   // this package was built.
-  const isOwnOutput = (dir: string): boolean =>
-    isInside(canonicalPkgDir, canonicalize(path.resolve(pkgDir, dir)));
+  // A directory under `node_modules` is never this package's output either,
+  // whatever the manifest declares there (a `bin` pointing at an installed
+  // tool): installed dependencies say nothing about whether the package was
+  // built. Same rule the corroboration applies to the paths a failure names.
+  const isOwnOutput = (dir: string): boolean => {
+    const canonical = canonicalize(path.resolve(pkgDir, dir));
+    return isInside(canonicalPkgDir, canonical) && !containsNodeModulesSegment(canonical);
+  };
 
   const declared = [...new Set(declaredBuildArtifacts(pkgDir, pkg).map(declaredOutputDir))].filter(isOwnOutput);
   return declared.length > 0 ? declared : [DEFAULT_BUILD_OUTPUT_DIR].filter(isOwnOutput);
@@ -1256,11 +1262,13 @@ function describeBlockingUnit(
   const reading = entry.partial?.partiallyBuilt === true ? entry.partial.evidence : undefined;
   if (reading && entry.evidence) {
     const dir = outputDirLabel(repoPath, entry.unit.pkgDir, reading.dir);
-    const observed =
-      reading.state === "entries"
-        ? `the build output directory (${dir}) of ${where} exists and is not empty`
-        : `the build output directory (${dir}) of ${where} could not be read (${reading.errorCode ?? "unknown error"}), so whether ${where} is built at all is unproven`;
-    return `${observed}, but a declared build artifact (${artifact}) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale`;
+    if (reading.state === "entries") {
+      return `the build output directory (${dir}) of ${where} exists and is not empty, but a declared build artifact (${artifact}) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale`;
+    }
+    // Unreadable: nothing was counted, so the message claims nothing about
+    // what the output contains; unproven is treated as built (the safe
+    // direction) and said as such.
+    return `the build output directory (${dir}) of ${where} could not be read (${reading.errorCode ?? "unknown error"}), so whether ${where} is built at all is unproven, and a declared build artifact (${artifact}) is not on disk; the failure is reported as a real failure; make that path a readable directory, then rerun the build and preflight`;
   }
 
   return `a declared build artifact (${artifact}) is missing, but the failure in ${where} does not name it, so it is reported as a real failure`;

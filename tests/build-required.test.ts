@@ -254,6 +254,12 @@ describe("partially built package, `exports` subpath never emitted (fixture: sin
       expect(testCheck?.message).not.toMatch(/exists and is not empty/);
       expect(result.ready).toBe(false);
       expect(result.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
+
+      // Sticky: a second build cannot emit the declaration either.
+      execSync("npm run build", { cwd: repoPath });
+      const again = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+      expect(testCheckOf(again)?.status).toBe("fail");
+      expect(again.ready).toBe(false);
     });
   });
 });
@@ -332,6 +338,12 @@ describe("a second declared output directory (fixture: single-package-second-out
       expect(testCheck?.message).toMatch(/lib\/styles\.css/);
       expect(built.ready).toBe(false);
       expect(built.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
+
+      // Sticky: a second build cannot emit the declaration either.
+      execSync("npm run build", { cwd: repoPath });
+      const again = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+      expect(testCheckOf(again)?.status).toBe("fail");
+      expect(again.ready).toBe(false);
     });
   });
 });
@@ -371,6 +383,12 @@ describe("declared `bin` the build never emits (fixture: single-package-bin-neve
       expect(testCheck?.message).toMatch(/dist\/cli\.js/);
       expect(built.ready).toBe(false);
       expect(built.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
+
+      // Sticky: a second build cannot emit the declaration either.
+      execSync("npm run build", { cwd: repoPath });
+      const again = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+      expect(testCheckOf(again)?.status).toBe("fail");
+      expect(again.ready).toBe(false);
     });
   });
 });
@@ -398,6 +416,12 @@ describe("stale `types` plus an asset the build never copies (fixture: single-pa
       );
       expect(built.ready).toBe(false);
       expect(built.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
+
+      // Sticky: a second build cannot emit the declaration either.
+      execSync("npm run build", { cwd: repoPath });
+      const again = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+      expect(testCheckOf(again)?.status).toBe("fail");
+      expect(again.ready).toBe(false);
     });
   });
 });
@@ -1322,6 +1346,30 @@ describe("the package-level partial-build rule (unit)", () => {
     );
   });
 
+  it("never reads a declared directory under node_modules as this package's output", () => {
+    withTempPackage(
+      {
+        "package.json": pkg({
+          name: "x",
+          main: "dist/index.js",
+          bin: { gen: "./node_modules/.bin/gen.js" },
+          scripts: { build: "node build.js" },
+        }),
+      },
+      (dir) => {
+        // Installed dependencies say nothing about whether the package was
+        // built: the corroboration already refuses node_modules paths, and
+        // the package-level read must agree with it.
+        fs.mkdirSync(path.join(dir, "node_modules", ".bin"), { recursive: true });
+        fs.writeFileSync(path.join(dir, "node_modules", ".bin", "gen.js"), "");
+        expect(evaluatePartialBuild(dir).partiallyBuilt).toBe(false);
+        const result = classify(dir, "Error: Cannot find module './dist/index.js'");
+        expect(result.downgrade).toBe(true);
+        expect(result.note ?? "").not.toMatch(/node_modules/);
+      }
+    );
+  });
+
   it("says what it observed when the output path is a FILE, instead of claiming entries", () => {
     withTempPackage(
       {
@@ -1333,6 +1381,11 @@ describe("the package-level partial-build rule (unit)", () => {
         expect(result.downgrade).toBe(false);
         expect(result.note).toMatch(/build output directory \(dist\) of this repo could not be read \(ENOTDIR\)/);
         expect(result.note).not.toMatch(/exists and is not empty/);
+        // Nothing was counted, so the message must not claim what the output
+        // contains; it names the state, the artifact and the remedy instead.
+        expect(result.note).not.toMatch(/does not contain it/);
+        expect(result.note).toMatch(/is unproven, and a declared build artifact \(dist\/index\.js\) is not on disk/);
+        expect(result.note).toMatch(/make that path a readable directory, then rerun the build and preflight/);
       }
     );
   });
