@@ -509,7 +509,10 @@ ever executed.
 The build step gets its own wall-clock budget, **300000 ms** by default (the
 same budget the test check gets, rather than the 120000 ms the dependency
 installs share). Override it with `setup.buildTimeoutMs` in
-`.preflight.json`. The three outcomes are deliberately different:
+`.preflight.json`: a positive integer, in milliseconds, up to one day
+(86400000 ms); any other value (non-finite, non-integer, non-positive, or
+above that bound) is dropped with a warning and the default applies. The
+three outcomes are deliberately different:
 
 - **Non-zero exit**: the repo genuinely does not build right now, so the test
   check's subsequent failure is a real break. It stays a blocking `fail`, and
