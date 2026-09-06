@@ -1,0 +1,7 @@
+{
+  "name": "fixture-single-package-no-build-script",
+  "private": true,
+  "scripts": {
+    "test": "node test.js"
+  }
+}

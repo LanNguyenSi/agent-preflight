@@ -199,14 +199,54 @@ stays a blocking `fail`:
 
 - Node's own `Cannot find module '<path>'` where `<path>` runs through a
   `dist/` segment.
-- An `ENOENT ... open '<path>'` naming a `dist/` path.
+- An `ENOENT ... open '<path>'` naming a `dist/` path, restricted to a real
+  module-resolution failure: the path must look like a require/import
+  entry point (`.js`/`.mjs`/`.cjs`/`.d.ts`/`.json`), and the captured
+  output must carry a `Require stack:` or `ERR_MODULE_NOT_FOUND` marker. A
+  plain `fs` read of some other file that happens to live under `dist/` (a
+  cache JSON, a fixture the test itself writes there) is not "build
+  required" just because the path runs through `dist/`.
 - A workspace's own thrown/assertion message that states the precondition
   on one line: a `dist/` mention, a "missing"/"not found"/"does not exist"
   phrase, and an explicit `npm run build` mention, all together.
 
 A failure that only mentions "dist" or "missing" in isolation, an
 assertion comparing two strings that happen to contain "dist", for example,
-is never enough by itself and stays a blocker.
+is never enough by itself and stays a blocker. Neither path-bearing pattern
+above is trusted from just anywhere in the output, either: only a line
+that itself looks like Node/npm's own error output (starts with `Error:`,
+`Cannot find module`, `ENOENT`, `at `, `Require stack:`, `npm error`, and
+similar) counts, so a test runner's code frame echoing that same text as
+quoted source (`125|     const output = "Error: Cannot find module
+'./dist/index.js'";`) is never mistaken for the real error. A matched path
+is further required to actually be reachable by a build: a bare module
+specifier with no repo-relative or absolute shape (ordinary
+`node_modules` resolution, e.g. `Cannot find module 'lodash'`), a path
+through `node_modules` even when absolute, an absolute path outside the
+repo root, or a path whose `dist/` directory already exists on disk (the
+workspace HAS been built; a missing file inside an already-built `dist/`
+is a different, unrelated bug) are all rejected.
+
+An npm-workspaces monorepo's `npm test` fan-out is classified **per
+workspace**, not as one blob: the combined output is split at each
+workspace's own `> <name>@<version> <script>` preamble, and the check is
+only downgraded when EVERY workspace whose own segment actually failed
+carries build-required evidence. One workspace missing its build alongside
+a different, genuinely broken workspace in the same run stays a blocking
+`fail` — the genuine failure is never hidden behind the other workspace's
+build-required evidence. A single-package repo (no workspace fan-out at
+all) is classified as one blob, same as before this per-workspace split.
+
+The remedy named in the skip message depends on what could actually fix
+it: when the repo's root `package.json` has a `build` script, the message
+names `npm run build` and `--setup` (`--setup` only ever runs the build at
+the repo root — see below). When it does not but the classifier could
+attribute the failure to specific workspace(s), the message names a
+workspace-scoped build instead (`npm run build -w <name>` for exactly one
+workspace, `npm run build --workspaces --if-present` for more than one),
+since `--setup` cannot help here. When neither is known, the message says
+plainly that no `build` script was found and the check was not evaluated,
+rather than naming a command that would not exist.
 
 Alongside the named outcome, `--setup` now also runs the repo's own build
 automatically before the test check, but only when both hold: `package.json`
@@ -220,20 +260,38 @@ execution-graph evaluator:
   workflow files, reusable workflows, and composite actions are not
   consulted.
 - Only single-line `run: <command>` steps are recognized; a YAML block
-  scalar (`run: |` followed by more lines) is not parsed for its body.
+  scalar (`run: |` followed by more lines) is not parsed for its body. A
+  `run:` step whose value is itself a shell comment (`run: # npm run
+  build`) or that only echoes a string (`run: echo 'npm run build is
+  documented'`) is recognized and skipped — neither actually invokes the
+  build.
 - Ordering is by line number in the file, not GitHub Actions' actual
   job/`needs:` execution graph: a multi-job workflow whose real
   build-before-test order comes from job dependencies rather than from
-  top-to-bottom file order is not modeled.
+  top-to-bottom file order is not modeled, including a build step that
+  sits in a job unrelated to the one that runs tests.
 
-None of these gaps can produce a false positive: every one of them can only
-make a real build-before-test convention go undetected, in which case
-`--setup` simply behaves as it always did (dependency install only, via
-`npm ci`) and the test check falls back to the named skip outcome above.
-`--setup` without a detected build-before-test convention builds nothing
-new; this repo's own CI is one such case (`vitest` runs the TypeScript
-source directly, no build step at all), and is exercised in the test suite
-as a check against a false-positive default.
+These gaps do not all fail the same direction. A false **miss** (a real
+build-before-test convention this reader cannot see, e.g. a `run: |` block
+scalar or a reusable workflow) only costs the extra manual `npm run build`
+this feature exists to avoid — `--setup` behaves exactly as it did before
+this feature (dependency install only, via `npm ci`), and the test check
+falls back to the named skip outcome above. A false **hit** (an unrelated
+job's build step read as "before" the test job by line order alone) only
+costs a redundant rebuild under `--setup`: harmless, but not free. Neither
+direction causes `--setup` to skip a build the repo's real CI relies on.
+This repo's own CI has no build step at all (`vitest` runs the TypeScript
+source directly), and is exercised in the test suite as a check against a
+false-hit default.
+
+`--setup`'s build step can itself fail — the repo genuinely does not
+compile right now. When it does (a non-zero exit or a timeout), the test
+check's own subsequent "dist missing" failure is **not** reclassified to
+skip: that would misreport a real, newly-observed break as the innocuous
+"just hasn't been built yet" case this feature exists to unblock. The test
+check instead stays a blocking `fail`, with its message naming which
+(build failure vs. timeout) and pointing at the persisted build log when
+one was written (same log-persistence mechanism described below).
 
 Confidence score: a build-required skip is scored exactly like any other
 `skip` outcome (see [docs/confidence-scoring.md](docs/confidence-scoring.md)).

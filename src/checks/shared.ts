@@ -269,7 +269,11 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
 //   `dist/` (or `\dist\` on Windows) segment: the most common real-world
 //   shape (a workspace's test requiring its own package's build output).
 // - `ENOENT ... open '<path>'` naming a `dist/` path: a direct `fs` read of
-//   a build artifact that was never produced.
+//   a build artifact that was never produced. Restricted to module
+//   resolution failures (see `isEnoentModuleResolutionFailure` below): a
+//   plain `fs` read of an unrelated data file living under `dist/` (a
+//   cache JSON, a fixture) is not "build required" just because it also
+//   sits under a `dist/` path.
 // - A workspace's own assertion/thrown message that explicitly states the
 //   precondition ("dist/... is missing ... run `npm run build`"): covers a
 //   project that guards its own dist-dependent test with a clearer message
@@ -277,9 +281,103 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
 //   requires BOTH a `dist/` mention and an explicit `npm run build`
 //   mention so an unrelated failure that happens to say "missing" or
 //   "not found" is never enough by itself.
-const DIST_MODULE_NOT_FOUND_PATTERN = /Cannot find module ['"][^'"]*[\\/]dist[\\/][^'"]*['"]/i;
-const DIST_ENOENT_PATTERN = /ENOENT[^\n]*[\\/]dist[\\/][^\n]*/i;
+//
+// Both path-bearing patterns capture the quoted path so `isCredibleBuildArtifactPath`
+// below can reject a path a build could never fix: one resolved through
+// `node_modules` (a third-party dependency's own missing file, not this
+// repo's), a bare module specifier with no repo-relative or absolute shape
+// (ordinary `node_modules` resolution, e.g. `Cannot find module 'lodash'`),
+// an absolute path outside the repo root (when the caller can tell), or a
+// path whose `dist/` directory already exists on disk (the workspace HAS
+// been built; a missing file inside an already-built `dist/` is a
+// different bug, not a missing build).
+const DIST_MODULE_NOT_FOUND_PATTERN = /Cannot find module ['"]([^'"]*[\\/]dist[\\/][^'"]*)['"]/i;
+const DIST_ENOENT_PATTERN = /ENOENT[^\n]*?open ['"]([^'"]*[\\/]dist[\\/][^'"]*)['"]/i;
 const DIST_PRECONDITION_PATTERN = /\bdist[\\/][^\n]{0,120}\b(?:is|was|are)?\s*(?:missing|not found|does not exist)\b[^\n]{0,120}\bnpm run build\b/i;
+
+// A line is only trusted as Node/npm's OWN error output -- never a runner
+// code frame echoing surrounding source (`125|     const output = "Error:
+// Cannot find module ...";`) and never a test assertion's quoted
+// expectation string (`const output = "Error: ..."`, `expect(x).toBe("Error:
+// ...")`) -- when it actually STARTS with one of the shapes Node/npm emit
+// for a real module-resolution failure. A code-frame or quoted-string line
+// never starts this way (it starts with a line number, `const`, `expect(`,
+// or similar), so this one check covers both.
+const TRUSTED_FAILURE_LINE_PATTERN = /^(Error(?:\s*\[[^\]]*\])?:|Cannot find module\b|ENOENT\b|throw\b|at\s|Require stack:|-\s|npm\s+error\b|npm\s+ERR!)/i;
+
+// An ENOENT naming a `dist/` path is only "build required" evidence when
+// it is actually a module-resolution failure, not a generic `fs` read of
+// some other file that happens to live under `dist/` (a cache JSON, a
+// fixture the test itself writes there): the entry-point extension must
+// look like a require/import target, AND the surrounding output must carry
+// one of Node's own module-resolution markers.
+const ENTRY_POINT_EXTENSION_PATTERN = /\.(?:js|mjs|cjs|d\.ts|json)$/i;
+function isEnoentModuleResolutionFailure(candidatePath: string, fullOutput: string): boolean {
+  if (!ENTRY_POINT_EXTENSION_PATTERN.test(candidatePath)) return false;
+  return /Require stack:|ERR_MODULE_NOT_FOUND/.test(fullOutput);
+}
+
+// Walks `absPath`'s segments back to (and including) a `dist` segment and
+// returns that directory, e.g. `/repo/packages/x/dist/helpr.js` ->
+// `/repo/packages/x/dist`. Returns undefined when no `dist` segment is
+// present (should not happen -- callers only reach this after the `dist/`
+// patterns above already matched -- but stays defensive).
+function distDirFromArtifactPath(absPath: string): string | undefined {
+  const parts = absPath.split(path.sep);
+  const idx = parts.lastIndexOf("dist");
+  if (idx === -1) return undefined;
+  const dir = parts.slice(0, idx + 1).join(path.sep);
+  return dir.length > 0 ? dir : path.sep;
+}
+
+// Rejects a matched path that a build could never fix, per the file-level
+// comment on the two DIST_*_PATTERN constants above. `repoPath`, when
+// given, enables the two filesystem-dependent checks (absolute-path
+// containment, "dist/ already built"); without it (existing unit-test call
+// sites that predate this parameter) those two are skipped and only the
+// text-only checks (`node_modules`, bare specifier) apply, preserving prior
+// behavior for callers that never had a repo to check against.
+function isCredibleBuildArtifactPath(rawPath: string, repoPath: string | undefined): boolean {
+  const normalized = rawPath.replace(/\\/g, "/");
+  if (normalized.includes("node_modules/") || normalized.startsWith("node_modules/")) {
+    return false;
+  }
+
+  if (normalized.startsWith("./") || normalized.startsWith("../")) {
+    // Repo/workspace-relative. The path is relative to a workspace's own
+    // cwd, which this function does not know (only `repoPath`, the
+    // monorepo root, is available) -- so the "already built" filesystem
+    // check below is intentionally skipped for this shape; a relative
+    // path is accepted on its (already node_modules-free) text shape alone.
+    return true;
+  }
+
+  const isAbsolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
+  if (!isAbsolute) {
+    // A bare module specifier (`some-lib/dist/index.js`): resolved via
+    // node_modules lookup, not a path into this repo -- a build here would
+    // not produce it.
+    return false;
+  }
+
+  if (repoPath) {
+    const resolvedRepo = path.resolve(repoPath);
+    const resolvedCandidate = path.resolve(rawPath);
+    if (resolvedCandidate !== resolvedRepo && !resolvedCandidate.startsWith(resolvedRepo + path.sep)) {
+      return false; // absolute path outside the repo root -- a build here would not fix it
+    }
+
+    const distDir = distDirFromArtifactPath(resolvedCandidate);
+    if (distDir && fs.existsSync(distDir)) {
+      // dist/ already exists for this workspace: a missing file inside an
+      // already-built dist/ is a different, unrelated bug, not "build
+      // required".
+      return false;
+    }
+  }
+
+  return true;
+}
 
 const MAX_BUILD_REQUIRED_CAUSE_LENGTH = 160;
 
@@ -297,16 +395,23 @@ export interface BuildRequiredClassification {
 }
 
 // Classifies a FAILED test check's captured output as "build required"
-// (dist/ missing) vs. a genuine failure. Never called on its own -- the
-// caller (checks/test.ts) only invokes this after `runShellCheck` already
-// decided the check failed, and only reclassifies to `skip` when this
-// returns `matched: true`. Scanned line-by-line first for the two
-// module/file-not-found shapes (the common case, and the cheapest to
+// (dist/ missing) vs. a genuine failure. Never called directly by
+// `checks/test.ts` for an npm-workspaces fan-out -- see
+// `classifyBuildRequiredTestFailure` below, which splits a multi-workspace
+// failure into per-workspace segments and calls this function on each one
+// so one unrelated failing workspace can never hide behind another
+// workspace's real build-required evidence. Only reclassifies to `skip`
+// when this returns `matched: true`. Scanned line-by-line first for the
+// two module/file-not-found shapes (the common case, and the cheapest to
 // pinpoint to one line); the precondition phrasing is checked against the
-// full text afterwards since its "npm run build" mention can be pushed
-// onto in a wrapped stack-trace line by prefixed indentation in some
-// runners.
-export function classifyBuildRequiredFailure(output: string | undefined): BuildRequiredClassification {
+// full text afterwards -- that pattern's `[^\n]{0,120}` gap classes
+// explicitly exclude `\n`, so even though it runs against the whole
+// multi-line `output` (not one line at a time, unlike the two patterns
+// above), a match can never straddle two physical lines.
+export function classifyBuildRequiredFailure(
+  output: string | undefined,
+  repoPath?: string
+): BuildRequiredClassification {
   if (!output) {
     return { matched: false };
   }
@@ -314,7 +419,19 @@ export function classifyBuildRequiredFailure(output: string | undefined): BuildR
   for (const rawLine of output.split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
-    if (DIST_MODULE_NOT_FOUND_PATTERN.test(line) || DIST_ENOENT_PATTERN.test(line)) {
+    if (!TRUSTED_FAILURE_LINE_PATTERN.test(line)) continue;
+
+    const moduleMatch = DIST_MODULE_NOT_FOUND_PATTERN.exec(line);
+    if (moduleMatch && isCredibleBuildArtifactPath(moduleMatch[1], repoPath)) {
+      return { matched: true, cause: clampBuildRequiredCause(line) };
+    }
+
+    const enoentMatch = DIST_ENOENT_PATTERN.exec(line);
+    if (
+      enoentMatch &&
+      isEnoentModuleResolutionFailure(enoentMatch[1], output) &&
+      isCredibleBuildArtifactPath(enoentMatch[1], repoPath)
+    ) {
       return { matched: true, cause: clampBuildRequiredCause(line) };
     }
   }
@@ -325,6 +442,107 @@ export function classifyBuildRequiredFailure(output: string | undefined): BuildR
   }
 
   return { matched: false };
+}
+
+// A single-line preamble npm prints before EACH workspace's own script
+// invocation when fanning out via `--workspaces` (e.g. `> needs-build@1.0.0
+// test`), distinct from the root script's own preamble (`> test`, no
+// `name@version` token). Captures the workspace name so
+// `classifyBuildRequiredTestFailure` can name it in a remedy.
+const WORKSPACE_PREAMBLE_LINE_PATTERN = /^>\s*([^\s@]+)@\S+\s+\S+\s*$/;
+
+// npm's own lifecycle-failure envelope for one workspace's script, printed
+// immediately after that workspace's own output (`npm error Lifecycle
+// script ... failed`/`npm error command failed` on current npm; `npm ERR!`
+// on older npm majors). Marks a segment (see `splitWorkspaceSegments`) as
+// one of the workspaces that actually failed, as opposed to one that ran
+// and passed inside the same fan-out.
+const WORKSPACE_LIFECYCLE_FAILURE_PATTERN = /npm\s+(?:error|ERR!)\s+(?:Lifecycle script|command failed)/i;
+
+// Splits an npm `--workspaces` fan-out's combined output into one segment
+// per workspace, using `WORKSPACE_PREAMBLE_LINE_PATTERN` matches as segment
+// starts. Returns undefined when no such preamble is found at all -- a
+// single-package repo's `npm run test` (no workspace fan-out), or an
+// unrecognized runner/format -- so the caller can fall back to classifying
+// the whole output as one blob, same as before this per-workspace split
+// existed.
+function splitWorkspaceSegments(output: string): string[] | undefined {
+  const lines = output.split("\n");
+  const boundaries: number[] = [];
+  lines.forEach((line, index) => {
+    if (WORKSPACE_PREAMBLE_LINE_PATTERN.test(line.trim())) boundaries.push(index);
+  });
+  if (boundaries.length === 0) return undefined;
+
+  return boundaries.map((start, i) => {
+    const end = i + 1 < boundaries.length ? boundaries[i + 1] : lines.length;
+    return lines.slice(start, end).join("\n");
+  });
+}
+
+function workspaceNameFromSegment(segment: string): string | undefined {
+  const firstLine = segment.split("\n", 1)[0]?.trim() ?? "";
+  return WORKSPACE_PREAMBLE_LINE_PATTERN.exec(firstLine)?.[1];
+}
+
+export interface BuildRequiredTestClassification extends BuildRequiredClassification {
+  /** Names of the workspaces whose own output carried the build-required evidence, when known. */
+  workspaceNames?: string[];
+}
+
+// Entry point used by `checks/test.ts` for the default auto-detected
+// `npm run test` check. A monorepo's `npm test` that fans out across
+// `--workspaces` can fail for MULTIPLE, INDEPENDENT reasons at once -- one
+// workspace missing its build, another with a genuinely broken test -- and
+// a single blob-wide `classifyBuildRequiredFailure` call would downgrade
+// the WHOLE check to a non-blocking skip the moment ANY line anywhere in
+// the combined output happened to carry build-required evidence, hiding
+// the other workspace's real, unrelated failure. This splits the output
+// into per-workspace segments (`splitWorkspaceSegments`) and only
+// downgrades when EVERY workspace segment that actually failed
+// (`WORKSPACE_LIFECYCLE_FAILURE_PATTERN`) is, on its own, build-required
+// evidence; one genuinely-failing workspace anywhere in the fan-out keeps
+// the whole check a blocking `fail`. When no per-workspace preamble is
+// found at all (not an npm-workspaces fan-out, or an unrecognized runner),
+// falls back to classifying the whole output as one blob -- unchanged
+// behavior for a single-package repo.
+export function classifyBuildRequiredTestFailure(
+  output: string | undefined,
+  repoPath?: string
+): BuildRequiredTestClassification {
+  if (!output) return { matched: false };
+
+  const segments = splitWorkspaceSegments(output);
+  if (!segments) {
+    return classifyBuildRequiredFailure(output, repoPath);
+  }
+
+  const failingSegments = segments.filter((segment) => WORKSPACE_LIFECYCLE_FAILURE_PATTERN.test(segment));
+  if (failingSegments.length === 0) {
+    // Could not attribute the failure to a specific workspace (unexpected
+    // shape, e.g. a custom `--if-present` runner that doesn't echo npm's
+    // own lifecycle envelope) -- fall back to the whole-output classifier
+    // rather than guessing which segment is at fault.
+    return classifyBuildRequiredFailure(output, repoPath);
+  }
+
+  const perSegment = failingSegments.map((segment) => ({
+    segment,
+    classification: classifyBuildRequiredFailure(segment, repoPath),
+  }));
+
+  if (!perSegment.every((s) => s.classification.matched)) {
+    // At least one failing workspace's own output carries no build-required
+    // evidence: a genuine failure exists alongside (or instead of) any
+    // build-required workspace, so the whole check stays a blocking fail.
+    return { matched: false };
+  }
+
+  const first = perSegment[0]?.classification ?? { matched: false };
+  const workspaceNames = perSegment
+    .map((s) => workspaceNameFromSegment(s.segment))
+    .filter((name): name is string => Boolean(name));
+  return { ...first, workspaceNames: workspaceNames.length > 0 ? workspaceNames : undefined };
 }
 
 // Build-invocation / test-invocation shapes recognized in a single-line
@@ -354,13 +572,29 @@ const CI_TEST_STEP_PATTERN = /\bnpm\s+test\b|\b(?:npm|yarn|pnpm)\s+run\s+test\b|
 //   invocations; a custom build entry point (a Makefile target, a
 //   standalone script not run through the package manager) is not
 //   recognized.
+// - Job/`needs:` graph blindness cuts both ways: a build step in a job
+//   that never actually runs before (or alongside) the test job -- an
+//   unrelated job listed earlier in the file, a matrix leg that only
+//   builds a different target -- is still read as "build before test" by
+//   raw line order, even though the two steps have no real relationship.
 //
-// None of these gaps can produce a false "build before test": every one of
-// them can only make a real build-before-test convention go undetected,
-// which only costs the extra manual `npm run build` this feature exists to
-// avoid -- it never causes `--setup` to skip a build the repo actually
-// relies on, because a missed detection here just means `--setup` behaves
-// exactly as it did before this feature (dependency install only).
+// These gaps do NOT have a uniform direction, unlike an earlier version of
+// this comment claimed. A false MISS (a real build-before-test convention
+// this reader cannot see, e.g. a `run: |` block scalar or a reusable
+// workflow) only costs the extra manual `npm run build` this feature
+// exists to avoid -- `--setup` behaves exactly as it did before this
+// feature (dependency install only). A false HIT (an unrelated job's build
+// step, or -- before the `echo`/comment guards below existed -- a `run:`
+// line that only PRINTS the words "npm run build" without invoking it)
+// only costs a redundant rebuild under `--setup`: harmless but wasted
+// time, never a build the repo does not actually want. Neither direction
+// causes `--setup` to skip a build the repo's real CI relies on.
+//
+// Two `run:` shapes are excluded before either pattern is tested, because
+// they name the words without executing the command: a step whose value is
+// itself a shell comment (`run: # npm run build` -- the value starts with
+// `#`, a no-op in `sh`/`bash`), and a step that only echoes a string
+// (`run: echo 'npm run build is documented'`) rather than running it.
 export function ciShowsBuildBeforeTest(repoPath: string): boolean {
   let text: string;
   try {
@@ -382,7 +616,9 @@ export function workflowTextShowsBuildBeforeTest(text: string): boolean {
   lines.forEach((line, index) => {
     const stepMatch = /^\s*-?\s*run:\s*(.+)$/.exec(line);
     if (!stepMatch) return;
-    const command = stepMatch[1];
+    const command = stepMatch[1].trim();
+    if (command.startsWith("#")) return; // the step's value is itself a shell comment; nothing runs
+    if (/^echo\b/i.test(command)) return; // prints a string; does not invoke the named command
     if (buildLine === -1 && CI_BUILD_STEP_PATTERN.test(command)) buildLine = index;
     if (testLine === -1 && CI_TEST_STEP_PATTERN.test(command)) testLine = index;
   });
@@ -439,15 +675,41 @@ export function fileExists(repoPath: string, relativePath: string): boolean {
   return fs.existsSync(path.join(repoPath, relativePath));
 }
 
-export async function ensureProjectSetup(repoPath: string): Promise<string[]> {
+// Outcome of the `--setup` build step (see `ensureProjectSetup`'s "Option
+// (a)" block below), threaded into `checks/test.ts` via `runTestChecks`'s
+// third parameter so a build failure under `--setup` is never silently
+// swallowed into a `limitations` string while the test check downstream
+// gets misclassified as "build required, not yet run" (agent-tasks
+// c5810885 review round 2, HIGH-2). `attempted` is always `true` when this
+// object exists at all -- the field exists so a caller destructuring an
+// `outcome?: SetupBuildOutcome | undefined` can tell "never ran" (the
+// whole value is undefined -- no build script, or CI doesn't show
+// build-before-test) from "ran and definitely finished" without a second
+// optional check.
+export interface SetupBuildOutcome {
+  attempted: true;
+  succeeded: boolean;
+  timedOut: boolean;
+  exitCode?: number;
+  /** Path the build's full stdout+stderr was persisted to, when available. */
+  logPath?: string;
+}
+
+export interface ProjectSetupResult {
+  limitations: string[];
+  buildOutcome?: SetupBuildOutcome;
+}
+
+export async function ensureProjectSetup(repoPath: string, logDir?: string): Promise<ProjectSetupResult> {
   const limitations: string[] = [];
   const context = createProjectContext(repoPath);
+  let buildOutcome: SetupBuildOutcome | undefined;
 
   if (hasNodeProject(context) && fileExists(repoPath, "package-lock.json") && !fileExists(repoPath, "node_modules")) {
-    const exitCode = await runSetupCommand(repoPath, "npm ci");
-    if (exitCode === 127) {
+    const result = await runSetupCommand(repoPath, "npm ci");
+    if (result.exitCode === 127) {
       limitations.push("package-lock.json found but node_modules/ is missing; npm ci skipped because npm is not available");
-    } else if (exitCode !== 0) {
+    } else if (result.exitCode !== 0) {
       limitations.push("npm ci failed while preparing Node checks");
     }
   }
@@ -462,32 +724,55 @@ export async function ensureProjectSetup(repoPath: string): Promise<string[]> {
   // a redundant rebuild costs time but is otherwise harmless, whereas
   // skipping it on a stale guess would reintroduce the very failure this
   // feature exists to avoid.
+  //
+  // The outcome (not just a limitations string) is captured into
+  // `buildOutcome` and returned so `runTestChecks` can tell "the repo has
+  // simply not been built yet" (fine to downgrade to a named skip) from
+  // "the repo's build itself just failed under --setup" (a real,
+  // newly-observed break -- must stay a blocking fail, never a skip; see
+  // HIGH-2 in the round-2 review). Full stdout+stderr is captured (`all:
+  // true` inside `runSetupCommand`) and persisted the same way
+  // `runShellCheck` persists a failing check's output, so the actual build
+  // error is reachable even though this path never produces its own
+  // `CheckResult`.
   if (hasNodeProject(context) && context.packageJson?.scripts?.build && ciShowsBuildBeforeTest(repoPath)) {
-    const exitCode = await runSetupCommand(repoPath, "npm run build");
-    if (exitCode === 127) {
+    const result = await runSetupCommand(repoPath, "npm run build");
+    if (result.exitCode === 127) {
       limitations.push("package.json has a build script but npm is not available; --setup build step skipped");
-    } else if (exitCode !== 0) {
-      limitations.push("npm run build failed while preparing the test check (--setup)");
+    } else if (result.timedOut) {
+      const logPath = result.output ? persistFailureOutput(logDir, "npm-run-build-setup", result.output) : undefined;
+      limitations.push(
+        `npm run build timed out while preparing the test check (--setup)${logPath ? ` (see ${logPath})` : ""}`
+      );
+      buildOutcome = { attempted: true, succeeded: false, timedOut: true, logPath };
+    } else if (result.exitCode !== 0) {
+      const logPath = result.output ? persistFailureOutput(logDir, "npm-run-build-setup", result.output) : undefined;
+      limitations.push(
+        `npm run build failed (exit code ${result.exitCode}) while preparing the test check (--setup)${logPath ? ` (see ${logPath})` : ""}`
+      );
+      buildOutcome = { attempted: true, succeeded: false, timedOut: false, exitCode: result.exitCode, logPath };
+    } else {
+      buildOutcome = { attempted: true, succeeded: true, timedOut: false, exitCode: result.exitCode };
     }
   }
 
   if (hasPythonProject(context) && context.hasRequirementsTxt && !fileExists(repoPath, ".preflight-venv")) {
-    const exitCode = await runSetupCommand(
+    const result = await runSetupCommand(
       repoPath,
       "python3 -m venv .preflight-venv && .preflight-venv/bin/pip install -r requirements.txt"
     );
-    if (exitCode === 127) {
+    if (result.exitCode === 127) {
       limitations.push("requirements.txt found but .preflight-venv/ is missing; Python setup skipped because python3 is not available");
-    } else if (exitCode !== 0) {
+    } else if (result.exitCode !== 0) {
       limitations.push("Python environment setup failed while preparing checks");
     }
   }
 
   if (hasPhpProject(context) && !fileExists(repoPath, "vendor")) {
-    const exitCode = await runSetupCommand(repoPath, "composer install --no-interaction --no-progress");
-    if (exitCode === 127) {
+    const result = await runSetupCommand(repoPath, "composer install --no-interaction --no-progress");
+    if (result.exitCode === 127) {
       limitations.push("composer.json found but vendor/ is missing; composer install skipped because composer is not available");
-    } else if (exitCode !== 0) {
+    } else if (result.exitCode !== 0) {
       limitations.push("composer install failed while preparing PHP checks");
     }
   }
@@ -498,10 +783,10 @@ export async function ensureProjectSetup(repoPath: string): Promise<string[]> {
       : "mvn -q -DskipTests dependency:go-offline";
     const marker = path.join(repoPath, "target");
     if (!fs.existsSync(marker)) {
-      const exitCode = await runSetupCommand(repoPath, command);
-      if (exitCode === 127) {
+      const result = await runSetupCommand(repoPath, command);
+      if (result.exitCode === 127) {
         limitations.push("pom.xml found but Maven setup skipped because mvn is not available");
-      } else if (exitCode !== 0) {
+      } else if (result.exitCode !== 0) {
         limitations.push("Maven setup failed while preparing Java checks");
       }
     }
@@ -513,16 +798,16 @@ export async function ensureProjectSetup(repoPath: string): Promise<string[]> {
       : "gradle classes testClasses -q";
     const marker = path.join(repoPath, ".gradle");
     if (!fs.existsSync(marker)) {
-      const exitCode = await runSetupCommand(repoPath, command);
-      if (exitCode === 127) {
+      const result = await runSetupCommand(repoPath, command);
+      if (result.exitCode === 127) {
         limitations.push("build.gradle found but Gradle setup skipped because gradle is not available");
-      } else if (exitCode !== 0) {
+      } else if (result.exitCode !== 0) {
         limitations.push("Gradle setup failed while preparing Java checks");
       }
     }
   }
 
-  return limitations;
+  return { limitations, buildOutcome };
 }
 
 export function getWorkingDirHint(repoPath: string): string | undefined {
@@ -871,8 +1156,15 @@ function buildCommandEnv(repoPath: string): NodeJS.ProcessEnv {
   };
 }
 
-async function runSetupCommand(repoPath: string, command: string): Promise<number> {
-  const { exitCode } = await execa(
+interface SetupCommandResult {
+  exitCode: number;
+  timedOut: boolean;
+  /** Combined stdout+stderr, when the command actually ran. */
+  output?: string;
+}
+
+async function runSetupCommand(repoPath: string, command: string): Promise<SetupCommandResult> {
+  const { exitCode, all, timedOut } = await execa(
     "bash",
     ["-c", command],
     {
@@ -884,5 +1176,5 @@ async function runSetupCommand(repoPath: string, command: string): Promise<numbe
     }
   );
 
-  return exitCode ?? 1;
+  return { exitCode: exitCode ?? 1, timedOut: Boolean(timedOut), output: all };
 }
