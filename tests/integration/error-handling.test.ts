@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { runPreflight } from '../../src/runner.js';
 import { loadConfig } from '../../src/config.js';
 import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
 import { mockNpmAuditClean } from '../helpers/npm-audit-mock.js';
 
 describe('Error Handling Integration Tests', () => {
@@ -56,43 +58,79 @@ describe('Error Handling Integration Tests', () => {
     expect(config.checks).toBeDefined();
   });
 
-  it('should handle repositories without package.json', async () => {
+  it('should handle repositories without package.json', { timeout: 5000 }, async () => {
+    // 5000ms budget: a regression toward the shared-/tmp cause below (or
+    // any other walk of an unbounded tree) fails loudly instead of racing
+    // back up to the 30s per-test default.
     const config = {
       checks: {
         audit: true, // npm audit requires package.json
       },
     };
 
-    // Should handle missing package.json gracefully
-    const result = await runPreflight('/tmp', config);
-    expect(result).toBeDefined();
+    // The case used to point runPreflight() at the shared, unfiltered
+    // `/tmp` while leaving every other checks.* toggle at its default
+    // (on): secrets.ts's scanDir() walks the whole target tree (only a
+    // per-file 2 MiB cap and a fixed SKIP_DIRS list, no cap on the tree
+    // itself), so the secret scan alone raced the 30s per-test timeout
+    // against everything else under /tmp, not anything under test. A
+    // fresh, empty mkdtemp directory has no package.json (preserving the
+    // case's intent) and nothing for secretDetection (or any other
+    // default-on check) to walk.
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-no-pkg-json-'));
+    try {
+      const result = await runPreflight(emptyDir, config);
+      expect(result).toBeDefined();
 
-    // Audit check should either skip or report missing package.json
-    const auditChecks = result.checks.filter((c) =>
-      c.name.toLowerCase().includes('audit')
-    );
-    if (auditChecks.length > 0) {
-      // Should have some status (pass, fail, or warn)
-      expect(['pass', 'fail', 'warn']).toContain(auditChecks[0].status);
+      // With no package.json, hasNodeProject() is false, so audit.ts never
+      // reaches a node-specific branch and falls through to its final
+      // catch-all: no audit check is emitted at all, and the skip reason
+      // is surfaced only as a limitation string.
+      const auditChecks = result.checks.filter((c) =>
+        c.name.toLowerCase().includes('audit')
+      );
+      expect(auditChecks).toHaveLength(0);
+      expect(result.limitations).toContain(
+        'No supported audit command found; audit check skipped'
+      );
+    } finally {
+      fs.rmSync(emptyDir, { recursive: true, force: true });
     }
   });
 
-  it('should handle repositories without tsconfig.json', async () => {
+  it('should handle repositories without tsconfig.json', { timeout: 5000 }, async () => {
+    // Same cause and fix as the no-package.json case above; 5000ms budget
+    // for the same reason.
     const config = {
       checks: {
         typecheck: true, // TypeScript check requires tsconfig.json
       },
     };
 
-    const result = await runPreflight('/tmp', config);
-    expect(result).toBeDefined();
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-no-tsconfig-'));
+    try {
+      // A minimal package.json makes hasNodeProject() true so typecheck.ts
+      // takes its "has a node project, but no tsconfig.json" branch
+      // (src/checks/typecheck.ts) instead of falling through to the
+      // no-node-project catch-all; it pushes a limitation and never spawns
+      // tsc, so this stays in the milliseconds.
+      fs.writeFileSync(
+        path.join(emptyDir, 'package.json'),
+        JSON.stringify({ name: 'preflight-no-tsconfig-fixture', version: '0.0.0' })
+      );
 
-    // Typecheck should either skip or report missing tsconfig
-    const typecheckChecks = result.checks.filter((c) =>
-      c.name.toLowerCase().includes('typecheck')
-    );
-    if (typecheckChecks.length > 0) {
-      expect(['pass', 'fail', 'warn']).toContain(typecheckChecks[0].status);
+      const result = await runPreflight(emptyDir, config);
+      expect(result).toBeDefined();
+
+      const typecheckChecks = result.checks.filter((c) =>
+        c.name.toLowerCase().includes('typecheck')
+      );
+      expect(typecheckChecks).toHaveLength(0);
+      expect(result.limitations).toContain(
+        'No tsconfig.json found; TypeScript check skipped'
+      );
+    } finally {
+      fs.rmSync(emptyDir, { recursive: true, force: true });
     }
   });
 
