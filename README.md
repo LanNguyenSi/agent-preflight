@@ -116,7 +116,7 @@ Both tool descriptions carry the same semantics as the CLI's exit code: **`ready
 
 This is stdio-only — no remote/HTTP transport, no new checks beyond what `preflight run`/`preflight batch` already do.
 
-**Security: the target repo is not just data.** Its `.preflight.json` can define shell commands (`customChecks[].command`, `commands.lint`/`typecheck`/`test`/`audit`) that these tools execute on the machine running the MCP server. Only point `preflight_run`/`preflight_batch` at repositories you trust — this is the same execution surface `preflight run`/`preflight batch` already have on the CLI, just now reachable by whatever agent/tool is calling the MCP server.
+**Security: the target repo is not just data.** Its `.preflight.json` can define shell commands (`customChecks[].command`, `commands.lint`/`typecheck`/`test`/`audit`) that these tools execute on the machine running the MCP server. Only point `preflight_run`/`preflight_batch` at repositories you trust: this is the same execution surface `preflight run`/`preflight batch` already have on the CLI, just now reachable by whatever agent/tool is calling the MCP server. With `--setup` (or `setup.enabled`), a `run:` line in the target repo's own `.github/workflows/ci.yml` additionally decides whether that repo's `build` script is executed on your machine, so `--setup` belongs only on repositories you already trust to run; see ["Build-required test classification"](#build-required-test-classification-an-unbuilt-package-is-not-a-broken-one) for the exact rule.
 
 **Timeouts and long runs.** The MCP SDK's default request timeout is 60s; a real `preflight_run` (let alone `preflight_batch`, which loops over every repo under `root`) can easily take longer. Both tools send a `notifications/progress` ping roughly every 10s while the underlying checks are still running, but only when your client attaches a `progressToken` to the request — passing an `onprogress` callback (e.g. `client.callTool(..., { onprogress })` in the TypeScript SDK) does that automatically. That switch alone only gets you the pings, though: it does not by itself extend the 60s timeout. To actually survive past 60s, also pass `resetTimeoutOnProgress: true` in the same call's request options, so the client resets its timeout on every ping it receives — or just raise the request's own `timeout` outright. `preflight_batch` in particular is expected to be long-running, so plan for one of those two switches.
 
@@ -143,7 +143,7 @@ This is stdio-only — no remote/HTTP transport, no new checks beyond what `pref
   "secretDetectionStrict": false,
   "secretAllowlist": ["fixtures/*", "src/config.ts:42"],
   "tddExceptions": ["src/generated/**"],
-  "setup": { "enabled": false },
+  "setup": { "enabled": false, "buildTimeoutMs": 300000 },
   "commands": {
     "lint": ["npm run lint"],
     "typecheck": ["npx tsc --noEmit"],
@@ -169,6 +169,377 @@ directory. Sources in sibling packages (including similarly prefixed paths)
 are outside that target.
 
 If no commands are configured, agent-preflight auto-detects common Node, Python, PHP, and Java manifests and picks reasonable defaults. The full toggle, override, and monorepo guidance lives in [docs/checks.md](docs/checks.md). Sandbox image profiles, apt packages, and act flags are covered in [docs/architecture.md](docs/architecture.md#sandbox). The `npm-audit` check runs with a bounded timeout, and an audit that did not answer is reported as `skip` (not `warn`) with a `limitations` entry naming the cause: a timeout with no parsable report, or npm exiting non-zero without producing a report, which is what an unreachable or failing registry produces. That is the default direction rather than a list of recognized registry errors, so an outage never hangs the run, and an unfamiliar failure degrades to "not evaluated" instead of being misread as a real finding. npm's own usage errors, such as a missing lockfile, name themselves in `error.code` and stay a `warn` naming that failure.
+
+### Build-required test classification: an unbuilt package is not a broken one
+
+Some Node packages only pass their own tests after a build: a test that
+loads its package's `dist/` output fails loudly in a fresh checkout that has
+not been built yet, even though the repo's own CI always runs a build step
+first. Treating that as a blocking `fail`, the default before this feature,
+makes a correct push look broken purely because preflight skipped a build
+step the repo's own CI never skips.
+
+The default `npm-test` check (the auto-detected `npm run test`; a
+`commands.test` override in `.preflight.json` is not covered) reports that
+situation as a distinct, named outcome instead of a blocker: `status:
+"skip"` with the missing artifact and the remedy in the message, for example
+
+```
+npm test not evaluated: build required before test (a declared build artifact
+(packages/needs-build/dist) is missing; the test output reports: Error: Cannot
+find module './dist/index.js'); run `npm run build` first (or rerun preflight
+with `--setup`, which builds automatically when this repo's CI shows
+build-before-test)
+```
+
+#### What makes a skip legitimate
+
+Three things have to be true at once, and none of them is enough on its own.
+
+1. **The filesystem precondition.** The package that failed has a `build`
+   script, and at least one of the artifacts it declares is not on disk.
+   Declared artifacts are read from that package's own `package.json` --
+   `main`, `module`, `types`/`typings`, `bin` (the string form, or every
+   value of the map form), and the string targets of `exports` (subpath keys
+   and the `import`/`require`/`default`/`types` conditions; a `*` subpath
+   pattern is skipped, since a wildcard cannot be existence-checked) -- plus
+   the `outDir` of that package's own `tsconfig.json` when that file parses
+   as JSON and declares one. Every path is resolved against the package's own
+   directory, and an extensionless declaration (`main: "./dist/index"`) is
+   resolved the way Node resolves it, so a package that *is* built is never
+   read as unbuilt. A package that declares no entry points at all falls back
+   to "`dist/` does not exist"; a package with no build script never meets the
+   precondition, whatever is missing.
+
+   The build script has to be the package's **own**. A root fan-out
+   (`npm run build --workspaces --if-present`) does not lend one to a workspace
+   that has none: `--if-present` skips exactly such a workspace, so the build it
+   appears to promise is a no-op there, and a fan-out *without* `--if-present`
+   would fail outright on such a workspace, so a repo that runs one has a build
+   script in every workspace anyway. A workspace built only by some other
+   mechanism (a root `tsc -b` over project references, a Makefile) is therefore
+   read as "no build script", and its failure stays a blocker.
+
+   The precondition answers one question: **could running a build change this
+   outcome at all?** It is decided by looking at the disk, not by reading the
+   test runner's output, because output text alone cannot tell "this package
+   was never built" from "this package is broken".
+
+2. **The failing package must not already be built.** This is a property of
+   the **package**, not of any one artifact: a package is **partially built**
+   when *any* output directory it identifies holds an entry (or cannot be read
+   at all). The directories it identifies are the directory of each artifact
+   it declares -- `dist/index.js` identifies `dist/`, a bare `dist` or a
+   tsconfig `outDir` identifies itself, an artifact at the package root
+   (`main: "index.js"`) identifies none, since a whole package is not build
+   output -- plus the conventional `dist/` when it identifies none of its own.
+   A directory that canonicalizes outside the package (a `dist` symlinked
+   elsewhere) is not this package's output and is not read.
+
+   A partially built package **never** downgrades: not for a stack frame in
+   its live `dist/`, not for an absent sibling in there, not for the declared
+   artifact itself. A package can declare an artifact its build never emits --
+   a `types: "dist/index.d.ts"` next to a JavaScript-only build, an `exports`
+   subpath that was dropped, a `bin` that moved -- so condition 1 holds
+   permanently while the real output is on disk and is exactly what the tests
+   load. Without this rule that package's own failures corroborated as "not
+   built yet", the repo was reported `ready: true`, and it stayed that way
+   after a successful `npm run build`, because that build does not produce the
+   missing artifact either.
+
+   Reading the **directories**, and all of them, is what makes this a package
+   property. A declared artifact on disk necessarily makes its own directory
+   non-empty, so "any declared artifact is on disk" is included. Reading only
+   the *missing* artifact's directory is not enough, and both counter-shapes
+   are ordinary: a package whose `main: dist/index.js` is built while its
+   `types: dist/types/index.d.ts` is never emitted has a populated `dist/` and
+   an absent `dist/types/`, and one whose `exports` name `./dist/index.js` and
+   `./lib/styles.css` has a populated `dist/` and an absent `lib/`. Both are
+   built; reading one directory reported both as unbuilt.
+
+   **The deliberate consequences.** The rule counts entries rather than
+   judging which of them are "real" build output, so it reads the same way in
+   every repository -- and *any* entry counts:
+
+   - a **stale** output directory (an older build missing a newly added entry)
+     blocks instead of skipping;
+   - so does a placeholder or a checked-in file in there (a `.gitkeep`, a
+     `.keep` that lets git carry an otherwise empty output directory), and so
+     does an OS or tool artefact that happens to sit in it (a `.DS_Store`, an
+     editor or bundler cache directory);
+   - so does a directory the package declares an artifact in that is not
+     build output at all (a checked-in `bin/` launcher beside a `dist/` the
+     build writes, an `exports` target inside a source directory): the rule
+     cannot tell source from output, so such a package blocks even when
+     nothing was ever built, and what fixes it is the declaration, not a
+     build. A declared directory under `node_modules` is the one exception
+     and is never read: installed dependencies say nothing about whether the
+     package was built, which is the rule condition 3 applies to paths too;
+   - the directory state is read **after** the test run, when the failure is
+     classified, and nothing is snapshotted beforehand: a test that itself
+     writes into its package's output directory (a cache, a fixture, a
+     generated file) therefore makes that package read as partially built;
+   - the read goes through the filesystem, so on a case-insensitive filesystem
+     (macOS and Windows by default) a declaration spelled `Dist/index.js`
+     reads the real `dist/` directory. That is the opposite of the
+     case-sensitive **path** comparison in condition 3, and deliberately so:
+     one asks the OS what is on disk, the other compares two strings.
+
+   The remedy is the build, or, where a declaration names a directory that
+   is not build output, the declaration; either way blocking is the safe
+   direction for a tool whose `ready: true` opens push gates. When such a
+   package's failure does name a path in its own output, the message says so,
+   naming the directory that decided it, the artifact that is missing, and the
+   remedy:
+
+   ```
+   npm test failed: the build output directory (dist) of this repo exists and
+   is not empty, but a declared build artifact (dist/cli.js) is not on disk:
+   the build output on disk does not contain it, so the failure is reported as
+   a real failure; rerun the build and preflight if this output is stale
+   ```
+
+   An output path that exists but cannot be read as a directory at all (a
+   `dist` that is a *file*, a permission error) leaves the state unproven,
+   which counts as built for the verdict -- the safe direction -- and is
+   reported as what it is (`could not be read (ENOTDIR)`), never as entries
+   nobody counted.
+
+3. **The failure has to blame the missing artifact**, and that is decided as
+   a **path** rule, never as a text match. Every path-shaped token on every
+   line of the failing package's own output is resolved and then tested:
+
+   - a token is an absolute path, a `file://` URL, or a `./` / `../`
+     specifier. A bare specifier is not one -- neither `lodash` nor
+     `dist/index.js`, because Node resolves both through `node_modules`, so
+     they name a dependency rather than this package's build output;
+   - a token past a hard bound (4096 characters, or 256 path segments) is not
+     resolved at all. Test output is untrusted input and every resolved path
+     is then walked segment by segment, so an unbounded token in a failing
+     test's output could abort the whole run instead of reporting that
+     failure. Both bounds sit far above any real path; a token past them
+     simply does not corroborate, which leaves the check a blocking `fail`;
+   - relative tokens are resolved against the failing package's own directory,
+     absolute ones as printed. Symlinks are then resolved on **both** sides,
+     through the longest part of each path that exists, so a checkout under a
+     symlinked path matches, and so does a package whose declared `dist` is a
+     symlink to the directory its build really writes;
+   - comparison is **case-sensitive**, whatever the filesystem underneath
+     does. On a case-insensitive filesystem (macOS and Windows by default) a
+     token spelled `./Dist/index.js` against a declared `dist/index.js` names
+     the same file to the OS and still does not corroborate. That is the safe
+     direction (the check stays a blocking `fail`), and no case-folding is
+     applied to keep the rule identical on every platform;
+   - the resolved path is accepted when it **is** the missing artifact, or
+     when it **is, or lies inside, that build-output directory** *and is
+     itself not present on disk* (`dist/index.js` accepts anything absent
+     under that `dist/`, including a report naming `./dist/` itself; a bare
+     `dist` or a tsconfig `outDir` accepts anything absent under it; an
+     artifact declared at the package root, `main: "index.js"`, identifies no
+     build-output directory at all and accepts only itself), **and** it is
+     inside the repository, **and** it has no `node_modules` segment,
+     **and** it belongs to this package rather than a neighbouring or nested
+     one.
+
+   Whether the package is already built is **not** part of this rule: that is
+   condition 2, and the two are kept apart so a blocking message can say which
+   of them refused the downgrade. A partially built package whose failure
+   names nothing in its own output is reported with the plain sentence (*a
+   declared build artifact (X) is missing, but the failure does not name it*)
+   rather than with an explanation of an output directory the failure never
+   mentioned.
+
+   That covers both shapes this actually takes -- a package's own guard
+   printing `<abs>/dist/index.js is missing. Run the build first` with no error
+   prefix at all, and Node's own `Cannot find module './dist/index.js'` /
+   `ENOENT ... open '<path>'`, whose quoted specifier is simply another token
+   on the line.
+
+   This third condition is what keeps the first one honest. Plenty of
+   packages compile to `dist/` but run their tests from source (this repo is
+   one), so in a fresh checkout the precondition holds for them permanently.
+   Without requiring the failure to actually be about the missing artifact, a
+   genuinely broken suite in such a package would be reported as `ready:
+   true`. An earlier substring form of this rule did exactly that for a stale
+   relative require, a dependency missing under `node_modules/<lib>/dist/`,
+   another workspace's artifact, and any test-runner stack frame through
+   `node_modules/vitest/dist/`.
+
+   Two consequences worth knowing:
+
+   - A relative specifier is resolved against the package directory, not
+     against the file that raised it (the output does not say which file that
+     was). A test in a nested directory requiring `../dist/index.js` therefore
+     resolves outside the package and does **not** corroborate: the check
+     stays a blocking `fail`, which is the safe direction.
+   - **The residual case this cannot decide**: a package with **no output on
+     disk at all** -- every output directory it identifies absent or empty --
+     failing on a path inside one of them that a build would not create
+     either, such as a stale reference to a `dist/old.js`. That is
+     indistinguishable from "not built yet", because nothing on disk separates
+     the two until a build has actually run, and it is reported as the named
+     skip. The remedy that skip names (run the build, or rerun with `--setup`)
+     resolves it either way: after the build the output directory holds
+     entries, so the same failure comes back as a blocker. Two shapes that
+     look similar are *not* this case: a failure naming a path that *is* on
+     disk never corroborated, and a package holding output in *any* of its
+     directories is a partially built package, which blocks.
+
+An npm-workspaces monorepo's `npm test` fan-out is judged **per workspace**,
+not as one blob: the combined output is split at each workspace's own `>
+<name>@<version> <script>` preamble (the root package's own preamble is
+recognized by identity and excluded -- npm prints the same shape for it when
+the root `package.json` carries a `version`), each workspace npm reported as
+failed is resolved to its directory by package name, and both conditions
+above must hold for **every** one of them. One workspace missing its build
+next to a different, genuinely broken workspace stays a blocking `fail`. A
+failure that cannot be attributed to a workspace at all (a single-package
+repo, a non-npm runner) is judged against the root package.
+
+#### The negative controls
+
+Each of these stays a blocking `fail`, and each has a fixture in
+`tests/fixtures/` that pins it:
+
+- a genuine test failure in a repo with no build script anywhere (the
+  message then names the missing-module observation and says no `build`
+  script was found, so the remedy is not a dead end);
+- a genuine failure in a package whose declared artifacts are all present,
+  including a module error for some other file inside an already-built
+  `dist/` -- a missing file inside a built `dist/` is a different bug;
+- a genuine failure in an unbuilt package when nothing in the failure names
+  the missing artifact;
+- a monorepo where one workspace is unbuilt and another is genuinely broken,
+  in either order;
+- an unbuilt package whose failure is a stale relative require into its own
+  source tree, alone and next to an unbuilt workspace in a monorepo (both
+  packages then meet the precondition, so only the path rule separates them);
+- a missing dependency reported by a `node_modules` path whose tail is
+  byte-for-byte the declared artifact (`.../node_modules/some-lib/dist/index.js`);
+- a package that declares no entry points, failing an ordinary assertion whose
+  only `dist`-bearing line is the test runner's own stack frame inside
+  `node_modules`;
+- a workspace whose failure names a *neighbouring* workspace's artifact;
+- a workspace with no build script of its own under a root
+  `--workspaces --if-present` fan-out (nothing would build it, so the remedy
+  would be a dead end);
+- a package whose `tsconfig.json` has comments (so its `outDir` cannot be read
+  and the fallback `dist/` applies) failing on a path in a different directory;
+- seven **partially built** packages, each declaring an artifact its build
+  never emits -- a `types` next to a JavaScript-only build, a dropped `exports`
+  subpath, a `bin` that is never emitted while the test loads exactly it, a
+  stale `types` next to a template the build never copies, that last shape
+  again as a workspace under a root `--workspaces --if-present` fan-out, a
+  `types` in a **nested** directory (`dist/types/`) beside a populated
+  `dist/`, and an `exports` target in a **second** output directory (`lib/`)
+  beside a populated `dist/`. Their preconditions hold forever, so only the
+  package-level rule separates them from a missing build, and the last two are
+  exactly the shapes a per-artifact reading of it got wrong. Each fixture is
+  asserted in **both** states, and they differ: unbuilt (no output directory
+  at all) each one is the named skip, and after a successful build each one is
+  a blocking `fail` -- including after a second build, which cannot create the
+  artifact either. Which sentence that blocker carries depends on the failure:
+  the five whose failure names an absent path in the package's own output are
+  reported with the directory, the artifact and the remedy; the two whose
+  failure is a genuine bug inside the live `dist/` (so the only path they name
+  *is* on disk) keep the plain "the failure does not name it" sentence;
+- a package whose declared `dist/` holds a single placeholder file: any entry
+  makes it partially built, so it blocks (the same fixture with an **empty**
+  `dist/` is the named skip);
+- a failing test whose output prints a pathological path-shaped token (30000
+  segments on one line): the classification no longer aborts the run, and the
+  test failure is the blocker;
+- any failure after `--setup`'s own build step ran, whether it failed or
+  succeeded (see below).
+
+Two positive controls have fixtures of their own as well: a package whose
+declared `dist` is a **symlink** to the directory its build really writes
+(both sides canonicalize to the same file, so a plainly unbuilt package is not
+reported as broken), and the same package after a build, which passes. The
+symlink fixture pins the cost of the package-level rule from the other side
+too: with the `.keep` placeholder that lets git carry its empty output
+directory left in place, the same unbuilt package reads as partially built and
+blocks.
+
+The artifact named in these messages is always spelled relative to the
+repository path **as you passed it**; canonicalization stays inside the
+matching. A workspace whose directory is reached through a symlink is named by
+its physical directory, since that is the only directory the package index
+sees, and the remedy in the same message names the workspace by the name npm
+printed.
+
+#### `--setup` can run the build for you
+
+Alongside the named outcome, `--setup` runs the repo's own build before the
+test check, but only when both hold: `package.json` has a `build` script,
+AND `.github/workflows/ci.yml` shows a `run:` step invoking `npm run build`
+(or the `yarn`/`pnpm` equivalent) before a step invoking the test script, by
+raw line order in that one file. This is a deliberately conservative,
+best-effort read, not a GitHub Actions execution-graph evaluator:
+
+- Only `.github/workflows/ci.yml` by that exact name is read; other workflow
+  files, reusable workflows, and composite actions are not consulted.
+- Only single-line `run: <command>` steps are recognized; a YAML block scalar
+  (`run: |` followed by more lines) is not parsed for its body. A `run:` step
+  whose value is itself a shell comment (`run: # npm run build`) or that only
+  echoes a string (`run: echo 'npm run build is documented'`) is recognized
+  and skipped, since neither actually invokes the build.
+- Ordering is by line number, not GitHub Actions' actual job/`needs:`
+  execution graph: a multi-job workflow whose real build-before-test order
+  comes from job dependencies is not modeled, including a build step that
+  sits in a job unrelated to the one that runs tests.
+
+These gaps do not all fail the same direction. A false **miss** (a real
+build-before-test convention this reader cannot see) only costs the extra
+manual `npm run build` this feature exists to avoid; `--setup` then behaves
+exactly as it did before this feature (dependency install only), and the
+test check falls back to the named skip. A false **hit** (an unrelated job's
+build step read as "before" the test job by line order alone) only costs a
+redundant rebuild under `--setup`. Neither direction causes `--setup` to skip
+a build the repo's real CI relies on.
+
+**Trust.** Under `--setup`, a `run:` line in the target repo's own
+`.github/workflows/ci.yml` is what decides whether that repo's `build` script
+executes on your machine. Workflow text is repository content, so `--setup`
+belongs only on repositories you already trust to run -- the same trust
+`customChecks[].command` and the `commands.*` overrides already require (see
+the Security note under "MCP server"). Without `--setup`, no build script is
+ever executed.
+
+The build step gets its own wall-clock budget, **300000 ms** by default (the
+same budget the test check gets, rather than the 120000 ms the dependency
+installs share). Override it with `setup.buildTimeoutMs` in
+`.preflight.json`. The three outcomes are deliberately different:
+
+- **Non-zero exit**: the repo genuinely does not build right now, so the test
+  check's subsequent failure is a real break. It stays a blocking `fail`, and
+  the message names the exit code and the persisted build log.
+- **Timeout**: the build did not answer, so nothing was learned about the
+  repo. The test check stays "not evaluated" -- the named `skip`, with the
+  timeout named in the message and a `limitations` entry -- which is the same
+  direction every other did-not-answer path in this tool takes (see the
+  `npm-audit` skip). A timeout is never a blocker.
+- **Success**: the build ran to completion, so whatever the tests report now
+  is genuine, and the check stays a blocking `fail`. Normally the precondition
+  already says so, because the artifacts now exist; the explicit rule also
+  covers a build script that exits 0 without producing them, where "run the
+  build first" would be a dead end.
+
+The remedy named in a skip message depends on what could actually fix it.
+`--setup` only ever runs `npm run build` at the repo root, so the message
+names that when the failing unit *is* the root package, or when the root build
+script fans out over the workspaces (`--workspaces`/`-ws`) and therefore
+reaches them. Otherwise it names a workspace-scoped `npm run build -w <name>`
+(or `--workspaces --if-present` for more than one failing workspace, each of
+which has its own build script by then) and says why `--setup` cannot help.
+
+Confidence score: a build-required skip is scored exactly like any other
+`skip` outcome (see [docs/confidence-scoring.md](docs/confidence-scoring.md)).
+Its weight (0.2 for the test check) counts toward the confidence denominator
+but not the numerator, and the accompanying `limitations` entry adds the usual
+0.03 penalty (capped at 0.2 total across all limitations). It is not scored as
+a `pass`, and it is not scored more harshly than an `npm-audit` skip for the
+same reason (no report to judge).
 
 When a shell-based check (lint, typecheck, test, audit, custom) fails, its
 complete stdout+stderr is written best-effort to

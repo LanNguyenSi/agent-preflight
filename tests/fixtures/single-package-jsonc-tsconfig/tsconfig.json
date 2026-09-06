@@ -1,0 +1,5 @@
+{
+  // A tsconfig with comments is valid TypeScript config but not valid JSON,
+  // so its outDir cannot be read and the precondition falls back to dist/.
+  "compilerOptions": { "outDir": "lib" }
+}

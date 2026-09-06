@@ -1,6 +1,7 @@
 import { CheckResult, PreflightConfig } from "../types.js";
 import {
   CheckSetResult,
+  evaluateBuildRequiredTestFailure,
   commandExists,
   createProjectContext,
   getConfiguredCommands,
@@ -10,14 +11,47 @@ import {
   hasPythonProject,
   hasComposerScript,
   runConfiguredCommands,
+  rootBuildScriptFansOutToWorkspaces,
   runShellCheck,
   fileExists,
   shouldSkipRecursiveNodeTest,
+  SetupBuildOutcome,
+  ProjectContext,
 } from "./shared.js";
+
+// Names what the operator should actually run to satisfy the build
+// precondition that `evaluateBuildRequiredTestFailure` found unmet. Reached
+// only for a downgrade, so every failing unit has a `build` script of its own
+// -- the root package's, or each attributed workspace's. What the message may
+// name is narrower than that, because `--setup`'s build step only ever runs
+// `npm run build` at the repo ROOT:
+// - the failure is the root package's: name `npm run build` and `--setup`;
+// - the failures are workspaces' and the root script fans out over the
+//   workspaces: the same root build reaches them, so name it too;
+// - otherwise the root build would not touch them (or does not exist): name a
+//   workspace-scoped build instead, and say why `--setup` cannot help.
+//   Exactly one workspace gets `-w <name>` (precise); more than one falls back
+//   to `--workspaces --if-present`, which builds every failing workspace here
+//   since each one has its own build script.
+function buildRequiredRemedy(context: ProjectContext, workspaceNames: string[] | undefined): string {
+  const rootBuild = "run `npm run build` first (or rerun preflight with `--setup`, which builds automatically when this repo's CI shows build-before-test)";
+  if (!workspaceNames || workspaceNames.length === 0) return rootBuild;
+  if (rootBuildScriptFansOutToWorkspaces(context.packageJson)) return rootBuild;
+
+  const whySetupCannotHelp = context.packageJson?.scripts?.build
+    ? "this repo's root `build` script does not fan out over the workspaces, so `--setup` cannot build them automatically"
+    : "this repo's root `package.json` has no `build` script, so `--setup` cannot build it automatically";
+
+  if (workspaceNames.length === 1) {
+    return `run \`npm run build -w ${workspaceNames[0]}\` first (${whySetupCannotHelp})`;
+  }
+  return `run \`npm run build --workspaces --if-present\` first (${whySetupCannotHelp})`;
+}
 
 export async function runTestChecks(
   repoPath: string,
-  config: PreflightConfig
+  config: PreflightConfig,
+  setupBuildOutcome?: SetupBuildOutcome
 ): Promise<CheckSetResult> {
   const configuredCommands = getConfiguredCommands(config, "test");
   if (configuredCommands.length > 0) {
@@ -55,7 +89,48 @@ export async function runTestChecks(
           logDir: config.logDir,
         });
         if (result.check) {
-          checks.push(result.check);
+          // The named build-required outcome (decision (c); see README's
+          // "Build-required test classification"). The decision itself lives
+          // in `evaluateBuildRequiredTestFailure`: a failing `npm test` is
+          // downgraded to a non-blocking `skip` only when the FILESYSTEM says
+          // every failing package is unbuilt (a build script exists and a
+          // declared artifact is missing) AND that package's own output
+          // blames the missing artifact. A genuine failure -- alone, or
+          // alongside an unbuilt package in the same monorepo -- keeps the
+          // blocking `fail`. Scoped to this default-detected `npm run test`
+          // check: a configured `commands.test` override (the branch at the
+          // top of this function) is never classified.
+          const evaluation =
+            result.check.status === "fail"
+              ? evaluateBuildRequiredTestFailure({
+                  repoPath,
+                  output: result.rawOutput,
+                  setupBuildOutcome,
+                })
+              : undefined;
+
+          // Set only when the classification could not be evaluated at all
+          // (a corroboration call threw). The check itself stays the blocking
+          // `fail` it already was; this records that the "build required?"
+          // question went unanswered.
+          if (evaluation?.limitation) {
+            limitations.push(evaluation.limitation);
+          }
+
+          if (evaluation?.downgrade) {
+            const remedy = buildRequiredRemedy(context, evaluation.workspaceNames);
+            const note = evaluation.note ? `; ${evaluation.note}` : "";
+            const message = `npm test not evaluated: build required before test (${evaluation.cause})${note}; ${remedy}`;
+            checks.push({ ...result.check, status: "skip", message });
+            limitations.push(message);
+          } else if (evaluation?.note) {
+            checks.push({
+              ...result.check,
+              message: `${result.check.message ?? "npm test failed"}: ${evaluation.note}`,
+            });
+          } else {
+            checks.push(result.check);
+          }
         }
         if (result.limitation) {
           limitations.push(result.limitation);

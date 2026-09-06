@@ -40,7 +40,7 @@ const COMMAND_KEYS = ["lint", "typecheck", "test", "audit"] as const;
 
 const SANDBOX_KEYS = ["aptPackages", "pipPackages"] as const;
 
-const SETUP_KEYS = ["enabled"] as const;
+const SETUP_KEYS = ["enabled", "buildTimeoutMs"] as const;
 
 // Every field `validateConfig()` recognizes at the top level of
 // `.preflight.json`, kept in sync with `PreflightConfig`'s own field list.
@@ -266,6 +266,22 @@ function pickBoolean(
   return undefined;
 }
 
+// A millisecond budget: any non-integer, zero, or negative value is rejected
+// rather than merged, so a typo can never disable a timeout or make one
+// expire instantly.
+function pickPositiveInteger(
+  source: Record<string, unknown>,
+  key: string,
+  warnings: string[],
+  label: string = key
+): number | undefined {
+  if (!(key in source)) return undefined;
+  const value = source[key];
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
+  warnings.push(`${label}: expected a positive integer, got ${describeType(value)}; ignoring this field`);
+  return undefined;
+}
+
 function pickStringArray(
   source: Record<string, unknown>,
   key: string,
@@ -370,6 +386,8 @@ function pickSetup(
   const setup: NonNullable<PreflightConfig["setup"]> = {};
   const enabled = pickBoolean(value, "enabled", warnings, "setup.enabled");
   if (enabled !== undefined) setup.enabled = enabled;
+  const buildTimeoutMs = pickPositiveInteger(value, "buildTimeoutMs", warnings, "setup.buildTimeoutMs");
+  if (buildTimeoutMs !== undefined) setup.buildTimeoutMs = buildTimeoutMs;
 
   warnUnknownKeys(value, SETUP_KEYS, "setup", warnings);
 

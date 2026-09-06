@@ -132,7 +132,7 @@ The fingerprint determines the local image tag (default `agent-preflight:local`)
 
 ## Setup phase
 
-Opt-in via `--setup` or `setup.enabled: true`. `checks/shared.ts` runs only the unambiguous dependency-bootstrap commands per stack (`npm ci` when `package-lock.json` exists, `composer install` when `vendor/` is missing, etc.). Any setup work appends an entry to `limitations` so the agent can see what was prepared automatically. See [checks.md](./checks.md#setup-phase) for the full list.
+Opt-in via `--setup` or `setup.enabled: true`. `checks/shared.ts` runs the unambiguous dependency-bootstrap commands per stack (`npm ci` when `package-lock.json` exists, `composer install` when `vendor/` is missing, etc.), plus -- conditionally -- one build: `npm run build` at the repo root when `package.json` has a `build` script AND `.github/workflows/ci.yml` shows a `run:` step invoking it before the test step, under its own wall-clock budget (`setup.buildTimeoutMs`, 300000 ms by default). That build is the only setup command whose execution is decided by content in the target repo, and its outcome feeds the test check's build-required classification. See [checks.md](./checks.md#setup-phase) for the full list and the README's "Build-required test classification" section for the rule, its trust boundary, and its documented limits. Any setup work appends an entry to `limitations` so the agent can see what was prepared automatically.
 
 ## MCP server
 

@@ -1,0 +1,10 @@
+{
+  "name": "fixture-monorepo-cross-workspace-artifact",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present"
+  }
+}

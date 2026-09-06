@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { CheckKind, CheckResult, CheckToggle, PreflightConfig, PreflightResult } from "./types.js";
-import { ensureProjectSetup, getWorkingDirHint } from "./checks/shared.js";
+import { ensureProjectSetup, getWorkingDirHint, SetupBuildOutcome } from "./checks/shared.js";
 
 // Expands a leading `~/` in a configured path to `os.homedir()`, the way a
 // shell would, before the absolute/relative resolution below runs. Without
@@ -166,19 +166,29 @@ export async function runPreflight(
   const start = Date.now();
   const checks: CheckResult[] = [];
   const { targetPath, limitations } = resolveTargetPath(repoPath, config.workingDir);
-  if (config.setup?.enabled === true) {
-    limitations.push(...await ensureProjectSetup(targetPath));
-  }
 
   // `logDir` is resolved against `repoPath` (not `targetPath`/`workingDir`,
   // and not `process.cwd()`) so a monorepo's `workingDir` override doesn't
   // also relocate the failure-log directory, and callers running preflight
   // from a different cwd than the repo (e.g. `runBatch`) still get a
-  // predictable, repo-relative location for a relative `logDir`.
+  // predictable, repo-relative location for a relative `logDir`. Resolved
+  // BEFORE `ensureProjectSetup` below (moved ahead of its original
+  // position) so a failing `--setup` build step can persist its output
+  // through the same resolved directory instead of always falling back to
+  // the default `~/.agent-preflight/logs`.
   const configuredLogDir = config.logDir ? expandLeadingTilde(config.logDir) : undefined;
   const effectiveConfig: PreflightConfig = configuredLogDir
     ? { ...config, logDir: path.isAbsolute(configuredLogDir) ? configuredLogDir : path.resolve(repoPath, configuredLogDir) }
     : config;
+
+  let setupBuildOutcome: SetupBuildOutcome | undefined;
+  if (config.setup?.enabled === true) {
+    const setupResult = await ensureProjectSetup(targetPath, effectiveConfig.logDir, {
+      buildTimeoutMs: effectiveConfig.setup?.buildTimeoutMs,
+    });
+    limitations.push(...setupResult.limitations);
+    setupBuildOutcome = setupResult.buildOutcome;
+  }
 
   // Import check runners dynamically to keep dependencies optional
   const { runLintChecks } = await import("./checks/lint.js");
@@ -210,7 +220,7 @@ export async function runPreflight(
   }
 
   if (config.checks?.test !== false) {
-    const result = await runTestChecks(targetPath, effectiveConfig);
+    const result = await runTestChecks(targetPath, effectiveConfig, setupBuildOutcome);
     checks.push(...result.checks);
     limitations.push(...result.limitations);
   }
