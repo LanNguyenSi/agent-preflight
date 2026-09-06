@@ -116,7 +116,7 @@ Both tool descriptions carry the same semantics as the CLI's exit code: **`ready
 
 This is stdio-only — no remote/HTTP transport, no new checks beyond what `preflight run`/`preflight batch` already do.
 
-**Security: the target repo is not just data.** Its `.preflight.json` can define shell commands (`customChecks[].command`, `commands.lint`/`typecheck`/`test`/`audit`) that these tools execute on the machine running the MCP server. Only point `preflight_run`/`preflight_batch` at repositories you trust — this is the same execution surface `preflight run`/`preflight batch` already have on the CLI, just now reachable by whatever agent/tool is calling the MCP server.
+**Security: the target repo is not just data.** Its `.preflight.json` can define shell commands (`customChecks[].command`, `commands.lint`/`typecheck`/`test`/`audit`) that these tools execute on the machine running the MCP server. Only point `preflight_run`/`preflight_batch` at repositories you trust — this is the same execution surface `preflight run`/`preflight batch` already have on the CLI, just now reachable by whatever agent/tool is calling the MCP server. With `--setup` (or `setup.enabled`), a `run:` line in the target repo's own `.github/workflows/ci.yml` additionally decides whether that repo's `build` script is executed on your machine, so `--setup` belongs only on repositories you already trust to run; see ["Build-required test classification"](#build-required-test-classification-an-unbuilt-package-is-not-a-broken-one) for the exact rule.
 
 **Timeouts and long runs.** The MCP SDK's default request timeout is 60s; a real `preflight_run` (let alone `preflight_batch`, which loops over every repo under `root`) can easily take longer. Both tools send a `notifications/progress` ping roughly every 10s while the underlying checks are still running, but only when your client attaches a `progressToken` to the request — passing an `onprogress` callback (e.g. `client.callTool(..., { onprogress })` in the TypeScript SDK) does that automatically. That switch alone only gets you the pings, though: it does not by itself extend the 60s timeout. To actually survive past 60s, also pass `resetTimeoutOnProgress: true` in the same call's request options, so the client resets its timeout on every ping it receives — or just raise the request's own `timeout` outright. `preflight_batch` in particular is expected to be long-running, so plan for one of those two switches.
 
@@ -143,7 +143,7 @@ This is stdio-only — no remote/HTTP transport, no new checks beyond what `pref
   "secretDetectionStrict": false,
   "secretAllowlist": ["fixtures/*", "src/config.ts:42"],
   "tddExceptions": ["src/generated/**"],
-  "setup": { "enabled": false },
+  "setup": { "enabled": false, "buildTimeoutMs": 300000 },
   "commands": {
     "lint": ["npm run lint"],
     "typecheck": ["npx tsc --noEmit"],
@@ -170,136 +170,167 @@ are outside that target.
 
 If no commands are configured, agent-preflight auto-detects common Node, Python, PHP, and Java manifests and picks reasonable defaults. The full toggle, override, and monorepo guidance lives in [docs/checks.md](docs/checks.md). Sandbox image profiles, apt packages, and act flags are covered in [docs/architecture.md](docs/architecture.md#sandbox). The `npm-audit` check runs with a bounded timeout, and an audit that did not answer is reported as `skip` (not `warn`) with a `limitations` entry naming the cause: a timeout with no parsable report, or npm exiting non-zero without producing a report, which is what an unreachable or failing registry produces. That is the default direction rather than a list of recognized registry errors, so an outage never hangs the run, and an unfamiliar failure degrades to "not evaluated" instead of being misread as a real finding. npm's own usage errors, such as a missing lockfile, name themselves in `error.code` and stay a `warn` naming that failure.
 
-### Build-required test classification: `dist/` missing before a build
+### Build-required test classification: an unbuilt package is not a broken one
 
-Some Node workspaces only pass their own tests after a build: a test that
-imports its package's `dist/` output fails loudly (a bare `Cannot find
-module` or `ENOENT` naming a path through `dist/`) in a fresh checkout that
-has not been built yet, even though the repo's own CI always runs a build
-step first. Treating that as a blocking `fail`, the default before this
-feature, makes a correct push look broken purely because preflight itself
-skipped a build step the repo's own CI never skips.
+Some Node packages only pass their own tests after a build: a test that
+loads its package's `dist/` output fails loudly in a fresh checkout that has
+not been built yet, even though the repo's own CI always runs a build step
+first. Treating that as a blocking `fail`, the default before this feature,
+makes a correct push look broken purely because preflight skipped a build
+step the repo's own CI never skips.
 
 The default `npm-test` check (the auto-detected `npm run test`; a
-`commands.test` override in `.preflight.json` is not covered) now
-classifies a failure this way as a distinct, named outcome instead of a
-blocker: `status: "skip"` with a message naming the missing artifact and
-the remedy, for example:
+`commands.test` override in `.preflight.json` is not covered) reports that
+situation as a distinct, named outcome instead of a blocker: `status:
+"skip"` with the missing artifact and the remedy in the message, for example
 
 ```
-npm test not evaluated: build required before test (Error: Cannot find
-module './dist/index.js'); run `npm run build` first (or rerun preflight
-with `--setup`, which builds automatically when this repo's CI shows
+npm test not evaluated: build required before test (packages/needs-build/dist
+has not been built; the test output reports: Error: Cannot find module
+'./dist/index.js'); run `npm run build` first (or rerun preflight with
+`--setup`, which builds automatically when this repo's CI shows
 build-before-test)
 ```
 
-The classification only fires on concrete evidence in the check's captured
-output, never on a generic non-zero exit, so a genuine test failure always
-stays a blocking `fail`:
+#### What makes a skip legitimate
 
-- Node's own `Cannot find module '<path>'` where `<path>` runs through a
-  `dist/` segment.
-- An `ENOENT ... open '<path>'` naming a `dist/` path, restricted to a real
-  module-resolution failure: the path must look like a require/import
-  entry point (`.js`/`.mjs`/`.cjs`/`.d.ts`/`.json`), and the captured
-  output must carry a `Require stack:` or `ERR_MODULE_NOT_FOUND` marker. A
-  plain `fs` read of some other file that happens to live under `dist/` (a
-  cache JSON, a fixture the test itself writes there) is not "build
-  required" just because the path runs through `dist/`.
-- A workspace's own thrown/assertion message that states the precondition
-  on one line: a `dist/` mention, a "missing"/"not found"/"does not exist"
-  phrase, and an explicit `npm run build` mention, all together.
+Two things have to be true at once, and neither is enough on its own.
 
-A failure that only mentions "dist" or "missing" in isolation, an
-assertion comparing two strings that happen to contain "dist", for example,
-is never enough by itself and stays a blocker. Neither path-bearing pattern
-above is trusted from just anywhere in the output, either: only a line
-that itself looks like Node/npm's own error output (starts with `Error:`,
-`Cannot find module`, `ENOENT`, `at `, `Require stack:`, `npm error`, and
-similar) counts, so a test runner's code frame echoing that same text as
-quoted source (`125|     const output = "Error: Cannot find module
-'./dist/index.js'";`) is never mistaken for the real error. A matched path
-is further required to actually be reachable by a build: a bare module
-specifier with no repo-relative or absolute shape (ordinary
-`node_modules` resolution, e.g. `Cannot find module 'lodash'`), a path
-through `node_modules` even when absolute, an absolute path outside the
-repo root, or a path whose `dist/` directory already exists on disk (the
-workspace HAS been built; a missing file inside an already-built `dist/`
-is a different, unrelated bug) are all rejected.
+1. **The filesystem precondition.** The package that failed has a `build`
+   script, and at least one of the artifacts it declares is not on disk.
+   Declared artifacts are read from that package's own `package.json` --
+   `main`, `module`, `types`/`typings`, `bin` (the string form, or every
+   value of the map form), and the string targets of `exports` (subpath keys
+   and the `import`/`require`/`default`/`types` conditions; a `*` subpath
+   pattern is skipped, since a wildcard cannot be existence-checked) -- plus
+   the `outDir` of that package's own `tsconfig.json` when that file parses
+   as JSON and declares one. Every path is resolved against the package's own
+   directory, and an extensionless declaration (`main: "./dist/index"`) is
+   resolved the way Node resolves it, so a package that *is* built is never
+   read as unbuilt. A package that declares no entry points at all falls back
+   to "`dist/` does not exist"; a package with no build script never meets the
+   precondition, whatever is missing.
 
-An npm-workspaces monorepo's `npm test` fan-out is classified **per
-workspace**, not as one blob: the combined output is split at each
-workspace's own `> <name>@<version> <script>` preamble, and the check is
-only downgraded when EVERY workspace whose own segment actually failed
-carries build-required evidence. One workspace missing its build alongside
-a different, genuinely broken workspace in the same run stays a blocking
-`fail`; the genuine failure is never hidden behind the other workspace's
-build-required evidence. A single-package repo (no workspace fan-out at
-all) is classified as one blob, same as before this per-workspace split.
+   The precondition answers one question: **could running a build change this
+   outcome at all?** It is decided by looking at the disk, not by reading the
+   test runner's output, because output text alone cannot tell "this package
+   was never built" from "this package is broken".
 
-The remedy named in the skip message depends on what could actually fix
-it: when the repo's root `package.json` has a `build` script, the message
-names `npm run build` and `--setup` (`--setup` only ever runs the build at
-the repo root; see below). When it does not but the classifier could
-attribute the failure to specific workspace(s), the message names a
-workspace-scoped build instead (`npm run build -w <name>` for exactly one
-workspace, `npm run build --workspaces --if-present` for more than one),
-since `--setup` cannot help here. When neither is known, the message says
-plainly that no `build` script was found and the check was not evaluated,
-rather than naming a command that would not exist.
+2. **The failure has to blame the missing artifact.** The failing package's
+   own output must name it: a line containing the declared artifact path
+   (the shape a package's own guard throws, "packages/x/dist/index.js is
+   missing. Run the build first"), or one of Node's own module-resolution
+   failures (`Cannot find module '<path>'`, `ENOENT ... open '<path>'`) for a
+   path-shaped specifier that is not resolved through `node_modules`. A bare
+   specifier (`Cannot find module 'lodash'`) or a `node_modules` path names a
+   dependency problem a build of this repo would not fix, and neither counts.
 
-Alongside the named outcome, `--setup` now also runs the repo's own build
-automatically before the test check, but only when both hold: `package.json`
-has a `build` script, AND `.github/workflows/ci.yml` shows a `run:` step
-invoking `npm run build` (or the `yarn`/`pnpm` equivalent) before a step
-invoking the test script, by raw line order in that one file. This is a
-deliberately conservative, best-effort read, not a real GitHub Actions
-execution-graph evaluator:
+   This second condition is what keeps the first one honest. Plenty of
+   packages compile to `dist/` but run their tests from source (this repo is
+   one), so in a fresh checkout the precondition holds for them permanently.
+   Without requiring the failure to actually be about the missing artifact, a
+   genuinely broken suite in such a package would be reported as `ready:
+   true`.
 
-- Only `.github/workflows/ci.yml` by that exact name is read; other
-  workflow files, reusable workflows, and composite actions are not
-  consulted.
-- Only single-line `run: <command>` steps are recognized; a YAML block
-  scalar (`run: |` followed by more lines) is not parsed for its body. A
-  `run:` step whose value is itself a shell comment (`run: # npm run
-  build`) or that only echoes a string (`run: echo 'npm run build is
-  documented'`) is recognized and skipped, since neither actually invokes
-  the build.
-- Ordering is by line number in the file, not GitHub Actions' actual
-  job/`needs:` execution graph: a multi-job workflow whose real
-  build-before-test order comes from job dependencies rather than from
-  top-to-bottom file order is not modeled, including a build step that
+An npm-workspaces monorepo's `npm test` fan-out is judged **per workspace**,
+not as one blob: the combined output is split at each workspace's own `>
+<name>@<version> <script>` preamble (the root package's own preamble is
+recognized by identity and excluded -- npm prints the same shape for it when
+the root `package.json` carries a `version`), each workspace npm reported as
+failed is resolved to its directory by package name, and both conditions
+above must hold for **every** one of them. One workspace missing its build
+next to a different, genuinely broken workspace stays a blocking `fail`. A
+failure that cannot be attributed to a workspace at all (a single-package
+repo, a non-npm runner) is judged against the root package.
+
+#### The negative controls
+
+Each of these stays a blocking `fail`, and each has a fixture in
+`tests/fixtures/` that pins it:
+
+- a genuine test failure in a repo with no build script anywhere (the
+  message then names the missing-module observation and says no `build`
+  script was found, so the remedy is not a dead end);
+- a genuine failure in a package whose declared artifacts are all present,
+  including a module error for some other file inside an already-built
+  `dist/` -- a missing file inside a built `dist/` is a different bug;
+- a genuine failure in an unbuilt package when nothing in the failure names
+  the missing artifact;
+- a monorepo where one workspace is unbuilt and another is genuinely broken,
+  in either order;
+- any failure after `--setup`'s own build step ran, whether it failed or
+  succeeded (see below).
+
+#### `--setup` can run the build for you
+
+Alongside the named outcome, `--setup` runs the repo's own build before the
+test check, but only when both hold: `package.json` has a `build` script,
+AND `.github/workflows/ci.yml` shows a `run:` step invoking `npm run build`
+(or the `yarn`/`pnpm` equivalent) before a step invoking the test script, by
+raw line order in that one file. This is a deliberately conservative,
+best-effort read, not a GitHub Actions execution-graph evaluator:
+
+- Only `.github/workflows/ci.yml` by that exact name is read; other workflow
+  files, reusable workflows, and composite actions are not consulted.
+- Only single-line `run: <command>` steps are recognized; a YAML block scalar
+  (`run: |` followed by more lines) is not parsed for its body. A `run:` step
+  whose value is itself a shell comment (`run: # npm run build`) or that only
+  echoes a string (`run: echo 'npm run build is documented'`) is recognized
+  and skipped, since neither actually invokes the build.
+- Ordering is by line number, not GitHub Actions' actual job/`needs:`
+  execution graph: a multi-job workflow whose real build-before-test order
+  comes from job dependencies is not modeled, including a build step that
   sits in a job unrelated to the one that runs tests.
 
 These gaps do not all fail the same direction. A false **miss** (a real
-build-before-test convention this reader cannot see, e.g. a `run: |` block
-scalar or a reusable workflow) only costs the extra manual `npm run build`
-this feature exists to avoid; `--setup` behaves exactly as it did before
-this feature (dependency install only, via `npm ci`), and the test check
-falls back to the named skip outcome above. A false **hit** (an unrelated
-job's build step read as "before" the test job by line order alone) only
-costs a redundant rebuild under `--setup`: harmless, but not free. Neither
-direction causes `--setup` to skip a build the repo's real CI relies on.
-This repo's own CI has no build step at all (`vitest` runs the TypeScript
-source directly), and is exercised in the test suite as a check against a
-false-hit default.
+build-before-test convention this reader cannot see) only costs the extra
+manual `npm run build` this feature exists to avoid; `--setup` then behaves
+exactly as it did before this feature (dependency install only), and the
+test check falls back to the named skip. A false **hit** (an unrelated job's
+build step read as "before" the test job by line order alone) only costs a
+redundant rebuild under `--setup`. Neither direction causes `--setup` to skip
+a build the repo's real CI relies on.
 
-`--setup`'s build step can itself fail: the repo genuinely does not
-compile right now. When it does (a non-zero exit or a timeout), the test
-check's own subsequent "dist missing" failure is **not** reclassified to
-skip: that would misreport a real, newly-observed break as the innocuous
-"just hasn't been built yet" case this feature exists to unblock. The test
-check instead stays a blocking `fail`, with its message naming which
-(build failure vs. timeout) and pointing at the persisted build log when
-one was written (same log-persistence mechanism described below).
+**Trust.** Under `--setup`, a `run:` line in the target repo's own
+`.github/workflows/ci.yml` is what decides whether that repo's `build` script
+executes on your machine. Workflow text is repository content, so `--setup`
+belongs only on repositories you already trust to run -- the same trust
+`customChecks[].command` and the `commands.*` overrides already require (see
+the Security note under "MCP server"). Without `--setup`, no build script is
+ever executed.
+
+The build step gets its own wall-clock budget, **300000 ms** by default (the
+same budget the test check gets, rather than the 120000 ms the dependency
+installs share). Override it with `setup.buildTimeoutMs` in
+`.preflight.json`. The three outcomes are deliberately different:
+
+- **Non-zero exit**: the repo genuinely does not build right now, so the test
+  check's subsequent failure is a real break. It stays a blocking `fail`, and
+  the message names the exit code and the persisted build log.
+- **Timeout**: the build did not answer, so nothing was learned about the
+  repo. The test check stays "not evaluated" -- the named `skip`, with the
+  timeout named in the message and a `limitations` entry -- which is the same
+  direction every other did-not-answer path in this tool takes (see the
+  `npm-audit` skip). A timeout is never a blocker.
+- **Success**: the build ran to completion, so whatever the tests report now
+  is genuine, and the check stays a blocking `fail`. Normally the precondition
+  already says so, because the artifacts now exist; the explicit rule also
+  covers a build script that exits 0 without producing them, where "run the
+  build first" would be a dead end.
+
+The remedy named in a skip message depends on what could actually fix it:
+`npm run build` and `--setup` when the repo's root `package.json` has a
+`build` script (`--setup` only ever builds at the repo root), and a
+workspace-scoped `npm run build -w <name>` (or `--workspaces --if-present`
+for more than one failing workspace) when only the workspaces have one.
 
 Confidence score: a build-required skip is scored exactly like any other
 `skip` outcome (see [docs/confidence-scoring.md](docs/confidence-scoring.md)).
-Its weight (0.2 for the test check) counts toward the confidence
-denominator but not the numerator, and the accompanying `limitations` entry
-adds the usual 0.03 penalty (capped at 0.2 total across all limitations).
-It is not scored as a `pass`, and it is not scored more harshly than an
-`npm-audit` skip for the same reason (no report to judge).
+Its weight (0.2 for the test check) counts toward the confidence denominator
+but not the numerator, and the accompanying `limitations` entry adds the usual
+0.03 penalty (capped at 0.2 total across all limitations). It is not scored as
+a `pass`, and it is not scored more harshly than an `npm-audit` skip for the
+same reason (no report to judge).
 
 When a shell-based check (lint, typecheck, test, audit, custom) fails, its
 complete stdout+stderr is written best-effort to

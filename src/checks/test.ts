@@ -1,7 +1,7 @@
 import { CheckResult, PreflightConfig } from "../types.js";
 import {
   CheckSetResult,
-  classifyBuildRequiredTestFailure,
+  evaluateBuildRequiredTestFailure,
   commandExists,
   createProjectContext,
   getConfiguredCommands,
@@ -18,25 +18,18 @@ import {
   ProjectContext,
 } from "./shared.js";
 
-// Decides the remedy text named in a build-required skip's message (round-2
-// review MEDIUM-2: the prior unconditional message named `npm run build`
-// and `--setup` even for a repo with no root `build` script -- two dead
-// ends. `--setup`'s build step (see `ensureProjectSetup`) only ever runs
-// `npm run build` at the repo root, so it can only help when the root
-// `package.json` actually has that script:
-// - Root has a `build` script: name it, and `--setup` (unchanged from
-//   before this fix).
-// - Root has none, but the classifier could attribute the failure to
-//   specific workspace(s) (an npm-workspaces monorepo): name a
-//   workspace-scoped build instead, since `--setup` cannot help here.
-//   Exactly one workspace gets `-w <name>` (precise); more than one falls
-//   back to `--workspaces --if-present` (naming every failing workspace
-//   would make the message unwieldy, and `--if-present` is a safe no-op
-//   for any workspace that has no `build` script of its own).
-// - Root has none and no workspace could be identified (a single-package
-//   repo with no `build` script at all): there is nothing to suggest
-//   running; say so plainly instead of naming a command that would not
-//   exist.
+// Names what the operator should actually run to satisfy the build
+// precondition that `evaluateBuildRequiredTestFailure` found unmet. Reached
+// only for a downgrade, so a build script that covers every failing unit is
+// known to exist -- either at the repo root or in the attributed workspaces:
+// - Root has a `build` script: name it, and `--setup` (whose build step only
+//   ever runs `npm run build` at the repo root).
+// - Root has none, so the units are attributed workspaces with their own
+//   build scripts: name a workspace-scoped build instead, since `--setup`
+//   cannot help. Exactly one workspace gets `-w <name>` (precise); more than
+//   one falls back to `--workspaces --if-present` (naming every failing
+//   workspace would make the message unwieldy, and `--if-present` is a safe
+//   no-op for a workspace without a build script of its own).
 function buildRequiredRemedy(context: ProjectContext, workspaceNames: string[] | undefined): string {
   if (context.packageJson?.scripts?.build) {
     return "run `npm run build` first (or rerun preflight with `--setup`, which builds automatically when this repo's CI shows build-before-test)";
@@ -48,11 +41,7 @@ function buildRequiredRemedy(context: ProjectContext, workspaceNames: string[] |
   if (workspaceNames && workspaceNames.length === 1) {
     return `run \`npm run build -w ${workspaceNames[0]}\` first (${rootHasNoBuildScript})`;
   }
-  if (workspaceNames && workspaceNames.length > 1) {
-    return `run \`npm run build --workspaces --if-present\` first (${rootHasNoBuildScript})`;
-  }
-
-  return "no `build` script was found to produce the missing artifact; this check was not evaluated";
+  return `run \`npm run build --workspaces --if-present\` first (${rootHasNoBuildScript})`;
 }
 
 export async function runTestChecks(
@@ -96,58 +85,39 @@ export async function runTestChecks(
           logDir: config.logDir,
         });
         if (result.check) {
-          if (result.check.status === "fail" && setupBuildOutcome?.attempted && !setupBuildOutcome.succeeded) {
-            // Round-2 review HIGH-2: `--setup` itself just tried to build
-            // this repo and did not succeed (non-zero exit or timeout) --
-            // see `ensureProjectSetup`'s "Option (a)" block in shared.ts.
-            // A subsequent test failure whose output happens to name a
-            // missing `dist/` artifact is NOT "just not built yet" here;
-            // the repo genuinely does not build right now, which is a real
-            // regression, not the innocuous case this feature exists to
-            // unblock. Never reclassify to skip in this state -- keep the
-            // blocking `fail` and name the build failure so the remedy
-            // points at the actual problem instead of suggesting the very
-            // step that just failed.
-            const reason = setupBuildOutcome.timedOut
-              ? "the `--setup` build step (`npm run build`) timed out"
-              : `the \`--setup\` build step (\`npm run build\`) failed (exit code ${setupBuildOutcome.exitCode})`;
-            const logSuffix = setupBuildOutcome.logPath ? ` (see ${setupBuildOutcome.logPath})` : "";
+          // The named build-required outcome (decision (c); see README's
+          // "Build-required test classification"). The decision itself lives
+          // in `evaluateBuildRequiredTestFailure`: a failing `npm test` is
+          // downgraded to a non-blocking `skip` only when the FILESYSTEM says
+          // every failing package is unbuilt (a build script exists and a
+          // declared artifact is missing) AND that package's own output
+          // blames the missing artifact. A genuine failure -- alone, or
+          // alongside an unbuilt package in the same monorepo -- keeps the
+          // blocking `fail`. Scoped to this default-detected `npm run test`
+          // check: a configured `commands.test` override (the branch at the
+          // top of this function) is never classified.
+          const evaluation =
+            result.check.status === "fail"
+              ? evaluateBuildRequiredTestFailure({
+                  repoPath,
+                  output: result.rawOutput,
+                  setupBuildOutcome,
+                })
+              : undefined;
+
+          if (evaluation?.downgrade) {
+            const remedy = buildRequiredRemedy(context, evaluation.workspaceNames);
+            const note = evaluation.note ? `; ${evaluation.note}` : "";
+            const message = `npm test not evaluated: build required before test (${evaluation.cause})${note}; ${remedy}`;
+            checks.push({ ...result.check, status: "skip", message });
+            limitations.push(message);
+          } else if (evaluation?.note) {
             checks.push({
               ...result.check,
-              message: `${result.check.message ?? "npm test failed"}: ${reason}${logSuffix}`,
+              message: `${result.check.message ?? "npm test failed"}: ${evaluation.note}`,
             });
           } else {
-            // Decision (c) (see README's "Build-required test classification"
-            // and CHANGELOG): a `npm test` failure whose captured output
-            // names a missing `dist/` artifact is a distinct, named outcome
-            // -- `skip` with the remedy in the message -- not a blocker,
-            // because it means the workspace's own test enforces a build
-            // precondition preflight has not met, not that the code under
-            // test is actually broken. Scoped to this default-detected
-            // `npm run test` check only: a configured `commands.test`
-            // override (the branch at the top of this function) is not
-            // classified. Only ever downgrades a `fail`;
-            // `classifyBuildRequiredTestFailure` requires concrete evidence
-            // in EVERY workspace that actually failed (see its own
-            // comment), so a genuine failure -- alone, or alongside an
-            // unrelated build-required workspace in the same monorepo --
-            // is never reclassified.
-            const classification =
-              result.check.status === "fail"
-                ? classifyBuildRequiredTestFailure(result.rawOutput, repoPath)
-                : { matched: false as const };
-            if (classification.matched) {
-              const cause = classification.cause ?? "dist/ appears to be missing";
-              const remedy = buildRequiredRemedy(context, classification.workspaceNames);
-              checks.push({
-                ...result.check,
-                status: "skip",
-                message: `npm test not evaluated: build required before test (${cause}); ${remedy}`,
-              });
-              limitations.push(`npm test skipped: build required before test (${cause}); ${remedy}`);
-            } else {
-              checks.push(result.check);
-            }
+            checks.push(result.check);
           }
         }
         if (result.limitation) {

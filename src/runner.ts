@@ -183,7 +183,9 @@ export async function runPreflight(
 
   let setupBuildOutcome: SetupBuildOutcome | undefined;
   if (config.setup?.enabled === true) {
-    const setupResult = await ensureProjectSetup(targetPath, effectiveConfig.logDir);
+    const setupResult = await ensureProjectSetup(targetPath, effectiveConfig.logDir, {
+      buildTimeoutMs: effectiveConfig.setup?.buildTimeoutMs,
+    });
     limitations.push(...setupResult.limitations);
     setupBuildOutcome = setupResult.buildOutcome;
   }

@@ -10,9 +10,20 @@ export interface CheckSetResult {
 }
 
 interface PackageJson {
+  name?: string;
+  version?: string;
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  // Entry points a package declares as its own build output; read by
+  // `declaredBuildArtifacts` for the build precondition. `exports` stays
+  // `unknown` because its value is a freeform nested condition/subpath tree.
+  main?: string;
+  module?: string;
+  types?: string;
+  typings?: string;
+  bin?: string | Record<string, string>;
+  exports?: unknown;
 }
 
 interface ComposerJson {
@@ -167,9 +178,9 @@ interface ShellCheckRunResult {
   // Full stdout+stderr of the command, when it actually ran (not set on the
   // early missingLimitation short-circuit, since the command never
   // executed). Not persisted on `CheckResult` itself -- it exists so a
-  // caller can run its own post-hoc classification on a `fail` result (see
-  // `classifyBuildRequiredFailure` and its use in checks/test.ts) without
-  // `runShellCheck` needing to know about that classification itself.
+  // caller can inspect a `fail` result's own output (see
+  // `evaluateBuildRequiredTestFailure` and its use in checks/test.ts)
+  // without `runShellCheck` needing to know about that evaluation itself.
   rawOutput?: string;
 }
 
@@ -258,220 +269,207 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
   }
 }
 
-// Evidence patterns for `classifyBuildRequiredFailure` below: a test-check
-// failure is only ever reclassified from `fail` to `skip` when the
-// captured output NAMES a missing build artifact, never on a generic
-// non-zero exit. Kept narrow on purpose -- see the function's own comment
-// for the conservatism rationale and README's "Build-required test
-// classification" section for the documented limits.
+// ---------------------------------------------------------------------------
+// Build-required test failures
+// ---------------------------------------------------------------------------
 //
-// - Node's own `Cannot find module '<path>'` when `<path>` runs through a
-//   `dist/` (or `\dist\` on Windows) segment: the most common real-world
-//   shape (a workspace's test requiring its own package's build output).
-// - `ENOENT ... open '<path>'` naming a `dist/` path: a direct `fs` read of
-//   a build artifact that was never produced. Restricted to module
-//   resolution failures (see `isEnoentModuleResolutionFailure` below): a
-//   plain `fs` read of an unrelated data file living under `dist/` (a
-//   cache JSON, a fixture) is not "build required" just because it also
-//   sits under a `dist/` path.
-// - A workspace's own assertion/thrown message that explicitly states the
-//   precondition ("dist/... is missing ... run `npm run build`"): covers a
-//   project that guards its own dist-dependent test with a clearer message
-//   than a bare module-resolution error. Bounded to a single line and
-//   requires BOTH a `dist/` mention and an explicit `npm run build`
-//   mention so an unrelated failure that happens to say "missing" or
-//   "not found" is never enough by itself.
+// A failing `npm test` is only ever downgraded from a blocking `fail` to the
+// named `skip` outcome ("build required before test") when the FILESYSTEM
+// says the failing package cannot have been built yet: it has a `build`
+// script, and at least one of the artifacts it declares is not on disk
+// (`evaluateBuildPrecondition`). Runner output text does not decide that.
+// Deciding from text was the design that kept producing false skips -- a
+// single `Cannot find module '<...>/dist/cli.js'` line next to a real
+// assertion failure downgraded the whole check -- so the decision now rests
+// on state that a build actually changes.
 //
-// Both path-bearing patterns capture the quoted path so `isCredibleBuildArtifactPath`
-// below can reject a path a build could never fix: one resolved through
-// `node_modules` (a third-party dependency's own missing file, not this
-// repo's), a bare module specifier with no repo-relative or absolute shape
-// (ordinary `node_modules` resolution, e.g. `Cannot find module 'lodash'`),
-// an absolute path outside the repo root (when the caller can tell), or a
-// path whose `dist/` directory already exists on disk (the workspace HAS
-// been built; a missing file inside an already-built `dist/` is a
-// different bug, not a missing build).
-const DIST_MODULE_NOT_FOUND_PATTERN = /Cannot find module ['"]([^'"]*[\\/]dist[\\/][^'"]*)['"]/i;
-const DIST_ENOENT_PATTERN = /ENOENT[^\n]*?open ['"]([^'"]*[\\/]dist[\\/][^'"]*)['"]/i;
-const DIST_PRECONDITION_PATTERN = /\bdist[\\/][^\n]{0,120}\b(?:is|was|are)?\s*(?:missing|not found|does not exist)\b[^\n]{0,120}\bnpm run build\b/i;
+// Text is still read, for two things that are not the decision:
+//   - attribution: npm's own per-workspace preambles say WHICH package
+//     failed, so the precondition is evaluated against that package's
+//     directory rather than the repo root (`splitWorkspaceSegments`);
+//   - corroboration: `findMissingArtifactEvidence` requires the failing
+//     package's own output to actually blame the missing artifact before the
+//     downgrade is allowed, and supplies the error line quoted in the
+//     message.
+//
+// Both conditions are necessary and neither is sufficient. The precondition
+// answers "could a build change this outcome at all"; the corroboration
+// answers "is THIS failure about the missing artifact". Without the
+// precondition, any output line could downgrade a genuine failure (the
+// round-2 defect). Without the corroboration, every failure in an unbuilt
+// checkout would be downgraded, including one that has nothing to do with
+// the build -- a package that compiles to `dist/` but runs its tests from
+// source (this very repo) would report `ready: true` for a genuinely broken
+// suite.
 
-// A line is only trusted as Node/npm's OWN error output -- never a runner
-// code frame echoing surrounding source (`125|     const output = "Error:
-// Cannot find module ...";`) and never a test assertion's quoted
-// expectation string (`const output = "Error: ..."`, `expect(x).toBe("Error:
-// ...")`) -- when it actually STARTS with one of the shapes Node/npm emit
-// for a real module-resolution failure. A code-frame or quoted-string line
-// never starts this way (it starts with a line number, `const`, `expect(`,
-// or similar), so this one check covers both.
-const TRUSTED_FAILURE_LINE_PATTERN = /^(Error(?:\s*\[[^\]]*\])?:|Cannot find module\b|ENOENT\b|throw\b|at\s|Require stack:|-\s|npm\s+error\b|npm\s+ERR!)/i;
+// `exports` conditions whose targets are treated as declared build output.
+// Other conditions (`node-addons`, `browser`, custom ones) are not walked:
+// they either duplicate these targets or name something a plain build does
+// not produce.
+const EXPORTS_CONDITIONS = new Set(["import", "require", "default", "types"]);
 
-// An ENOENT naming a `dist/` path is only "build required" evidence when
-// it is actually a module-resolution failure, not a generic `fs` read of
-// some other file that happens to live under `dist/` (a cache JSON, a
-// fixture the test itself writes there): the entry-point extension must
-// look like a require/import target, AND the surrounding output must carry
-// one of Node's own module-resolution markers.
-const ENTRY_POINT_EXTENSION_PATTERN = /\.(?:js|mjs|cjs|d\.ts|json)$/i;
-function isEnoentModuleResolutionFailure(candidatePath: string, fullOutput: string): boolean {
-  if (!ENTRY_POINT_EXTENSION_PATTERN.test(candidatePath)) return false;
-  return /Require stack:|ERR_MODULE_NOT_FOUND/.test(fullOutput);
-}
-
-// Walks `absPath`'s segments back to (and including) a `dist` segment and
-// returns that directory, e.g. `/repo/packages/x/dist/helpr.js` ->
-// `/repo/packages/x/dist`. Returns undefined when no `dist` segment is
-// present (should not happen -- callers only reach this after the `dist/`
-// patterns above already matched -- but stays defensive).
-function distDirFromArtifactPath(absPath: string): string | undefined {
-  const parts = absPath.split(path.sep);
-  const idx = parts.lastIndexOf("dist");
-  if (idx === -1) return undefined;
-  const dir = parts.slice(0, idx + 1).join(path.sep);
-  return dir.length > 0 ? dir : path.sep;
-}
-
-// Rejects a matched path that a build could never fix, per the file-level
-// comment on the two DIST_*_PATTERN constants above. `repoPath`, when
-// given, enables the two filesystem-dependent checks (absolute-path
-// containment, "dist/ already built"); without it (existing unit-test call
-// sites that predate this parameter) those two are skipped and only the
-// text-only checks (`node_modules`, bare specifier) apply, preserving prior
-// behavior for callers that never had a repo to check against.
-function isCredibleBuildArtifactPath(rawPath: string, repoPath: string | undefined): boolean {
-  const normalized = rawPath.replace(/\\/g, "/");
-  if (normalized.includes("node_modules/") || normalized.startsWith("node_modules/")) {
-    return false;
+// Collects the string leaves of a `package.json` `exports` field: subpath
+// keys (`"."`, `"./sub"`) and the conditions above are walked, arrays are
+// walked element-wise, `null` (a blocked subpath) is ignored.
+function collectExportsTargets(node: unknown, out: string[]): void {
+  if (typeof node === "string") {
+    out.push(node);
+    return;
   }
-
-  if (normalized.startsWith("./") || normalized.startsWith("../")) {
-    // Repo/workspace-relative. The path is relative to a workspace's own
-    // cwd, which this function does not know (only `repoPath`, the
-    // monorepo root, is available) -- so the "already built" filesystem
-    // check below is intentionally skipped for this shape; a relative
-    // path is accepted on its (already node_modules-free) text shape alone.
-    return true;
+  if (Array.isArray(node)) {
+    for (const entry of node) collectExportsTargets(entry, out);
+    return;
   }
-
-  const isAbsolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
-  if (!isAbsolute) {
-    // A bare module specifier (`some-lib/dist/index.js`): resolved via
-    // node_modules lookup, not a path into this repo -- a build here would
-    // not produce it.
-    return false;
-  }
-
-  if (repoPath) {
-    const resolvedRepo = path.resolve(repoPath);
-    const resolvedCandidate = path.resolve(rawPath);
-    if (resolvedCandidate !== resolvedRepo && !resolvedCandidate.startsWith(resolvedRepo + path.sep)) {
-      return false; // absolute path outside the repo root -- a build here would not fix it
-    }
-
-    const distDir = distDirFromArtifactPath(resolvedCandidate);
-    if (distDir && fs.existsSync(distDir)) {
-      // dist/ already exists for this workspace: a missing file inside an
-      // already-built dist/ is a different, unrelated bug, not "build
-      // required".
-      return false;
+  if (node && typeof node === "object") {
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (key.startsWith(".") || EXPORTS_CONDITIONS.has(key)) {
+        collectExportsTargets(value, out);
+      }
     }
   }
-
-  return true;
 }
 
-const MAX_BUILD_REQUIRED_CAUSE_LENGTH = 160;
+// Conventional output directory, used only as the fallback for a package
+// that declares no entry points at all (common for a `private` workspace
+// whose tests require `./dist/...` directly).
+const DEFAULT_BUILD_OUTPUT_DIR = "dist";
 
-function clampBuildRequiredCause(text: string): string {
-  const trimmed = text.trim();
-  return trimmed.length > MAX_BUILD_REQUIRED_CAUSE_LENGTH
-    ? `${trimmed.slice(0, MAX_BUILD_REQUIRED_CAUSE_LENGTH - 3)}...`
-    : trimmed;
+// Every path a package declares as its own build output, relative to its own
+// directory: `main`, `module`, `types`/`typings`, `bin` (string form or every
+// value of the map form), the string leaves of `exports`, and the `outDir` of
+// the package's own `tsconfig.json` when that file parses and declares one (a
+// tsconfig with comments does not parse as JSON and is simply skipped, the
+// same way every other optional manifest in this file is read). Order is
+// stable, so the artifact named in a message is deterministic. A target
+// containing `*` (an `exports` subpath pattern) is dropped: a wildcard cannot
+// be existence-checked.
+function declaredBuildArtifacts(pkgDir: string, pkg: PackageJson | undefined): string[] {
+  const raw: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value === "string" && value.trim().length > 0) raw.push(value.trim());
+  };
+
+  push(pkg?.main);
+  push(pkg?.module);
+  push(pkg?.types);
+  push(pkg?.typings);
+  if (typeof pkg?.bin === "string") {
+    push(pkg.bin);
+  } else if (pkg?.bin && typeof pkg.bin === "object") {
+    for (const value of Object.values(pkg.bin)) push(value);
+  }
+  collectExportsTargets(pkg?.exports, raw);
+
+  const tsconfig = readJsonFile<{ compilerOptions?: { outDir?: unknown } }>(
+    path.join(pkgDir, "tsconfig.json")
+  );
+  push(tsconfig?.compilerOptions?.outDir);
+
+  return [...new Set(raw.filter((entry) => !entry.includes("*")))];
 }
 
-export interface BuildRequiredClassification {
-  matched: boolean;
-  /** The matched line/snippet, present only when `matched` is true. */
-  cause?: string;
+// A declared artifact counts as present when its path exists, or -- for an
+// extensionless declaration such as `main: "./dist/index"`, which Node
+// resolves by trying extensions and then `index.js` -- when one of Node's
+// resolution candidates exists. Without that, a package that IS built but
+// declares an extensionless entry point would read as unbuilt.
+const ARTIFACT_RESOLUTION_EXTENSIONS = [".js", ".cjs", ".mjs", ".json", ".d.ts"];
+function buildArtifactExists(absPath: string): boolean {
+  if (fs.existsSync(absPath)) return true;
+  if (path.extname(absPath).length > 0) return false;
+  return (
+    ARTIFACT_RESOLUTION_EXTENSIONS.some((ext) => fs.existsSync(absPath + ext)) ||
+    fs.existsSync(path.join(absPath, "index.js"))
+  );
 }
 
-// Classifies a FAILED test check's captured output as "build required"
-// (dist/ missing) vs. a genuine failure. Never called directly by
-// `checks/test.ts` for an npm-workspaces fan-out -- see
-// `classifyBuildRequiredTestFailure` below, which splits a multi-workspace
-// failure into per-workspace segments and calls this function on each one
-// so one unrelated failing workspace can never hide behind another
-// workspace's real build-required evidence. Only reclassifies to `skip`
-// when this returns `matched: true`. Scanned line-by-line first for the
-// two module/file-not-found shapes (the common case, and the cheapest to
-// pinpoint to one line); the precondition phrasing is checked against the
-// full text afterwards -- that pattern's `[^\n]{0,120}` gap classes
-// explicitly exclude `\n`, so even though it runs against the whole
-// multi-line `output` (not one line at a time, unlike the two patterns
-// above), a match can never straddle two physical lines.
-export function classifyBuildRequiredFailure(
-  output: string | undefined,
-  repoPath?: string
-): BuildRequiredClassification {
-  if (!output) {
-    return { matched: false };
+// How a root `build` script is resolved as covering a workspace that has no
+// `build` script of its own: the root script must fan out over the workspaces
+// (`npm run build --workspaces ...`, `npm run build -ws`). Deliberately
+// generous -- an `--if-present` fan-out actually skips a workspace that has no
+// build script of its own -- because the precondition only decides whether a
+// build COULD change the outcome; the corroboration requirement above is what
+// keeps that generosity from downgrading an unrelated failure. A root build
+// with any other shape (a `tsc -b` over project references, a Makefile) is not
+// recognized, and such a workspace's precondition is then simply not met.
+const ROOT_WORKSPACES_BUILD_PATTERN = /\brun\s+build\b[^\n]*?(?:--workspaces\b|(?:^|\s)-ws(?:\s|$))/i;
+
+function rootBuildScriptFansOutToWorkspaces(rootPkg: PackageJson | undefined): boolean {
+  const script = rootPkg?.scripts?.build;
+  return typeof script === "string" && ROOT_WORKSPACES_BUILD_PATTERN.test(script);
+}
+
+export interface BuildPreconditionResult {
+  /** True when a build script covers this package AND a declared artifact is missing on disk. */
+  met: boolean;
+  /** Whether a build script that could produce this package's artifacts exists at all. */
+  hasBuildScript: boolean;
+  /** The first missing artifact, as declared (package-relative), when one is missing. */
+  missingArtifact?: string;
+}
+
+// The filesystem precondition (see the block comment above). `pkgDir` is the
+// package the failure was attributed to -- a workspace directory, or
+// `repoPath` itself for a single-package repo or an unattributable failure.
+export function evaluateBuildPrecondition(pkgDir: string, repoPath: string): BuildPreconditionResult {
+  const pkg = readJsonFile<PackageJson>(path.join(pkgDir, "package.json"));
+  const isRoot = path.resolve(pkgDir) === path.resolve(repoPath);
+  const rootPkg = isRoot ? pkg : readJsonFile<PackageJson>(path.join(repoPath, "package.json"));
+
+  const hasBuildScript = Boolean(
+    pkg?.scripts?.build || (!isRoot && rootBuildScriptFansOutToWorkspaces(rootPkg))
+  );
+  if (!hasBuildScript) {
+    return { met: false, hasBuildScript: false };
   }
 
-  for (const rawLine of output.split("\n")) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    if (!TRUSTED_FAILURE_LINE_PATTERN.test(line)) continue;
+  const declared = declaredBuildArtifacts(pkgDir, pkg);
+  const candidates = declared.length > 0 ? declared : [DEFAULT_BUILD_OUTPUT_DIR];
+  const missingArtifact = candidates.find(
+    (relative) => !buildArtifactExists(path.resolve(pkgDir, relative))
+  );
 
-    const moduleMatch = DIST_MODULE_NOT_FOUND_PATTERN.exec(line);
-    if (moduleMatch && isCredibleBuildArtifactPath(moduleMatch[1], repoPath)) {
-      return { matched: true, cause: clampBuildRequiredCause(line) };
-    }
-
-    const enoentMatch = DIST_ENOENT_PATTERN.exec(line);
-    if (
-      enoentMatch &&
-      isEnoentModuleResolutionFailure(enoentMatch[1], output) &&
-      isCredibleBuildArtifactPath(enoentMatch[1], repoPath)
-    ) {
-      return { matched: true, cause: clampBuildRequiredCause(line) };
-    }
-  }
-
-  const preconditionMatch = output.match(DIST_PRECONDITION_PATTERN);
-  if (preconditionMatch) {
-    return { matched: true, cause: clampBuildRequiredCause(preconditionMatch[0]) };
-  }
-
-  return { matched: false };
+  return { met: missingArtifact !== undefined, hasBuildScript: true, missingArtifact };
 }
 
-// A single-line preamble npm prints before EACH workspace's own script
-// invocation when fanning out via `--workspaces` (e.g. `> needs-build@1.0.0
-// test`), distinct from the root script's own preamble (`> test`, no
-// `name@version` token). Captures the workspace name so
-// `classifyBuildRequiredTestFailure` can name it in a remedy.
-const WORKSPACE_PREAMBLE_LINE_PATTERN = /^>\s*([^\s@]+)@\S+\s+\S+\s*$/;
+// npm prints `> <name>@<version> <script>` before each workspace's own script
+// during a `--workspaces` fan-out. The ROOT package's own script gets the same
+// shape whenever the root `package.json` carries a `version` (npm 11 prints
+// `> repo@1.2.3 test`), so the root line is filtered out by identity below
+// rather than assumed to look different. The optional `@scope/` prefix is part
+// of the name, not a version separator.
+const PACKAGE_PREAMBLE_LINE_PATTERN = /^>\s*((?:@[^\s@/]+\/)?[^\s@/]+)@([^\s@]+)\s+\S+\s*$/;
 
 // npm's own lifecycle-failure envelope for one workspace's script, printed
-// immediately after that workspace's own output (`npm error Lifecycle
-// script ... failed`/`npm error command failed` on current npm; `npm ERR!`
-// on older npm majors). Marks a segment (see `splitWorkspaceSegments`) as
-// one of the workspaces that actually failed, as opposed to one that ran
-// and passed inside the same fan-out.
+// immediately after that workspace's output (`npm error Lifecycle script ...
+// failed` / `npm error command failed` on current npm, `npm ERR!` on older
+// majors). Marks a segment as one of the workspaces that actually failed, as
+// opposed to one that ran and passed inside the same fan-out.
 const WORKSPACE_LIFECYCLE_FAILURE_PATTERN = /npm\s+(?:error|ERR!)\s+(?:Lifecycle script|command failed)/i;
 
-// Splits an npm `--workspaces` fan-out's combined output into one segment
-// per workspace, using `WORKSPACE_PREAMBLE_LINE_PATTERN` matches as segment
-// starts. Returns undefined when no such preamble is found at all -- a
-// single-package repo's `npm run test` (no workspace fan-out), or an
-// unrecognized runner/format -- so the caller can fall back to classifying
-// the whole output as one blob, same as before this per-workspace split
-// existed.
-function splitWorkspaceSegments(output: string): string[] | undefined {
+// Splits an npm `--workspaces` fan-out's combined output into one segment per
+// workspace, using the preamble lines as segment starts and excluding the root
+// package's own preamble. Returns undefined when no workspace preamble is left
+// -- a single-package repo, or an unrecognized runner -- so the caller falls
+// back to treating the whole output as the root package's.
+export function splitWorkspaceSegments(
+  output: string,
+  rootPackage?: { name?: string; version?: string }
+): string[] | undefined {
   const lines = output.split("\n");
   const boundaries: number[] = [];
+
   lines.forEach((line, index) => {
-    if (WORKSPACE_PREAMBLE_LINE_PATTERN.test(line.trim())) boundaries.push(index);
+    const match = PACKAGE_PREAMBLE_LINE_PATTERN.exec(line.trim());
+    if (!match) return;
+    const isRootPreamble =
+      Boolean(rootPackage?.name) &&
+      match[1] === rootPackage?.name &&
+      (rootPackage?.version === undefined || match[2] === rootPackage.version);
+    if (isRootPreamble) return;
+    boundaries.push(index);
   });
+
   if (boundaries.length === 0) return undefined;
 
   return boundaries.map((start, i) => {
@@ -482,67 +480,259 @@ function splitWorkspaceSegments(output: string): string[] | undefined {
 
 function workspaceNameFromSegment(segment: string): string | undefined {
   const firstLine = segment.split("\n", 1)[0]?.trim() ?? "";
-  return WORKSPACE_PREAMBLE_LINE_PATTERN.exec(firstLine)?.[1];
+  return PACKAGE_PREAMBLE_LINE_PATTERN.exec(firstLine)?.[1];
 }
 
-export interface BuildRequiredTestClassification extends BuildRequiredClassification {
-  /** Names of the workspaces whose own output carried the build-required evidence, when known. */
-  workspaceNames?: string[];
+// Maps every package name found in the repo (up to three directory levels,
+// `node_modules`/`dist`/etc. skipped by `findNestedFiles`) to its directory,
+// so a workspace named in npm's preamble is resolved to the directory whose
+// precondition is then evaluated. Name and directory routinely differ
+// (`packages/z-broken` publishing as `broken`, a scoped name under a plain
+// directory), which is why the name is looked up rather than joined onto
+// `packages/`.
+function buildPackageDirIndex(repoPath: string): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const relative of findNestedFiles(repoPath, "package.json", 3)) {
+    const dir = path.join(repoPath, path.dirname(relative));
+    const pkg = readJsonFile<PackageJson>(path.join(dir, "package.json"));
+    if (pkg?.name && !index.has(pkg.name)) index.set(pkg.name, dir);
+  }
+  return index;
 }
 
-// Entry point used by `checks/test.ts` for the default auto-detected
-// `npm run test` check. A monorepo's `npm test` that fans out across
-// `--workspaces` can fail for MULTIPLE, INDEPENDENT reasons at once -- one
-// workspace missing its build, another with a genuinely broken test -- and
-// a single blob-wide `classifyBuildRequiredFailure` call would downgrade
-// the WHOLE check to a non-blocking skip the moment ANY line anywhere in
-// the combined output happened to carry build-required evidence, hiding
-// the other workspace's real, unrelated failure. This splits the output
-// into per-workspace segments (`splitWorkspaceSegments`) and only
-// downgrades when EVERY workspace segment that actually failed
-// (`WORKSPACE_LIFECYCLE_FAILURE_PATTERN`) is, on its own, build-required
-// evidence; one genuinely-failing workspace anywhere in the fan-out keeps
-// the whole check a blocking `fail`. When no per-workspace preamble is
-// found at all (not an npm-workspaces fan-out, or an unrecognized runner),
-// falls back to classifying the whole output as one blob -- unchanged
-// behavior for a single-package repo.
-export function classifyBuildRequiredTestFailure(
+interface FailingUnit {
+  /** Directory whose build precondition decides this unit. */
+  pkgDir: string;
+  /** Workspace name, when the failure could be attributed to one. */
+  workspaceName?: string;
+  /** The output attributed to this unit (one workspace segment, or all of it). */
+  segment: string;
+}
+
+// The units a failing `npm test` is judged by: one per workspace that npm
+// reported as failed, or a single root-package unit when the output carries no
+// workspace attribution at all (a single-package repo, a non-npm runner, or a
+// fan-out whose lifecycle envelope this does not recognize).
+function resolveFailingUnits(repoPath: string, output: string, rootPkg: PackageJson | undefined): FailingUnit[] {
+  const rootUnit: FailingUnit[] = [{ pkgDir: repoPath, segment: output }];
+
+  const segments = splitWorkspaceSegments(output, rootPkg);
+  if (!segments) return rootUnit;
+
+  const failing = segments.filter((segment) => WORKSPACE_LIFECYCLE_FAILURE_PATTERN.test(segment));
+  if (failing.length === 0) return rootUnit;
+
+  const dirIndex = buildPackageDirIndex(repoPath);
+  return failing.map((segment) => {
+    const name = workspaceNameFromSegment(segment);
+    const dir = name ? dirIndex.get(name) : undefined;
+    return dir ? { pkgDir: dir, workspaceName: name, segment } : { pkgDir: repoPath, segment };
+  });
+}
+
+const MODULE_NOT_FOUND_PATTERN = /Cannot find module ['"]([^'"]+)['"]/i;
+const ENOENT_OPEN_PATTERN = /ENOENT[^\n]*?open ['"]([^'"]+)['"]/i;
+const MAX_EVIDENCE_LENGTH = 160;
+
+function clampEvidence(text: string): string {
+  const trimmed = text.trim();
+  return trimmed.length > MAX_EVIDENCE_LENGTH
+    ? `${trimmed.slice(0, MAX_EVIDENCE_LENGTH - 3)}...`
+    : trimmed;
+}
+
+// A quoted module specifier only corroborates a missing build artifact when it
+// is path-shaped and not resolved through `node_modules`: a bare specifier
+// (`lodash`) or a path inside `node_modules` names a dependency problem, which
+// a build of this repo would not fix. An absolute path must also point inside
+// the repo.
+function isRepoBuildOutputPath(rawPath: string, repoPath: string): boolean {
+  const normalized = rawPath.replace(/\\/g, "/");
+  if (normalized.includes("node_modules/")) return false;
+  if (normalized.startsWith("./") || normalized.startsWith("../")) return true;
+
+  const isAbsolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
+  if (!isAbsolute) return false;
+
+  const resolvedRepo = path.resolve(repoPath);
+  const resolved = path.resolve(rawPath);
+  return resolved === resolvedRepo || resolved.startsWith(resolvedRepo + path.sep);
+}
+
+// Text corroboration, never the decision (see the block comment above): does
+// this failing unit's own output actually blame the missing artifact?
+//
+// - A line naming the missing artifact itself, by the path the package
+//   declared (`dist/index.js`, or `dist/` when the artifact is the output
+//   directory). This is the shape a package's own guard prints ("<abs>/dist/
+//   index.js is missing. Run `npm run build` ..."), and a test runner prints
+//   such a message with no `Error:` prefix of its own, so no prefix is
+//   required here: the declared artifact path is the specific token.
+// - Node's own module-resolution failure (`Cannot find module '<path>'`,
+//   `ENOENT ... open '<path>'`) for a path-shaped specifier that is not
+//   resolved through `node_modules`.
+//
+// Returns the matched line, clamped, for the message.
+export function findMissingArtifactEvidence(
   output: string | undefined,
-  repoPath?: string
-): BuildRequiredTestClassification {
-  if (!output) return { matched: false };
+  options: { repoPath: string; missingArtifact?: string }
+): string | undefined {
+  if (!output) return undefined;
 
-  const segments = splitWorkspaceSegments(output);
-  if (!segments) {
-    return classifyBuildRequiredFailure(output, repoPath);
+  const needle = options.missingArtifact
+    ? normalizeArtifactNeedle(options.missingArtifact)
+    : undefined;
+
+  for (const rawLine of output.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    if (needle && line.replace(/\\/g, "/").includes(needle)) {
+      return clampEvidence(line);
+    }
+
+    const quoted = MODULE_NOT_FOUND_PATTERN.exec(line)?.[1] ?? ENOENT_OPEN_PATTERN.exec(line)?.[1];
+    if (quoted && isRepoBuildOutputPath(quoted, options.repoPath)) {
+      return clampEvidence(line);
+    }
   }
 
-  const failingSegments = segments.filter((segment) => WORKSPACE_LIFECYCLE_FAILURE_PATTERN.test(segment));
-  if (failingSegments.length === 0) {
-    // Could not attribute the failure to a specific workspace (unexpected
-    // shape, e.g. a custom `--if-present` runner that doesn't echo npm's
-    // own lifecycle envelope) -- fall back to the whole-output classifier
-    // rather than guessing which segment is at fault.
-    return classifyBuildRequiredFailure(output, repoPath);
+  return undefined;
+}
+
+// The declared artifact as it appears inside an error message: `./dist/x.js`
+// and `dist/x.js` both appear as `dist/x.js`, and a bare output DIRECTORY gets
+// a trailing slash so `dist` does not match every word containing "dist".
+function normalizeArtifactNeedle(artifact: string): string {
+  const normalized = artifact.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  return path.extname(normalized).length > 0 ? normalized : `${normalized}/`;
+}
+
+export interface BuildRequiredEvaluation {
+  /** True when the failing test check may be downgraded to the named skip. */
+  downgrade: boolean;
+  /** What made this a build-required skip, for the message. Only set when downgrading. */
+  cause?: string;
+  /** Workspaces the failure was attributed to, when it could be. */
+  workspaceNames?: string[];
+  /**
+   * One sentence appended to the check's message: why this is still a blocker
+   * (when not downgrading), or what else the operator should know about the
+   * skip (a `--setup` build that timed out).
+   */
+  note?: string;
+}
+
+function logSuffix(logPath: string | undefined): string {
+  return logPath ? ` (see ${logPath})` : "";
+}
+
+// Decides whether a FAILED default `npm test` check is the named
+// build-required skip. See the block comment at the top of this section for
+// the two conditions and why each one is necessary.
+export function evaluateBuildRequiredTestFailure(options: {
+  repoPath: string;
+  output?: string;
+  setupBuildOutcome?: SetupBuildOutcome;
+}): BuildRequiredEvaluation {
+  const { repoPath, output, setupBuildOutcome } = options;
+
+  // `--setup` already tried to build this repo, so its outcome is known and
+  // decides before the precondition is consulted:
+  // - non-zero exit: the repo genuinely does not build right now, so a
+  //   downstream missing-artifact failure is a real break, not "not built
+  //   yet". Blocker naming the exit code and the persisted build log.
+  // - success: the build ran to completion, so whatever the tests report now
+  //   is genuine. The precondition normally says so too (the artifacts exist),
+  //   but this also covers a build script that exits 0 without producing them.
+  // - timeout: the build did not answer, so nothing was learned about the
+  //   repo. Falls through to the normal evaluation and stays "not evaluated",
+  //   the same direction every other did-not-answer path in this project takes.
+  if (setupBuildOutcome?.attempted && !setupBuildOutcome.succeeded && !setupBuildOutcome.timedOut) {
+    return {
+      downgrade: false,
+      note:
+        "the `--setup` build step (`npm run build`) failed" +
+        ` (exit code ${setupBuildOutcome.exitCode})${logSuffix(setupBuildOutcome.logPath)}`,
+    };
+  }
+  if (setupBuildOutcome?.attempted && setupBuildOutcome.succeeded) {
+    return {
+      downgrade: false,
+      note: "the `--setup` build step (`npm run build`) completed successfully, so this is not a missing build",
+    };
   }
 
-  const perSegment = failingSegments.map((segment) => ({
-    segment,
-    classification: classifyBuildRequiredFailure(segment, repoPath),
-  }));
+  const rootPkg = readJsonFile<PackageJson>(path.join(repoPath, "package.json"));
+  const units = resolveFailingUnits(repoPath, output ?? "", rootPkg);
 
-  if (!perSegment.every((s) => s.classification.matched)) {
-    // At least one failing workspace's own output carries no build-required
-    // evidence: a genuine failure exists alongside (or instead of) any
-    // build-required workspace, so the whole check stays a blocking fail.
-    return { matched: false };
+  const evaluated = units.map((unit) => {
+    const precondition = evaluateBuildPrecondition(unit.pkgDir, repoPath);
+    return {
+      unit,
+      precondition,
+      evidence: findMissingArtifactEvidence(unit.segment, {
+        repoPath,
+        missingArtifact: precondition.missingArtifact,
+      }),
+    };
+  });
+
+  const blocking = evaluated.find((entry) => !entry.precondition.met || !entry.evidence);
+  if (blocking) {
+    return { downgrade: false, note: describeBlockingUnit(blocking, repoPath) };
   }
 
-  const first = perSegment[0]?.classification ?? { matched: false };
-  const workspaceNames = perSegment
-    .map((s) => workspaceNameFromSegment(s.segment))
+  const first = evaluated[0];
+  const artifact = path.relative(
+    repoPath,
+    path.resolve(first.unit.pkgDir, first.precondition.missingArtifact ?? DEFAULT_BUILD_OUTPUT_DIR)
+  );
+  const others =
+    evaluated.length > 1
+      ? ` and ${evaluated.length - 1} other failing workspace${evaluated.length > 2 ? "s" : ""}`
+      : "";
+  const workspaceNames = evaluated
+    .map((entry) => entry.unit.workspaceName)
     .filter((name): name is string => Boolean(name));
-  return { ...first, workspaceNames: workspaceNames.length > 0 ? workspaceNames : undefined };
+
+  return {
+    downgrade: true,
+    cause: `${artifact} has not been built${others}; the test output reports: ${first.evidence}`,
+    workspaceNames: workspaceNames.length > 0 ? workspaceNames : undefined,
+    note: setupBuildOutcome?.timedOut
+      ? "the `--setup` build step (`npm run build`) timed out, so the build was not evaluated either" +
+        logSuffix(setupBuildOutcome.logPath)
+      : undefined,
+  };
+}
+
+// Explains why a failing unit blocks instead of downgrading -- but only when
+// its output actually mentions a missing artifact, so an ordinary failing
+// suite keeps its plain "npm test failed" message.
+function describeBlockingUnit(
+  entry: { unit: FailingUnit; precondition: BuildPreconditionResult; evidence?: string },
+  repoPath: string
+): string | undefined {
+  const where = entry.unit.workspaceName ? `workspace \`${entry.unit.workspaceName}\`` : "this repo";
+
+  if (!entry.precondition.met) {
+    // `evidence` was computed against this unit's missing artifact, which does
+    // not exist when the precondition failed; re-check for a bare
+    // missing-module report so the observation can still be named.
+    const observation =
+      entry.evidence ?? findMissingArtifactEvidence(entry.unit.segment, { repoPath });
+    if (!observation) return undefined;
+    return entry.precondition.hasBuildScript
+      ? `the output reports a missing module (${observation}), but ${where}'s declared build artifacts are all present on disk, so a build is not what is missing`
+      : `the output reports a missing module (${observation}), but no \`build\` script was found for ${where}, so a build is not what is missing`;
+  }
+
+  const artifact = path.relative(
+    repoPath,
+    path.resolve(entry.unit.pkgDir, entry.precondition.missingArtifact ?? DEFAULT_BUILD_OUTPUT_DIR)
+  );
+  return `${artifact} has not been built, but the failure in ${where} does not name it, so it is reported as a real failure`;
 }
 
 // Build-invocation / test-invocation shapes recognized in a single-line
@@ -678,9 +868,8 @@ export function fileExists(repoPath: string, relativePath: string): boolean {
 // Outcome of the `--setup` build step (see `ensureProjectSetup`'s "Option
 // (a)" block below), threaded into `checks/test.ts` via `runTestChecks`'s
 // third parameter so a build failure under `--setup` is never silently
-// swallowed into a `limitations` string while the test check downstream
-// gets misclassified as "build required, not yet run" (agent-tasks
-// c5810885 review round 2, HIGH-2). `attempted` is always `true` when this
+// swallowed into a `limitations` string while the test check downstream is
+// still reported as "build required, not yet run". `attempted` is always `true` when this
 // object exists at all -- the field exists so a caller destructuring an
 // `outcome?: SetupBuildOutcome | undefined` can tell "never ran" (the
 // whole value is undefined -- no build script, or CI doesn't show
@@ -700,7 +889,24 @@ export interface ProjectSetupResult {
   buildOutcome?: SetupBuildOutcome;
 }
 
-export async function ensureProjectSetup(repoPath: string, logDir?: string): Promise<ProjectSetupResult> {
+// Wall-clock budget for `--setup`'s own build step. A build is not a
+// dependency install: it compiles the repo, so it gets the same 300 s budget
+// the test check gets rather than the 120 s the other setup commands share.
+// Override with `setup.buildTimeoutMs` in `.preflight.json`. A build that
+// exhausts the budget is reported as "not evaluated" (see
+// `evaluateBuildRequiredTestFailure`), never as a blocker.
+export const DEFAULT_SETUP_BUILD_TIMEOUT_MS = 300_000;
+
+export interface ProjectSetupOptions {
+  /** Overrides `DEFAULT_SETUP_BUILD_TIMEOUT_MS` for the `--setup` build step. */
+  buildTimeoutMs?: number;
+}
+
+export async function ensureProjectSetup(
+  repoPath: string,
+  logDir?: string,
+  options?: ProjectSetupOptions
+): Promise<ProjectSetupResult> {
   const limitations: string[] = [];
   const context = createProjectContext(repoPath);
   let buildOutcome: SetupBuildOutcome | undefined;
@@ -726,23 +932,25 @@ export async function ensureProjectSetup(repoPath: string, logDir?: string): Pro
   // feature exists to avoid.
   //
   // The outcome (not just a limitations string) is captured into
-  // `buildOutcome` and returned so `runTestChecks` can tell "the repo has
-  // simply not been built yet" (fine to downgrade to a named skip) from
-  // "the repo's build itself just failed under --setup" (a real,
-  // newly-observed break -- must stay a blocking fail, never a skip; see
-  // HIGH-2 in the round-2 review). Full stdout+stderr is captured (`all:
-  // true` inside `runSetupCommand`) and persisted the same way
+  // `buildOutcome` and returned so `evaluateBuildRequiredTestFailure` can
+  // tell three states apart: the build failed (a real, newly-observed break
+  // -- blocking fail, never a skip), the build succeeded (whatever the tests
+  // report now is genuine), and the build timed out (nothing was learned, so
+  // the test check stays "not evaluated"). Full stdout+stderr is captured
+  // (`all: true` inside `runSetupCommand`) and persisted the same way
   // `runShellCheck` persists a failing check's output, so the actual build
   // error is reachable even though this path never produces its own
   // `CheckResult`.
+  const buildTimeoutMs = options?.buildTimeoutMs ?? DEFAULT_SETUP_BUILD_TIMEOUT_MS;
   if (hasNodeProject(context) && context.packageJson?.scripts?.build && ciShowsBuildBeforeTest(repoPath)) {
-    const result = await runSetupCommand(repoPath, "npm run build");
+    const result = await runSetupCommand(repoPath, "npm run build", buildTimeoutMs);
     if (result.exitCode === 127) {
       limitations.push("package.json has a build script but npm is not available; --setup build step skipped");
     } else if (result.timedOut) {
       const logPath = result.output ? persistFailureOutput(logDir, "npm-run-build-setup", result.output) : undefined;
       limitations.push(
-        `npm run build timed out while preparing the test check (--setup)${logPath ? ` (see ${logPath})` : ""}`
+        `npm run build timed out after ${buildTimeoutMs} ms while preparing the test check (--setup)` +
+        `${logPath ? ` (see ${logPath})` : ""}`
       );
       buildOutcome = { attempted: true, succeeded: false, timedOut: true, logPath };
     } else if (result.exitCode !== 0) {
@@ -1163,7 +1371,13 @@ interface SetupCommandResult {
   output?: string;
 }
 
-async function runSetupCommand(repoPath: string, command: string): Promise<SetupCommandResult> {
+// `timeoutMs` defaults to the shared 120 s dependency-install budget; the
+// `--setup` build step passes its own (see DEFAULT_SETUP_BUILD_TIMEOUT_MS).
+async function runSetupCommand(
+  repoPath: string,
+  command: string,
+  timeoutMs: number = 120_000
+): Promise<SetupCommandResult> {
   const { exitCode, all, timedOut } = await execa(
     "bash",
     ["-c", command],
@@ -1171,7 +1385,7 @@ async function runSetupCommand(repoPath: string, command: string): Promise<Setup
       cwd: repoPath,
       reject: false,
       all: true,
-      timeout: 120_000,
+      timeout: timeoutMs,
       env: buildCommandEnv(repoPath),
     }
   );

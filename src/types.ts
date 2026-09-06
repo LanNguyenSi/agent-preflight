@@ -106,6 +106,16 @@ export interface PreflightConfig {
   workingDir?: string;
   setup?: {
     enabled?: boolean;
+    /**
+     * Wall-clock budget in milliseconds for `--setup`'s own build step
+     * (`npm run build`, run only when the repo's CI shows build-before-test).
+     * Defaults to 300000, the same budget the test check gets, instead of the
+     * 120000 the dependency-install setup commands share. A build that
+     * exhausts the budget makes the test check "not evaluated" (a named
+     * `skip` plus a limitation), never a blocker; a build that exits non-zero
+     * is a blocker. See the README's "Build-required test classification".
+     */
+    buildTimeoutMs?: number;
   };
   commands?: {
     lint?: string[];
