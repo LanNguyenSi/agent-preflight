@@ -233,16 +233,44 @@ Two things have to be true at once, and neither is enough on its own.
      specifier. A bare specifier is not one -- neither `lodash` nor
      `dist/index.js`, because Node resolves both through `node_modules`, so
      they name a dependency rather than this package's build output;
+   - a token past a hard bound (4096 characters, or 256 path segments) is not
+     resolved at all. Test output is untrusted input and every resolved path
+     is then walked segment by segment, so an unbounded token in a failing
+     test's output could abort the whole run instead of reporting that
+     failure. Both bounds sit far above any real path; a token past them
+     simply does not corroborate, which leaves the check a blocking `fail`;
    - relative tokens are resolved against the failing package's own directory,
-     absolute ones as printed (symlinks are resolved on both sides, so a
-     checkout under a symlinked path still matches);
-   - the resolved path is accepted only when it **is** the missing artifact or
-     lies **inside the build-output directory that artifact identifies**
-     (`dist/index.js` accepts anything under that `dist/`; a bare `dist` or a
-     tsconfig `outDir` accepts anything under it; an artifact declared at the
-     package root, `main: "index.js"`, accepts only itself), **and** it is
-     inside the repository, **and** it has no `node_modules` segment, **and**
-     it belongs to this package rather than a neighbouring or nested one.
+     absolute ones as printed. Symlinks are then resolved on **both** sides,
+     through the longest part of each path that exists, so a checkout under a
+     symlinked path matches, and so does a package whose declared `dist` is a
+     symlink to the directory its build really writes;
+   - comparison is **case-sensitive**, whatever the filesystem underneath
+     does. On a case-insensitive filesystem (macOS and Windows by default) a
+     token spelled `./Dist/index.js` against a declared `dist/index.js` names
+     the same file to the OS and still does not corroborate. That is the safe
+     direction (the check stays a blocking `fail`), and no case-folding is
+     applied to keep the rule identical on every platform;
+   - the resolved path is accepted when it **is** the missing artifact, or
+     when it **is, or lies inside, the build-output directory that artifact
+     identifies** *and is itself not present on disk* (`dist/index.js`
+     accepts anything absent under that `dist/`, including a report naming
+     `./dist/` itself; a bare `dist` or a tsconfig `outDir` accepts anything
+     absent under it; an artifact declared at the package root,
+     `main: "index.js"`, accepts only itself), **and** it is inside the
+     repository, **and** it has no `node_modules` segment, **and** it belongs
+     to this package rather than a neighbouring or nested one.
+
+   The "not present on disk" half is what keeps a **partially built** package
+   honest. A package can declare an artifact its build never emits -- a
+   `types: "dist/index.d.ts"` next to a JavaScript-only build, an `exports`
+   subpath that was dropped, a `bin` that moved -- so the precondition above
+   holds permanently while the real `dist/` is on disk and is exactly what the
+   tests load. Without it, a genuine runtime failure in that built output
+   corroborated through its own stack frame (`<pkg>/dist/index.js:1`) and the
+   repo was reported `ready: true`, and stayed that way after a successful
+   `npm run build`, because the build does not produce the missing artifact
+   either. A path that is present cannot be why a *missing build* broke the
+   run.
 
    That covers both shapes this actually takes -- a package's own guard
    printing `<abs>/dist/index.js is missing. Run the build first` with no error
@@ -268,14 +296,16 @@ Two things have to be true at once, and neither is enough on its own.
      resolves outside the package and does **not** corroborate: the check
      stays a blocking `fail`, which is the safe direction.
    - **The residual case this cannot decide**: a genuine failure whose own
-     error path lies inside the package's own missing build output -- a stale
-     reference to a `dist/old.js` that a build would not recreate -- is
-     indistinguishable from "not built yet", because nothing on disk separates
-     the two until a build has actually run. It is reported as the named skip.
-     The remedy that skip names (run the build, or rerun with `--setup`)
-     resolves it either way: after the build, the same failure comes back as a
-     blocker, because a successful build means every later test failure is
-     genuine.
+     error path names a file that is genuinely **missing** from the package's
+     own missing build output -- a stale reference to a `dist/old.js` that a
+     build would not recreate either -- is indistinguishable from "not built
+     yet", because nothing on disk separates the two until a build has
+     actually run. It is reported as the named skip. The remedy that skip
+     names (run the build, or rerun with `--setup`) resolves it either way:
+     after the build, the same failure comes back as a blocker, because a
+     successful build means every later test failure is genuine. A failure
+     naming a path that *is* on disk is not this case and never was: it does
+     not corroborate at all.
 
 An npm-workspaces monorepo's `npm test` fan-out is judged **per workspace**,
 not as one blob: the combined output is split at each workspace's own `>
@@ -317,8 +347,29 @@ Each of these stays a blocking `fail`, and each has a fixture in
   would be a dead end);
 - a package whose `tsconfig.json` has comments (so its `outDir` cannot be read
   and the fallback `dist/` applies) failing on a path in a different directory;
+- a **partially built** package -- one declaring a `types` its JavaScript-only
+  build never emits, and one declaring an `exports` subpath the build dropped
+  -- whose genuine runtime bug throws from inside the built `dist/` the tests
+  load. Its precondition holds forever, so only the "must itself be absent"
+  half of the path rule separates it from a missing build; the fixture asserts
+  the verdict is the same before and after a successful `npm run build`;
+- a failing test whose output prints a pathological path-shaped token (30000
+  segments on one line): the run still produces its JSON verdict, with the
+  test failure as the blocker;
 - any failure after `--setup`'s own build step ran, whether it failed or
   succeeded (see below).
+
+Two positive controls have fixtures of their own as well: a package whose
+declared `dist` is a **symlink** to the directory its build really writes
+(both sides canonicalize to the same file, so a plainly unbuilt package is not
+reported as broken), and the same package after a build, which passes.
+
+The artifact named in these messages is always spelled relative to the
+repository path **as you passed it**; canonicalization stays inside the
+matching. A workspace whose directory is reached through a symlink is named by
+its physical directory, since that is the only directory the package index
+sees, and the remedy in the same message names the workspace by the name npm
+printed.
 
 #### `--setup` can run the build for you
 

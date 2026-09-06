@@ -30,7 +30,12 @@ const FIXTURES_ROOT = path.join(__dirname, "fixtures");
 
 function copyFixtureToTmp(fixtureName: string): string {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), `preflight-${fixtureName}-`));
-  fs.cpSync(path.join(FIXTURES_ROOT, fixtureName), tmpRoot, { recursive: true });
+  // `verbatimSymlinks` keeps a fixture's own symlink as it was written
+  // (`dist -> lib`). Without it, `cp` resolves the link against the SOURCE
+  // directory and the copy ends up pointing back into `tests/fixtures/`,
+  // which would make the symlink fixture test the checked-in tree instead of
+  // its own copy.
+  fs.cpSync(path.join(FIXTURES_ROOT, fixtureName), tmpRoot, { recursive: true, verbatimSymlinks: true });
   execSync("git init -q", { cwd: tmpRoot });
   execSync('git config user.email "t@example.com"', { cwd: tmpRoot });
   execSync('git config user.name "T"', { cwd: tmpRoot });
@@ -159,6 +164,109 @@ describe("built workspace, artifacts present (fixture: monorepo-built-artifacts-
       const testCheck = testCheckOf(result);
       expect(testCheck?.status).toBe("fail");
       expect(testCheck?.message).toMatch(/declared build artifacts are all present on disk/);
+      expect(result.ready).toBe(false);
+      expect(result.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
+    });
+  });
+});
+
+// A PARTIALLY built package: its build legitimately never emits one of the
+// artifacts it declares, so the filesystem precondition is met permanently
+// while the real dist/ sits on disk and is exactly what the tests load. A
+// genuine runtime failure inside that live dist/ then prints a Node stack
+// frame pointing into it. Only the "the corroborating path must itself be
+// absent" half of the anchor rule separates that from a missing build -- and
+// the giveaway that it is not a missing build is that the verdict must not
+// change after a successful `npm run build`, which cannot create the
+// artifact either.
+describe("partially built package, declared `types` never emitted (fixture: single-package-partial-build-types)", () => {
+  it("stays a blocking fail although the precondition holds, and stays one after a successful build", async () => {
+    await withFixture("single-package-partial-build-types", async (repoPath, logDir) => {
+      execSync("npm run build", { cwd: repoPath });
+      expect(fs.existsSync(path.join(repoPath, "dist", "index.js"))).toBe(true);
+      expect(fs.existsSync(path.join(repoPath, "dist", "index.d.ts"))).toBe(false);
+
+      const first = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+      expect(testCheckOf(first)?.status).toBe("fail");
+      expect(testCheckOf(first)?.message).not.toMatch(/build required before test/);
+      expect(first.ready).toBe(false);
+      expect(first.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
+
+      // Sticky check: running the build again changes nothing on disk that
+      // could turn this into a real "not built yet", so the verdict must be
+      // identical rather than flipping to a skip.
+      execSync("npm run build", { cwd: repoPath });
+      const second = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+      expect(testCheckOf(second)?.status).toBe("fail");
+      expect(second.ready).toBe(false);
+    });
+  });
+});
+
+describe("partially built package, `exports` subpath never emitted (fixture: single-package-partial-build-exports)", () => {
+  it("stays a blocking fail: the failing path is present in the same dist/", async () => {
+    await withFixture("single-package-partial-build-exports", async (repoPath, logDir) => {
+      execSync("npm run build", { cwd: repoPath });
+      expect(fs.existsSync(path.join(repoPath, "dist", "index.js"))).toBe(true);
+      expect(fs.existsSync(path.join(repoPath, "dist", "extra.js"))).toBe(false);
+
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+
+      const testCheck = testCheckOf(result);
+      expect(testCheck?.status).toBe("fail");
+      expect(testCheck?.message).not.toMatch(/build required before test/);
+      expect(result.ready).toBe(false);
+      expect(result.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
+    });
+  });
+});
+
+// The two sides of the comparison come from different places: the declared
+// artifact is spelled against the package directory, while the path a runner
+// prints comes out of a process that already resolved it. A package whose
+// `dist` is a symlink to its real output directory is the case where the two
+// spellings differ for a plainly unbuilt package.
+describe("unbuilt package whose dist/ is a symlink (fixture: single-package-symlinked-dist)", () => {
+  it("is the named skip: the declared artifact and the reported path canonicalize to the same file", async () => {
+    await withFixture("single-package-symlinked-dist", async (repoPath, logDir) => {
+      expect(fs.lstatSync(path.join(repoPath, "dist")).isSymbolicLink()).toBe(true);
+      expect(fs.existsSync(path.join(repoPath, "lib"))).toBe(true);
+      expect(fs.existsSync(path.join(repoPath, "dist", "index.js"))).toBe(false);
+
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+
+      const testCheck = testCheckOf(result);
+      expect(testCheck?.status).toBe("skip");
+      expect(testCheck?.message).toMatch(/build required before test/);
+      expect(result.ready).toBe(true);
+      expect(result.blockers).toEqual([]);
+    });
+  });
+
+  it("passes once the package has been built", async () => {
+    await withFixture("single-package-symlinked-dist", async (repoPath, logDir) => {
+      execSync("npm run build", { cwd: repoPath });
+      expect(fs.existsSync(path.join(repoPath, "dist", "index.js"))).toBe(true);
+
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+
+      expect(testCheckOf(result)?.status).toBe("pass");
+      expect(result.ready).toBe(true);
+    });
+  });
+});
+
+// Untrusted input: the failing test's own output decides how much path
+// walking this classification does. An unbounded implementation aborted the
+// whole run here (RangeError, raw stack trace, no JSON at all), which turned
+// a reportable test failure into no report.
+describe("pathological path token in test output (fixture: single-package-pathological-path-token)", () => {
+  it("still produces a verdict, with the test failure as a blocker", async () => {
+    await withFixture("single-package-pathological-path-token", async (repoPath, logDir) => {
+      const result = await runPreflight(repoPath, { checks: TEST_ONLY_CHECKS, logDir });
+
+      const testCheck = testCheckOf(result);
+      expect(testCheck?.status).toBe("fail");
       expect(result.ready).toBe(false);
       expect(result.blockers.some((b) => b.startsWith("npm test failed"))).toBe(true);
     });
@@ -774,6 +882,93 @@ describe("findMissingArtifactEvidence (unit, the shape a downgrade is decided in
   it("returns undefined for empty output", () => {
     expect(findMissingArtifactEvidence(undefined, { repoPath, pkgDir, missingArtifact: "dist/index.js" })).toBeUndefined();
   });
+
+  it("accepts an ENOENT naming the build-output directory itself, trailing slash and all", () => {
+    expect(decide("Error: ENOENT: no such file or directory, scandir './dist/'")).toContain("./dist/");
+  });
+
+  it("does not walk a pathological path token, and does not throw on one", () => {
+    const token = `./${"a/".repeat(50_000)}x.js`;
+    expect(() => decide(`Error: Cannot find module '${token}'`)).not.toThrow();
+    expect(decide(`Error: Cannot find module '${token}'`)).toBeUndefined();
+  });
+
+  it("refuses a token past the depth bound, even one that would otherwise anchor", () => {
+    // 300 segments INSIDE the missing dist/: without the bound this resolves
+    // into the acceptance region and corroborates. Runner output is untrusted
+    // and every resolved path is walked segment by segment, so the bound is
+    // the point; the same shape just inside it still corroborates.
+    expect(decide(`Error: Cannot find module './dist/${"a/".repeat(300)}x.js'`)).toBeUndefined();
+    expect(decide(`Error: Cannot find module './dist/${"a/".repeat(10)}x.js'`)).toContain("Cannot find module");
+  });
+
+  it("refuses a token past the length bound, even one that would otherwise anchor", () => {
+    expect(decide(`Error: Cannot find module './dist/${"a".repeat(5_000)}.js'`)).toBeUndefined();
+    expect(decide(`Error: Cannot find module './dist/${"a".repeat(50)}.js'`)).toContain("Cannot find module");
+  });
+
+  it("canonicalizes an absurdly deep DECLARED artifact without blowing the stack", () => {
+    // The declared artifact is repository content too (`main` in a
+    // package.json), and it is canonicalized on the anchor side. No token
+    // bound applies to it, so the parent walk itself has to be indifferent
+    // to depth.
+    const artifact = `dist/${"a/".repeat(20_000)}index.js`;
+    expect(() =>
+      findMissingArtifactEvidence("Error: Cannot find module './dist/index.js'", {
+        repoPath,
+        pkgDir,
+        missingArtifact: artifact,
+        packageDirs,
+      })
+    ).not.toThrow();
+  });
+});
+
+// The absence half of the anchor rule. These use a REAL directory, because
+// the rule is about what is on disk: a path inside the build-output region
+// that exists cannot be evidence that a missing build broke the run, while
+// the same path missing is exactly that evidence.
+describe("findMissingArtifactEvidence (unit, a corroborating path must itself be absent)", () => {
+  it("rejects a path in the region that is present on disk, and accepts its absent sibling", () => {
+    withTempPackage(
+      {
+        "package.json": pkg({ name: "x", main: "dist/index.js", types: "dist/index.d.ts", scripts: { build: "node build.js" } }),
+        // A partially built package: dist/index.js was emitted, the declared
+        // `types` never was, so `dist/index.d.ts` is the missing artifact and
+        // the live dist/ is the region.
+        "dist/index.js": "module.exports = {};\n",
+      },
+      (dir) => {
+        const options = { repoPath: dir, pkgDir: dir, missingArtifact: "dist/index.d.ts", packageDirs: [dir] };
+
+        // A genuine runtime failure's own stack frame inside the built output.
+        expect(findMissingArtifactEvidence(`    at Object.add (${path.join(dir, "dist", "index.js")}:2:9)`, options)).toBeUndefined();
+        // The same shape for a file that really is not there.
+        expect(findMissingArtifactEvidence("Error: Cannot find module './dist/gone.js'", options)).toContain("./dist/gone.js");
+        // The declared artifact itself always corroborates: the precondition
+        // established it is missing before the anchor existed.
+        expect(findMissingArtifactEvidence("Error: Cannot find module './dist/index.d.ts'", options)).toContain("./dist/index.d.ts");
+      }
+    );
+  });
+
+  it("rejects an ENOENT on the build-output directory when that directory exists", () => {
+    withTempPackage(
+      {
+        "package.json": pkg({ name: "x", main: "dist/index.js", types: "dist/index.d.ts", scripts: { build: "node build.js" } }),
+        "dist/index.js": "module.exports = {};\n",
+      },
+      (dir) => {
+        const evidence = findMissingArtifactEvidence("Error: ENOENT: no such file or directory, scandir './dist/'", {
+          repoPath: dir,
+          pkgDir: dir,
+          missingArtifact: "dist/index.d.ts",
+          packageDirs: [dir],
+        });
+        expect(evidence).toBeUndefined();
+      }
+    );
+  });
 });
 
 // The second, message-only mode: no artifact to anchor to (the precondition
@@ -840,6 +1035,62 @@ describe("evaluateBuildRequiredTestFailure and the --setup build outcome (unit)"
       });
       expect(result.downgrade).toBe(true);
       expect(result.note).toMatch(/timed out/);
+    });
+  });
+});
+
+describe("evaluateBuildRequiredTestFailure, hostile and awkwardly spelled input (unit)", () => {
+  it("answers a pathological path token instead of throwing out of the evaluation", () => {
+    withTempPackage({ "package.json": pkg({ name: "x", main: "dist/index.js", scripts: { build: "tsc" } }) }, (dir) => {
+      const token = `./${"a/".repeat(50_000)}x.js`;
+      const result = evaluateBuildRequiredTestFailure({
+        repoPath: dir,
+        output: `Error: Cannot find module '${token}'`,
+      });
+
+      // No corroboration, so the already-failing check keeps blocking, and
+      // the evaluation returns rather than taking the run down with it.
+      expect(result.downgrade).toBe(false);
+      expect(result.limitation).toBeUndefined();
+    });
+  });
+
+  it("returns a blocking evaluation, never a throw, however the corroboration ends", () => {
+    // Both guards meet here: the corroboration is asked about an absurdly
+    // deep declared artifact, and whatever it does the caller must come back
+    // with a verdict. An escaped exception at this call site is what killed a
+    // whole `preflight run` and left it with no JSON at all.
+    const main = `dist/${"a/".repeat(20_000)}index.js`;
+    withTempPackage({ "package.json": pkg({ name: "x", main, scripts: { build: "tsc" } }) }, (dir) => {
+      let result: ReturnType<typeof evaluateBuildRequiredTestFailure> | undefined;
+      expect(() => {
+        result = evaluateBuildRequiredTestFailure({
+          repoPath: dir,
+          output: "Error: Cannot find module './dist/index.js'",
+        });
+      }).not.toThrow();
+      expect(result?.downgrade).toBe(false);
+    });
+  });
+
+  it("names the missing artifact relative to the repo path as the caller spelled it", () => {
+    withTempPackage({ "package.json": pkg({ name: "x", main: "dist/index.js", scripts: { build: "tsc" } }) }, (dir) => {
+      // A repo reached through a symlink: paths the runner prints resolve to
+      // the physical directory, but the message belongs to the operator's
+      // spelling. Canonicalization stays inside the corroboration.
+      const link = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-link-")) + "/repo";
+      fs.symlinkSync(dir, link);
+      try {
+        const result = evaluateBuildRequiredTestFailure({
+          repoPath: link,
+          output: "Error: Cannot find module './dist/index.js'",
+        });
+        expect(result.downgrade).toBe(true);
+        expect(result.cause).toContain("(dist/index.js)");
+        expect(result.cause).not.toContain("..");
+      } finally {
+        fs.rmSync(path.dirname(link), { recursive: true, force: true });
+      }
     });
   });
 });

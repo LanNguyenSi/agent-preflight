@@ -109,6 +109,14 @@ export async function runTestChecks(
                 })
               : undefined;
 
+          // Set only when the classification could not be evaluated at all
+          // (a corroboration call threw). The check itself stays the blocking
+          // `fail` it already was; this records that the "build required?"
+          // question went unanswered.
+          if (evaluation?.limitation) {
+            limitations.push(evaluation.limitation);
+          }
+
           if (evaluation?.downgrade) {
             const remedy = buildRequiredRemedy(context, evaluation.workspaceNames);
             const note = evaluation.note ? `; ${evaluation.note}` : "";
