@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { runPreflight } from '../../src/runner.js';
 import { loadConfig } from '../../src/config.js';
 import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
 import { mockNpmAuditClean } from '../helpers/npm-audit-mock.js';
 
 describe('Error Handling Integration Tests', () => {
@@ -63,17 +65,34 @@ describe('Error Handling Integration Tests', () => {
       },
     };
 
-    // Should handle missing package.json gracefully
-    const result = await runPreflight('/tmp', config);
-    expect(result).toBeDefined();
+    // The audit check itself resolves in milliseconds (measured directly:
+    // ~16ms). The case timed out (26-33s against the 30s per-test default)
+    // because it pointed runPreflight() at the shared, unfiltered `/tmp`
+    // (measured on this machine: 1133 top-level entries, ~22GB) while
+    // leaving every other checks.* toggle at its default (on): secrets.ts's
+    // scanDir() walks the whole target tree with no size/entry cap (only
+    // node_modules/.git/dist/etc. are skipped, not an arbitrary huge
+    // directory), so it alone measured ~29.9s here scanning all of /tmp,
+    // not anything under test. A fresh, empty mkdtemp directory has no
+    // package.json (preserving the case's intent) and nothing for
+    // secretDetection (or any other default-on check) to walk, so it
+    // resolves in milliseconds instead of racing the timeout.
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-no-pkg-json-'));
+    try {
+      // Should handle missing package.json gracefully
+      const result = await runPreflight(emptyDir, config);
+      expect(result).toBeDefined();
 
-    // Audit check should either skip or report missing package.json
-    const auditChecks = result.checks.filter((c) =>
-      c.name.toLowerCase().includes('audit')
-    );
-    if (auditChecks.length > 0) {
-      // Should have some status (pass, fail, or warn)
-      expect(['pass', 'fail', 'warn']).toContain(auditChecks[0].status);
+      // Audit check should either skip or report missing package.json
+      const auditChecks = result.checks.filter((c) =>
+        c.name.toLowerCase().includes('audit')
+      );
+      if (auditChecks.length > 0) {
+        // Should have some status (pass, fail, or warn)
+        expect(['pass', 'fail', 'warn']).toContain(auditChecks[0].status);
+      }
+    } finally {
+      fs.rmSync(emptyDir, { recursive: true, force: true });
     }
   });
 
@@ -84,15 +103,29 @@ describe('Error Handling Integration Tests', () => {
       },
     };
 
-    const result = await runPreflight('/tmp', config);
-    expect(result).toBeDefined();
+    // Same shared-/tmp cause as the "without package.json" case above:
+    // leaving every other checks.* toggle at its default (on) means
+    // secretDetection (and friends) walk the whole `/tmp` tree (measured
+    // on this machine: 1133 top-level entries, ~22GB), which alone
+    // measured ~29.9s in the sibling case; this case measured
+    // 31466ms/35837ms/37559ms here, timing out against the 30s default.
+    // A fresh, empty mkdtemp directory has no tsconfig.json (preserving
+    // the case's intent) and nothing for the other default-on checks to
+    // walk, so it resolves in milliseconds instead.
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-no-tsconfig-'));
+    try {
+      const result = await runPreflight(emptyDir, config);
+      expect(result).toBeDefined();
 
-    // Typecheck should either skip or report missing tsconfig
-    const typecheckChecks = result.checks.filter((c) =>
-      c.name.toLowerCase().includes('typecheck')
-    );
-    if (typecheckChecks.length > 0) {
-      expect(['pass', 'fail', 'warn']).toContain(typecheckChecks[0].status);
+      // Typecheck should either skip or report missing tsconfig
+      const typecheckChecks = result.checks.filter((c) =>
+        c.name.toLowerCase().includes('typecheck')
+      );
+      if (typecheckChecks.length > 0) {
+        expect(['pass', 'fail', 'warn']).toContain(typecheckChecks[0].status);
+      }
+    } finally {
+      fs.rmSync(emptyDir, { recursive: true, force: true });
     }
   });
 
