@@ -1370,6 +1370,27 @@ describe("the package-level partial-build rule (unit)", () => {
     );
   });
 
+  it("still reads its own output when the PACKAGE itself lives under a node_modules path", () => {
+    // A pnpm virtual store or a linked workspace puts the package's real
+    // directory under node_modules; the exclusion is about directories below
+    // the package, never about where the package sits.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-nm-pkg-"));
+    try {
+      const dir = path.join(root, "node_modules", ".pnpm", "x@1.0.0", "node_modules", "x");
+      fs.mkdirSync(path.join(dir, "dist"), { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "package.json"),
+        pkg({ name: "x", main: "dist/index.js", types: "dist/index.d.ts", scripts: { build: "node build.js" } })
+      );
+      fs.writeFileSync(path.join(dir, "dist", "index.js"), "module.exports = 1;\n");
+      const state = evaluatePartialBuild(dir);
+      expect(state.partiallyBuilt).toBe(true);
+      expect(state.evidence?.dir).toBe("dist");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("says what it observed when the output path is a FILE, instead of claiming entries", () => {
     withTempPackage(
       {

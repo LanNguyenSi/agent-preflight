@@ -837,13 +837,19 @@ function packageOutputDirs(pkgDir: string, pkg: PackageJson | undefined): string
   // fallback as well: a `dist` symlinked out of the package resolves to
   // someone else's directory, and what is in there says nothing about whether
   // this package was built.
-  // A directory under `node_modules` is never this package's output either,
-  // whatever the manifest declares there (a `bin` pointing at an installed
-  // tool): installed dependencies say nothing about whether the package was
-  // built. Same rule the corroboration applies to the paths a failure names.
+  // A directory under `node_modules` BELOW the package is never this
+  // package's output either, whatever the manifest declares there (a `bin`
+  // pointing at an installed tool): installed dependencies say nothing about
+  // whether the package was built. Same rule the corroboration applies to the
+  // paths a failure names. Judged on the part of the path inside the package
+  // only: a package that itself lives under a `node_modules` path (a pnpm
+  // virtual store, a linked workspace) still has its own output read.
   const isOwnOutput = (dir: string): boolean => {
     const canonical = canonicalize(path.resolve(pkgDir, dir));
-    return isInside(canonicalPkgDir, canonical) && !containsNodeModulesSegment(canonical);
+    return (
+      isInside(canonicalPkgDir, canonical) &&
+      !containsNodeModulesSegment(path.relative(canonicalPkgDir, canonical))
+    );
   };
 
   const declared = [...new Set(declaredBuildArtifacts(pkgDir, pkg).map(declaredOutputDir))].filter(isOwnOutput);
