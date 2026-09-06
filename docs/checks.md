@@ -125,7 +125,7 @@ Custom checks let you wire in anything else as a shell command:
 Optional bootstrap before checks. Enable with `--setup` or `setup.enabled: true` in `.preflight.json`. When on:
 
 - Node: `npm ci` if `package-lock.json` exists and `node_modules/` is missing
-- Node: `npm run build` when `package.json` has a `build` script AND `.github/workflows/ci.yml` shows a `run:` step invoking it before a step invoking the test script — see the README's "Build-required test classification" section for the exact detection rule, its documented limits, and what happens when this build step itself fails
+- Node: `npm run build` when `package.json` has a `build` script AND `.github/workflows/ci.yml` shows a `run:` step invoking it before a step invoking the test script; see the README's "Build-required test classification" section for the exact detection rule, its documented limits, and what happens when this build step itself fails
 - Python: creates `.preflight-venv` and installs `requirements.txt` when present
 - PHP: `composer install --no-interaction --no-progress` when `vendor/` is missing
 - Maven: dependency warmup before the Java compile and test checks

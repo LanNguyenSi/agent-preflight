@@ -233,14 +233,14 @@ workspace's own `> <name>@<version> <script>` preamble, and the check is
 only downgraded when EVERY workspace whose own segment actually failed
 carries build-required evidence. One workspace missing its build alongside
 a different, genuinely broken workspace in the same run stays a blocking
-`fail` — the genuine failure is never hidden behind the other workspace's
+`fail`; the genuine failure is never hidden behind the other workspace's
 build-required evidence. A single-package repo (no workspace fan-out at
 all) is classified as one blob, same as before this per-workspace split.
 
 The remedy named in the skip message depends on what could actually fix
 it: when the repo's root `package.json` has a `build` script, the message
 names `npm run build` and `--setup` (`--setup` only ever runs the build at
-the repo root — see below). When it does not but the classifier could
+the repo root; see below). When it does not but the classifier could
 attribute the failure to specific workspace(s), the message names a
 workspace-scoped build instead (`npm run build -w <name>` for exactly one
 workspace, `npm run build --workspaces --if-present` for more than one),
@@ -263,8 +263,8 @@ execution-graph evaluator:
   scalar (`run: |` followed by more lines) is not parsed for its body. A
   `run:` step whose value is itself a shell comment (`run: # npm run
   build`) or that only echoes a string (`run: echo 'npm run build is
-  documented'`) is recognized and skipped — neither actually invokes the
-  build.
+  documented'`) is recognized and skipped, since neither actually invokes
+  the build.
 - Ordering is by line number in the file, not GitHub Actions' actual
   job/`needs:` execution graph: a multi-job workflow whose real
   build-before-test order comes from job dependencies rather than from
@@ -274,7 +274,7 @@ execution-graph evaluator:
 These gaps do not all fail the same direction. A false **miss** (a real
 build-before-test convention this reader cannot see, e.g. a `run: |` block
 scalar or a reusable workflow) only costs the extra manual `npm run build`
-this feature exists to avoid — `--setup` behaves exactly as it did before
+this feature exists to avoid; `--setup` behaves exactly as it did before
 this feature (dependency install only, via `npm ci`), and the test check
 falls back to the named skip outcome above. A false **hit** (an unrelated
 job's build step read as "before" the test job by line order alone) only
@@ -284,7 +284,7 @@ This repo's own CI has no build step at all (`vitest` runs the TypeScript
 source directly), and is exercised in the test suite as a check against a
 false-hit default.
 
-`--setup`'s build step can itself fail — the repo genuinely does not
+`--setup`'s build step can itself fail: the repo genuinely does not
 compile right now. When it does (a non-zero exit or a timeout), the test
 check's own subsequent "dist missing" failure is **not** reclassified to
 skip: that would misreport a real, newly-observed break as the innocuous
