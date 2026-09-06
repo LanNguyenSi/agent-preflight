@@ -1256,6 +1256,33 @@ describe("the package-level partial-build rule (unit)", () => {
     );
   });
 
+  it("reads a LATER declared artifact's directory too, not only the first", () => {
+    // The two fixtures above happen to declare the built artifact first, so a
+    // reading that stops at the first declared artifact still finds the
+    // populated directory there and looks correct. Here the order is the other
+    // way round: the first declaration's directory is absent and the second
+    // one holds the build. Only reading all of them separates this from an
+    // unbuilt package (measured: a `slice(0, 1)` mutant survives without this
+    // case).
+    withTempPackage(
+      {
+        "package.json": pkg({
+          name: "x",
+          main: "build/index.js",
+          types: "dist/index.d.ts",
+          scripts: { build: "node build.js" },
+        }),
+        "dist/other.js": "module.exports = {};\n",
+      },
+      (dir) => {
+        const state = evaluatePartialBuild(dir);
+        expect(state.partiallyBuilt).toBe(true);
+        expect(state.evidence?.dir).toBe("dist");
+        expect(classify(dir, "Error: Cannot find module './build/index.js'").downgrade).toBe(false);
+      }
+    );
+  });
+
   it("reads a nested artifact directory the same way", () => {
     withTempPackage(
       {
