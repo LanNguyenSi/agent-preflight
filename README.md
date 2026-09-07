@@ -61,6 +61,8 @@ Or as JSON for an agent:
 
 `ready: true` means no blocking failures. The score is a weighted ratio of passed checks with a small penalty per limitation, so an agent can read both signals and decide whether to push.
 
+`run --json` and `batch --json` both write their full JSON envelope before exiting rather than exiting right after starting the write: a consumer piping either command's output must read stdout concurrently with the process running, not wait for the process to exit first, since a large envelope can otherwise appear to hang until the reader drains it.
+
 ## Next steps
 
 | If you want to... | Read |

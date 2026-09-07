@@ -9,6 +9,73 @@ import { VERSION } from "./version.js";
 import type { PreflightConfig } from "./types.js";
 
 /**
+ * Writes `payload` as pretty-printed JSON to stdout (used by both `run
+ * --json` and `batch --json`), then exits only once that write's own
+ * completion callback has run, instead of calling `process.exit`
+ * immediately after `console.log`.
+ *
+ * `console.log`/`process.stdout.write` to a pipe is asynchronous: a payload
+ * larger than the OS pipe buffer (commonly 64 KB) only has its first chunk
+ * copied into the kernel synchronously, and the remainder is queued
+ * internally by Node to be written once the reader drains the pipe. Calling
+ * `process.exit` right after `console.log` tears the process down before
+ * that queued remainder is ever written, so a reader on the other end of the
+ * pipe sees a cut-off, unparseable JSON document. Waiting for the write
+ * callback guarantees the whole payload has been handed to the OS first,
+ * which also means a consumer piping either command's `--json` output must
+ * read stdout concurrently with the process running: the process no longer
+ * exits before the reader has drained (or closed) the pipe.
+ *
+ * If the reader closes the pipe early (`... | head -c 100`), the write
+ * itself fails with EPIPE. Measured directly (Node 26, macOS; 25 runs
+ * across four reader shapes: `| head -c 100`, `| true`, a reader that
+ * closes its end before any data arrives, and a reader that reads one byte
+ * then closes): every run delivered the EPIPE to the WRITE CALLBACK's own
+ * `err` argument, never as a `process.stdout` 'error' event. The intended
+ * exit code is kept for an EPIPE either way it is observed. The
+ * `process.stdout.once("error", ...)` listener below is a defensive guard
+ * only, for a platform or Node version where the callback itself is never
+ * invoked; it is not the path a real EPIPE takes on the platforms this was
+ * measured against.
+ *
+ * Any OTHER write failure (e.g. ENOSPC, EIO) is not swallowed as if it were
+ * a clean write: it writes a one-line diagnostic to stderr and exits
+ * non-zero, rather than silently keeping the caller's intended exit code or
+ * crashing the process with an uncaught exception.
+ */
+export function writeJsonAndExit(payload: unknown, exitCode: number): void {
+  let exited = false;
+
+  const finish = (code: number) => {
+    if (exited) return;
+    exited = true;
+    process.stdout.removeListener("error", onError);
+    process.exit(code);
+  };
+
+  const handleWriteFailure = (err: NodeJS.ErrnoException): void => {
+    if (exited) return;
+    if (err && err.code === "EPIPE") {
+      finish(exitCode);
+      return;
+    }
+    process.stderr.write(`preflight: failed to write JSON output: ${err?.message ?? err}\n`);
+    finish(1);
+  };
+
+  const onError = (err: NodeJS.ErrnoException) => handleWriteFailure(err);
+  process.stdout.once("error", onError);
+
+  process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`, (err) => {
+    if (err) {
+      handleWriteFailure(err as NodeJS.ErrnoException);
+      return;
+    }
+    finish(exitCode);
+  });
+}
+
+/**
  * Build a fresh Command tree. Exported so tests can obtain an isolated
  * instance per test — Commander retains option state between parseAsync
  * calls on the same instance, which causes option leaks across tests.
@@ -41,8 +108,8 @@ export function createProgram(): Command {
       const result = await runPreflight(resolvedPath, config);
 
       if (opts.json) {
-        console.log(JSON.stringify(result, null, 2));
-        process.exit(result.ready ? 0 : 1);
+        writeJsonAndExit(result, result.ready ? 0 : 1);
+        return;
       }
 
       const icon = result.ready ? "✅" : "❌";
@@ -102,8 +169,8 @@ export function createProgram(): Command {
       );
 
       if (opts.json) {
-        console.log(JSON.stringify(batchResult, null, 2));
-        process.exit(batchResult.notReady > 0 ? 1 : 0);
+        writeJsonAndExit(batchResult, batchResult.notReady > 0 ? 1 : 0);
+        return;
       }
 
       console.log(`\n📦 Batch preflight: ${resolvedRoot}`);
