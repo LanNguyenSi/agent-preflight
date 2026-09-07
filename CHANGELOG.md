@@ -52,9 +52,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   from the newline-based `git status --porcelain` text format to `-z`
   (NUL-separated) parsing, so a repository-controlled filename containing
   a literal newline or a literal `" -> "` substring can no longer be
-  misread as a rename or corrupt the parsed path (review finding F4). See
-  README's "`--setup` can run the build for you" section and
-  `docs/checks.md`'s git-state row and Setup phase section.
+  misread as a rename or corrupt the parsed path (review finding F4).
+  Round 3 additionally names the paths (and adds the `.gitignore` remedy)
+  when a SECOND `--setup` run finds that same untracked output already
+  present in the pre-setup snapshot (left un-ignored, it now reads as
+  pre-existing dirt and blocks, rather than the old undifferentiated
+  message), adds a `limitations` entry to the TRACKED-path failure so the
+  CLI shows the paths too (review round 3 finding N2), and sanitizes every
+  path name emitted in a check message/limitation (control characters
+  escaped, length capped) before interpolating it, so a repository-
+  controlled filename can no longer forge extra output lines (review
+  round 3 finding N3). See README's "`--setup` can run the build for
+  you" section and `docs/checks.md`'s git-state row and Setup phase
+  section.
 
 ## [0.6.0] - 2026-09-07
 

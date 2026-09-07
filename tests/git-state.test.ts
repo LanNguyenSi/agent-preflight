@@ -271,4 +271,112 @@ describe("clean-worktree with a pre-setup snapshot", () => {
     expect(check?.message).toBeUndefined();
     expect(result.limitations).toEqual([]);
   });
+
+  // task b16ab5d8, review round 3:
+  it("N2: names the tracked paths in a limitations entry too, since the CLI never prints a check's own details", async () => {
+    const repoPath = makeTempDir("preflight-git-state-tracked-limitation-");
+    initGitRepo(repoPath);
+    git(repoPath, ["checkout", "-b", "feature/example"]);
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# test\nbuilt\n", "utf8");
+    git(repoPath, ["add", "README.md"]);
+    git(repoPath, ["commit", "-m", "checked-in build output"]);
+
+    const snapshot = await snapshotWorktreeState(repoPath);
+
+    // "--setup" (simulated) rewrites the tracked file.
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# test\nrebuilt\n", "utf8");
+
+    const result = await runGitStateChecks(repoPath, defaultConfig(), snapshot);
+
+    const check = result.checks.find((c) => c.name === "clean-worktree");
+    expect(check?.status).toBe("fail");
+    expect(check?.message).toBe("--setup modified or removed tracked files");
+    expect(result.limitations.length).toBe(1);
+    expect(result.limitations[0]).toContain("README.md");
+    expect(result.limitations[0]).toContain("--setup modified or removed tracked files");
+  });
+
+  it("pins a tracked-file DELETE ('D ' or ' D') produced by --setup as reaching the tracked branch, not the untracked one", async () => {
+    const repoPath = makeTempDir("preflight-git-state-tracked-delete-");
+    initGitRepo(repoPath);
+    git(repoPath, ["checkout", "-b", "feature/example"]);
+    fs.writeFileSync(path.join(repoPath, "stale-artifact.txt"), "stale\n", "utf8");
+    git(repoPath, ["add", "stale-artifact.txt"]);
+    git(repoPath, ["commit", "-m", "checked-in stale artifact"]);
+
+    const snapshot = await snapshotWorktreeState(repoPath);
+
+    // "--setup" (simulated) removes the tracked file (a build that stops
+    // producing an artifact it used to, or cleans a stale one).
+    fs.rmSync(path.join(repoPath, "stale-artifact.txt"));
+
+    const result = await runGitStateChecks(repoPath, defaultConfig(), snapshot);
+
+    const check = result.checks.find((c) => c.name === "clean-worktree");
+    expect(check?.status).toBe("fail");
+    expect(check?.message).toBe("--setup modified or removed tracked files");
+    const text = `${(check?.details ?? []).join(" ")} ${result.limitations.join(" ")}`;
+    expect(text).toContain("stale-artifact.txt");
+  });
+
+  it("N3: a setup-produced path name containing a newline is escaped to a single line, in both details and the limitation", async () => {
+    const repoPath = makeTempDir("preflight-git-state-newline-name-");
+    initGitRepo(repoPath);
+    git(repoPath, ["checkout", "-b", "feature/example"]);
+
+    const weirdName = "weird\nname.txt";
+    let weirdNameSupported = true;
+    try {
+      fs.writeFileSync(path.join(repoPath, weirdName), "content\n", "utf8");
+    } catch {
+      weirdNameSupported = false;
+    }
+    if (!weirdNameSupported) {
+      // Some filesystems reject an embedded newline; nothing to pin here
+      // in that case.
+      return;
+    }
+    fs.rmSync(path.join(repoPath, weirdName));
+
+    const snapshot = await snapshotWorktreeState(repoPath);
+    expect(snapshot.paths?.size).toBe(0);
+
+    fs.writeFileSync(path.join(repoPath, weirdName), "content\n", "utf8");
+
+    const result = await runGitStateChecks(repoPath, defaultConfig(), snapshot);
+
+    const check = result.checks.find((c) => c.name === "clean-worktree");
+    expect(check?.status).toBe("pass");
+    const detail = (check?.details ?? []).find((d) => d.includes("weird")) ?? "";
+    expect(detail.split("\n").length).toBe(1);
+    expect(detail).toContain("weird\\nname.txt");
+    const limitation = result.limitations.find((l) => l.includes("weird")) ?? "";
+    expect(limitation.split("\n").length).toBe(1);
+    expect(limitation).toContain("weird\\nname.txt");
+  });
+
+  it("N3: a very long setup-produced path name is truncated with an ellipsis instead of growing the message unbounded", async () => {
+    const repoPath = makeTempDir("preflight-git-state-long-name-");
+    initGitRepo(repoPath);
+    git(repoPath, ["checkout", "-b", "feature/example"]);
+
+    const snapshot = await snapshotWorktreeState(repoPath);
+    expect(snapshot.paths?.size).toBe(0);
+
+    // 250 'a' characters plus a short extension: long enough to exceed
+    // the 200-character cap while staying under common filesystem
+    // filename-length limits (255 bytes on APFS/ext4/HFS+).
+    const longName = `${"a".repeat(250)}.txt`;
+    fs.writeFileSync(path.join(repoPath, longName), "content\n", "utf8");
+
+    const result = await runGitStateChecks(repoPath, defaultConfig(), snapshot);
+
+    const check = result.checks.find((c) => c.name === "clean-worktree");
+    expect(check?.status).toBe("pass");
+    const detail = (check?.details ?? []).find((d) => d.includes("aaa")) ?? "";
+    expect(detail).not.toContain(longName);
+    expect(detail).toContain("…");
+    expect(detail).toContain("a".repeat(200));
+    expect(detail).not.toContain("a".repeat(201));
+  });
 });

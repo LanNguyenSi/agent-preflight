@@ -100,12 +100,34 @@ function isUntrackedOrIgnoredStatus(status: string): boolean {
   return status === "??" || status === "!!";
 }
 
+// The longest a single sanitized path name is allowed to be in a check
+// message/limitation before it is truncated with an ellipsis (task
+// b16ab5d8, review round 3 finding N3).
+const MAX_PATH_NAME_LENGTH = 200;
+
+// `names` are repository-controlled (a committed or `--setup`-produced
+// path can be named anything the filesystem allows), and this string gets
+// interpolated verbatim into `details`/`limitations` text that the CLI
+// prints as-is. Escapes control characters (C0, DEL, C1 -- at minimum
+// \n, \r, \t, \x1b) the same way `JSON.stringify` would, so an embedded
+// newline can no longer forge an extra line in the CLI's Limitations
+// block, and caps the result at `MAX_PATH_NAME_LENGTH` so one absurdly
+// long name can't blow up the message either (task b16ab5d8, review
+// round 3 finding N3).
+function sanitizePathName(name: string): string {
+  const escaped = JSON.stringify(name).slice(1, -1);
+  return escaped.length > MAX_PATH_NAME_LENGTH
+    ? `${escaped.slice(0, MAX_PATH_NAME_LENGTH)}…`
+    : escaped;
+}
+
 // Joins `names` for a check message/limitation, capping the list at
 // `MAX_NOTED_SETUP_PATHS` and folding the remainder into a "and N more"
 // tail so a repo with dozens of setup-produced paths doesn't blow up the
-// message.
+// message. Each individual name is sanitized first (see
+// `sanitizePathName`).
 function formatNotedPaths(names: string[]): string {
-  const capped = names.slice(0, MAX_NOTED_SETUP_PATHS);
+  const capped = names.slice(0, MAX_NOTED_SETUP_PATHS).map(sanitizePathName);
   const remainder = names.length - capped.length;
   return capped.join(", ") + (remainder > 0 ? `, and ${remainder} more` : "");
 }
@@ -263,8 +285,42 @@ async function runCleanWorktreeCheck(
     const produced = currentEntries.filter((entry) => !entry.paths.some((p) => snapshotPaths.has(p)));
 
     // Any change that predates `--setup` still blocks, exactly as today,
-    // regardless of whether `--setup` also produced its own output.
+    // regardless of whether `--setup` also produced its own output (task
+    // b16ab5d8, D-011: the tool cannot know whether pre-existing dirt IS
+    // last run's un-gitignored setup output, so it still blocks -- but
+    // when every pre-existing entry is untracked, it's worth naming the
+    // paths and pointing at .gitignore as a likely fix, since that's
+    // exactly what a second `--setup` run against still-un-gitignored
+    // output looks like). A pre-existing entry that includes a TRACKED
+    // status keeps today's undifferentiated message unchanged: nothing
+    // about a tracked change suggests a `.gitignore` remedy.
     if (preExisting.length > 0) {
+      const allPreExistingUntracked = preExisting.every((entry) => entry.status === "??");
+
+      if (allPreExistingUntracked) {
+        const names = preExisting.map((entry) => entry.paths[0]);
+        const list = formatNotedPaths(names);
+        const remedy =
+          "if these are build output from an earlier --setup run, add them to " +
+          ".gitignore; otherwise commit or stash them";
+
+        return {
+          check: {
+            name: "clean-worktree",
+            kind: "git-state",
+            status: "fail",
+            message: "Repository has uncommitted changes",
+            details: [
+              `Untracked paths: ${list}`,
+              remedy.charAt(0).toUpperCase() + remedy.slice(1),
+            ],
+            durationMs: Date.now() - start,
+            confidenceContribution: 0.05,
+          },
+          limitation: `Pre-existing untracked paths blocked clean-worktree (${list}); ${remedy}`,
+        };
+      }
+
       return { check: buildCleanWorktreeResult(true, start) };
     }
 
@@ -280,6 +336,7 @@ async function runCleanWorktreeCheck(
     if (trackedProduced.length > 0) {
       const names = trackedProduced.map((entry) => entry.paths[0]);
       const list = formatNotedPaths(names);
+      const remedy = "commit the rebuilt artifacts, or stop tracking build output, before relying on this run";
 
       return {
         check: {
@@ -289,11 +346,17 @@ async function runCleanWorktreeCheck(
           message: "--setup modified or removed tracked files",
           details: [
             `Setup-modified tracked paths: ${list}`,
-            "Commit the rebuilt artifacts, or stop tracking build output, before relying on this run",
+            remedy.charAt(0).toUpperCase() + remedy.slice(1),
           ],
           durationMs: Date.now() - start,
           confidenceContribution: 0.05,
         },
+        // Mirrors the untracked-produced branch below: the CLI only
+        // prints blockers/warnings/acknowledged/limitations, not a
+        // check's own `details`, so without this the CLI showed just
+        // "--setup modified or removed tracked files" with no paths
+        // (task b16ab5d8, review round 3 finding N2).
+        limitation: `--setup modified or removed tracked files (${list}); ${remedy}`,
       };
     }
 

@@ -594,13 +594,30 @@ blocker. A TRACKED file `--setup` modifies or removes (a committed `dist/`
 file the build rewrote, `package-lock.json` rewritten by `npm ci`) is a real
 content change to something git already tracks, so it still fails
 `clean-worktree`, naming the paths and recommending they be committed or
-untracked, with no `.gitignore` suggestion since that would not fix a
-tracked file. If the pre-setup snapshot itself cannot be taken (a git
+untracked (in the check's `details` and, so the CLI also shows them, a
+`limitations` entry), with no `.gitignore` suggestion since that would not
+fix a tracked file. If the pre-setup snapshot itself cannot be taken (a git
 error), `clean-worktree` falls back to its normal undifferentiated check and
 says so in a `limitations` entry, rather than silently treating every
 current change as either pre-existing or setup-produced. Without `--setup`,
 none of this applies: `clean-worktree` runs exactly as it did before this
 behavior existed.
+
+**This holds only for the first `--setup` run in a worktree.** Run 1
+excuses its own untracked output and recommends `.gitignore`, as above; if
+that output is left un-ignored, the very same paths are already present in
+the PRE-setup snapshot on run 2 (they predate that run), so `clean-worktree`
+treats them as pre-existing dirt and fails, exactly like any other
+uncommitted change -- the tool cannot tell "leftover from a run I already
+recommended ignoring" apart from a real user change. When every pre-existing
+path is untracked, the failure still names the paths and adds the same
+`.gitignore` remedy (in `details` and a `limitations` entry) rather than the
+plain "commit or stash" message, since that's the likely fix; a pre-existing
+change that includes a tracked path keeps the plain message, since
+`.gitignore` would not help there. A directory git reports as a single
+collapsed `?? dir/` entry (not yet tracked) is read the same conservative
+way: present in the snapshot means pre-existing, even if only some of its
+contents are new since the snapshot was taken.
 
 When a shell-based check (lint, typecheck, test, audit, custom) fails, its
 complete stdout+stderr is written best-effort to

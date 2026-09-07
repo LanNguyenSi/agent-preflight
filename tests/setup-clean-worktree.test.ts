@@ -156,4 +156,107 @@ describe("clean-worktree under --setup (fixture: monorepo-build-required)", () =
       expect(result.ready).toBe(false);
     });
   });
+
+  // task b16ab5d8, review round 3, finding N1: the fix above only holds
+  // for the FIRST --setup run in a worktree. If the un-gitignored setup
+  // output from run 1 is still there (nobody added it to .gitignore),
+  // run 2's PRE-setup snapshot already contains it, so it reads as
+  // pre-existing dirt on run 2 and blocks -- correctly (the tool cannot
+  // tell run-1 leftovers from a real user change), but D-011 says the
+  // failure should name the paths and point at .gitignore instead of the
+  // old undifferentiated message.
+  it("N1: a second --setup run against still-un-gitignored output from run 1 fails naming the paths and the .gitignore remedy (run 1 stays a pass)", async () => {
+    await withFixture("monorepo-build-required", async (repoPath, logDir) => {
+      const distIndex = path.join(repoPath, "packages", "needs-build", "dist", "index.js");
+
+      const run1 = await runPreflight(repoPath, {
+        checks: CLEAN_WORKTREE_CHECKS,
+        logDir,
+        setup: { enabled: true },
+      });
+      expect(fs.existsSync(distIndex)).toBe(true);
+      const check1 = cleanWorktreeCheckOf(run1);
+      expect(check1?.status).toBe("pass");
+      expect(run1.ready).toBe(true);
+
+      // No user change between the two runs, and dist/ is still not
+      // gitignored -- exactly the "left un-ignored" case D-011 covers.
+      const run2 = await runPreflight(repoPath, {
+        checks: CLEAN_WORKTREE_CHECKS,
+        logDir,
+        setup: { enabled: true },
+      });
+
+      const check2 = cleanWorktreeCheckOf(run2);
+      expect(check2?.status).toBe("fail");
+      expect(run2.ready).toBe(false);
+      const text2 = `${(check2?.details ?? []).join(" ")} ${run2.limitations.join(" ")}`;
+      expect(text2).toContain("needs-build");
+      expect(text2).toContain("dist");
+      expect(text2.toLowerCase()).toContain(".gitignore");
+    });
+  });
+
+  // Control for N1, in the same two-run shape: a pre-existing TRACKED
+  // change (not the untracked-only case N1 covers) still yields today's
+  // undifferentiated message on run 2, with no .gitignore remedy --
+  // already pinned directly against runGitStateChecks by
+  // tests/git-state.test.ts's "N2" and pre-existing-tracked tests; pinned
+  // here too through the actual --setup wiring, since that's the surface
+  // N1 changed.
+  it("control: a pre-existing TRACKED modification before a second --setup run still yields the old undifferentiated message, no .gitignore remedy", async () => {
+    await withFixture("monorepo-build-required", async (repoPath, logDir) => {
+      const run1 = await runPreflight(repoPath, {
+        checks: CLEAN_WORKTREE_CHECKS,
+        logDir,
+        setup: { enabled: true },
+      });
+      expect(cleanWorktreeCheckOf(run1)?.status).toBe("pass");
+
+      // Dirty a tracked file before the second --setup run.
+      fs.appendFileSync(path.join(repoPath, "package.json"), "\n");
+
+      const run2 = await runPreflight(repoPath, {
+        checks: CLEAN_WORKTREE_CHECKS,
+        logDir,
+        setup: { enabled: true },
+      });
+
+      const check2 = cleanWorktreeCheckOf(run2);
+      expect(check2?.status).toBe("fail");
+      expect(check2?.message).toBe("Repository has uncommitted changes");
+      expect(check2?.details).toEqual([
+        "Commit or stash changes before relying on preflight results for a push",
+      ]);
+      expect(run2.ready).toBe(false);
+    });
+  });
+
+  it("a pre-existing untracked DIRECTORY (collapsed '?? dir/' in both the snapshot and the current state) is treated as pre-existing dirt and fails, naming the directory", async () => {
+    await withFixture("monorepo-build-required", async (repoPath, logDir) => {
+      // Simulate a leftover un-gitignored dist/ directory that predates
+      // this run entirely (not something --setup itself produces this
+      // time): git reports a not-yet-tracked directory as a single
+      // collapsed "?? dir/" entry, both before and after --setup runs,
+      // rather than per-file. Conservative reading: this is pre-existing
+      // dirt (blocks), not "--setup produced it fresh" (would pass),
+      // since the directory already existed before the run started.
+      const distDir = path.join(repoPath, "packages", "needs-build", "dist");
+      fs.mkdirSync(distDir, { recursive: true });
+      fs.writeFileSync(path.join(distDir, "stale.txt"), "leftover\n", "utf8");
+
+      const result = await runPreflight(repoPath, {
+        checks: CLEAN_WORKTREE_CHECKS,
+        logDir,
+        setup: { enabled: true },
+      });
+
+      const check = cleanWorktreeCheckOf(result);
+      expect(check?.status).toBe("fail");
+      expect(result.ready).toBe(false);
+      const text = `${(check?.details ?? []).join(" ")} ${result.limitations.join(" ")}`;
+      expect(text).toContain("needs-build");
+      expect(text).toContain("dist");
+    });
+  });
 });
