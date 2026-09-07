@@ -49,6 +49,8 @@ function makeTempDir(prefix: string): string {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  delete process.env.PREFLIGHT_LOG_DIR;
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) {
@@ -292,6 +294,188 @@ describe("runShellCheck full-output logging — default logDir", () => {
     expect(logPath).toBeDefined();
     expect(logPath).toBe(path.join(fakeHome, ".agent-preflight", "logs", path.basename(logPath!)));
     expect(fs.existsSync(logPath!)).toBe(true);
+  });
+});
+
+describe("runShellCheck full-output logging (PREFLIGHT_LOG_DIR precedence, task 2e8bcc7e)", () => {
+  it("an absolute PREFLIGHT_LOG_DIR wins over the home-based default when logDir is not configured", async () => {
+    const fakeHome = makeTempDir("preflight-fail-log-home-");
+    const envLogDir = makeTempDir("preflight-fail-log-env-");
+    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+    process.env.PREFLIGHT_LOG_DIR = envLogDir;
+
+    const result = await runShellCheck({
+      repoPath: os.tmpdir(),
+      name: "env-logdir-check",
+      kind: "lint",
+      command: catCommand(["boom"], 1),
+      weight: 0.1,
+      failureMessage: "lint failed",
+      // logDir intentionally omitted to exercise PREFLIGHT_LOG_DIR taking over
+      // from the home-based default. os.homedir() is mocked to fakeHome above,
+      // so a regression that ignores the env var still never reaches the real
+      // ~/.agent-preflight/logs.
+      // logdir-guard: PREFLIGHT_LOG_DIR precedence case, os.homedir() mocked to fakeHome
+    });
+
+    expect(result.check?.status).toBe("fail");
+    const logPath = result.check?.details?.[0]?.replace(/^full output: /, "");
+    expect(logPath).toBeDefined();
+    expect(logPath).toBe(path.join(envLogDir, path.basename(logPath!)));
+    expect(fs.existsSync(logPath!)).toBe(true);
+    expect(fs.existsSync(path.join(fakeHome, ".agent-preflight", "logs"))).toBe(false);
+  });
+
+  it("the configured logDir still wins over PREFLIGHT_LOG_DIR when both are set", async () => {
+    const configuredLogDir = makeTempDir("preflight-fail-log-configured-");
+    const envLogDir = makeTempDir("preflight-fail-log-env-shadowed-");
+    process.env.PREFLIGHT_LOG_DIR = envLogDir;
+
+    const result = await runShellCheck({
+      repoPath: os.tmpdir(),
+      name: "configured-logdir-check",
+      kind: "lint",
+      command: catCommand(["boom"], 1),
+      weight: 0.1,
+      failureMessage: "lint failed",
+      logDir: configuredLogDir,
+    });
+
+    expect(result.check?.status).toBe("fail");
+    const logPath = result.check?.details?.[0]?.replace(/^full output: /, "");
+    expect(logPath).toBeDefined();
+    expect(logPath).toBe(path.join(configuredLogDir, path.basename(logPath!)));
+    expect(fs.readdirSync(envLogDir)).toHaveLength(0);
+  });
+
+  it("a relative PREFLIGHT_LOG_DIR is ignored, warns naming the variable, and falls back to the home-based default", async () => {
+    const fakeHome = makeTempDir("preflight-fail-log-home-relative-");
+    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    process.env.PREFLIGHT_LOG_DIR = "relative/log/dir";
+
+    const result = await runShellCheck({
+      repoPath: os.tmpdir(),
+      name: "relative-env-logdir-check",
+      kind: "lint",
+      command: catCommand(["boom"], 1),
+      weight: 0.1,
+      failureMessage: "lint failed",
+      // logDir intentionally omitted: a relative PREFLIGHT_LOG_DIR must be
+      // rejected and fall back to the home-based default, mocked to fakeHome
+      // above, never the real ~/.agent-preflight/logs.
+      // logdir-guard: relative PREFLIGHT_LOG_DIR case, os.homedir() mocked to fakeHome
+    });
+
+    expect(result.check?.status).toBe("fail");
+    const logPath = result.check?.details?.[0]?.replace(/^full output: /, "");
+    expect(logPath).toBe(path.join(fakeHome, ".agent-preflight", "logs", path.basename(logPath!)));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("PREFLIGHT_LOG_DIR"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("relative/log/dir"));
+  });
+
+  it("an empty PREFLIGHT_LOG_DIR warns naming the variable and falls back to the home-based default (review finding F1, task 2e8bcc7e)", async () => {
+    const fakeHome = makeTempDir("preflight-fail-log-home-empty-");
+    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("PREFLIGHT_LOG_DIR", "");
+
+    const result = await runShellCheck({
+      repoPath: os.tmpdir(),
+      name: "empty-env-logdir-check",
+      kind: "lint",
+      command: catCommand(["boom"], 1),
+      weight: 0.1,
+      failureMessage: "lint failed",
+      // logDir intentionally omitted: an empty PREFLIGHT_LOG_DIR must warn
+      // and fall back to the home-based default, mocked to fakeHome above,
+      // never the real ~/.agent-preflight/logs.
+      // logdir-guard: empty PREFLIGHT_LOG_DIR case, os.homedir() mocked to fakeHome
+    });
+
+    expect(result.check?.status).toBe("fail");
+    const logPath = result.check?.details?.[0]?.replace(/^full output: /, "");
+    expect(logPath).toBe(path.join(fakeHome, ".agent-preflight", "logs", path.basename(logPath!)));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("PREFLIGHT_LOG_DIR"));
+  });
+
+  it("a whitespace-only PREFLIGHT_LOG_DIR warns naming the variable and falls back to the home-based default (review finding F1/missing test, task 2e8bcc7e)", async () => {
+    const fakeHome = makeTempDir("preflight-fail-log-home-whitespace-");
+    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("PREFLIGHT_LOG_DIR", "   ");
+
+    const result = await runShellCheck({
+      repoPath: os.tmpdir(),
+      name: "whitespace-env-logdir-check",
+      kind: "lint",
+      command: catCommand(["boom"], 1),
+      weight: 0.1,
+      failureMessage: "lint failed",
+      // logDir intentionally omitted: a whitespace-only PREFLIGHT_LOG_DIR
+      // must warn and fall back to the home-based default, mocked to
+      // fakeHome above, never the real ~/.agent-preflight/logs.
+      // logdir-guard: whitespace-only PREFLIGHT_LOG_DIR case, os.homedir() mocked to fakeHome
+    });
+
+    expect(result.check?.status).toBe("fail");
+    const logPath = result.check?.details?.[0]?.replace(/^full output: /, "");
+    expect(logPath).toBe(path.join(fakeHome, ".agent-preflight", "logs", path.basename(logPath!)));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("PREFLIGHT_LOG_DIR"));
+  });
+
+  it("a '~/'-prefixed PREFLIGHT_LOG_DIR expands to os.homedir() before the absolute-path check, same as the configured logDir (review finding F4, task 2e8bcc7e)", async () => {
+    const fakeHome = makeTempDir("preflight-fail-log-home-tilde-");
+    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("PREFLIGHT_LOG_DIR", "~/tilde-env-logs");
+
+    const result = await runShellCheck({
+      repoPath: os.tmpdir(),
+      name: "tilde-env-logdir-check",
+      kind: "lint",
+      command: catCommand(["boom"], 1),
+      weight: 0.1,
+      failureMessage: "lint failed",
+      // logDir intentionally omitted to exercise the '~/'-expanded
+      // PREFLIGHT_LOG_DIR value, mocked to fakeHome above.
+      // logdir-guard: '~/'-prefixed PREFLIGHT_LOG_DIR case, os.homedir() mocked to fakeHome
+    });
+
+    expect(result.check?.status).toBe("fail");
+    const logPath = result.check?.details?.[0]?.replace(/^full output: /, "");
+    expect(logPath).toBeDefined();
+    expect(logPath).toBe(path.join(fakeHome, "tilde-env-logs", path.basename(logPath!)));
+    expect(fs.existsSync(logPath!)).toBe(true);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("an absolute but unwritable PREFLIGHT_LOG_DIR degrades to details without a path line, and never throws (missing test, task 2e8bcc7e)", async () => {
+    const parentDir = makeTempDir("preflight-fail-log-env-writefail-");
+    const blockingFile = path.join(parentDir, "blocking-file");
+    fs.writeFileSync(blockingFile, "i am a file, not a directory");
+    // Same ENOTDIR shape as the "write failure degrades gracefully" case
+    // above, but reached through PREFLIGHT_LOG_DIR instead of the
+    // configured logDir.
+    vi.stubEnv("PREFLIGHT_LOG_DIR", path.join(blockingFile, "logs"));
+
+    const outputLines = ["some failure output"];
+    const result = await runShellCheck({
+      repoPath: os.tmpdir(),
+      name: "unwritable-env-logdir-check",
+      kind: "lint",
+      command: catCommand(outputLines, 1),
+      weight: 0.1,
+      failureMessage: "lint failed",
+      // logDir intentionally omitted: PREFLIGHT_LOG_DIR above is absolute
+      // but unwritable, exercising persistFailureOutput's own catch, not
+      // the real ~/.agent-preflight/logs.
+      // logdir-guard: unwritable PREFLIGHT_LOG_DIR case, absolute path points at a blocked segment
+    });
+
+    expect(result.check?.status).toBe("fail");
+    expect(result.check?.details).toEqual(outputLines);
+    expect(result.check?.details?.[0]).not.toMatch(/^full output: /);
   });
 });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
@@ -401,6 +401,89 @@ describe("PreflightConfig.logDir tilde expansion", () => {
       homedirSpy.mockRestore();
       fs.rmSync(repoPath, { recursive: true, force: true });
       fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("PREFLIGHT_LOG_DIR warning fires at most once per runPreflight call (review finding F5, task 2e8bcc7e)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("warns once even when two customChecks entries fail in the same run", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-logdir-warn-once-"));
+    const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-logdir-warn-once-home-"));
+    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("PREFLIGHT_LOG_DIR", "relative/not/absolute");
+    try {
+      const config = defaultConfig();
+      config.checks = allChecksDisabled();
+      // logDir intentionally left unconfigured so the invalid
+      // PREFLIGHT_LOG_DIR above is what resolves defaultLogDir(); two
+      // failing customChecks entries share the single logDir resolution
+      // runner.ts now does once, rather than each calling defaultLogDir()
+      // (and its warning) independently.
+      // logdir-guard: no logDir configured is the scenario under test, os.homedir() mocked to fakeHome
+      config.customChecks = [
+        { name: "always-fail-1", command: "echo boom1 && exit 1" },
+        { name: "always-fail-2", command: "echo boom2 && exit 1" },
+      ];
+
+      const result = await runPreflight(repoPath, config);
+
+      const failed = result.checks.filter((c) => c.status === "fail");
+      expect(failed).toHaveLength(2);
+      for (const check of failed) {
+        const logPath = check.details?.[0]?.replace(/^full output: /, "");
+        expect(logPath).toBe(path.join(fakeHome, ".agent-preflight", "logs", path.basename(logPath!)));
+      }
+      const warningCalls = warnSpy.mock.calls.filter((call) =>
+        String(call[0]).includes("PREFLIGHT_LOG_DIR")
+      );
+      expect(warningCalls).toHaveLength(1);
+    } finally {
+      homedirSpy.mockRestore();
+      warnSpy.mockRestore();
+      fs.rmSync(repoPath, { recursive: true, force: true });
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("PreflightConfig.logDir takes precedence over an invalid PREFLIGHT_LOG_DIR, with no warning (missing test 1, task 2e8bcc7e review round 2)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("resolves the configured logDir and prints zero PREFLIGHT_LOG_DIR warnings when both a configured logDir and an invalid PREFLIGHT_LOG_DIR are present", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-logdir-precedence-"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Invalid on two counts (relative, not absolute) so a run that ignored
+    // `.preflight.json`'s `logDir` and fell through to `PREFLIGHT_LOG_DIR`
+    // would both warn and resolve a different logDir than asserted below.
+    vi.stubEnv("PREFLIGHT_LOG_DIR", "relative/not/absolute");
+    try {
+      const config = defaultConfig();
+      config.checks = allChecksDisabled();
+      config.logDir = "configured-logs";
+      config.customChecks = [{ name: "always-fail", command: "echo boom && exit 1" }];
+
+      const result = await runPreflight(repoPath, config);
+
+      const failedCheck = result.checks.find((c) => c.name === "always-fail");
+      expect(failedCheck?.status).toBe("fail");
+      const logLine = failedCheck?.details?.[0];
+      const logPath = logLine!.replace(/^full output: /, "");
+      expect(path.dirname(logPath)).toBe(path.join(repoPath, "configured-logs"));
+
+      const warningCalls = warnSpy.mock.calls.filter((call) =>
+        String(call[0]).includes("PREFLIGHT_LOG_DIR")
+      );
+      expect(warningCalls).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+      fs.rmSync(repoPath, { recursive: true, force: true });
     }
   });
 });

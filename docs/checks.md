@@ -103,7 +103,9 @@ non-empty reason, visibility guarantees, boundaries, and why
 }
 ```
 
-A relative value resolves against the repo root (not `workingDir`, not `process.cwd()`); a leading `~/` expands to the home directory; an absolute path is used as-is. If the chosen directory lives inside the repo, add it to `.gitignore` — an un-ignored `logDir` fills the working tree with untracked log files and trips the `clean-worktree` check on the next run. See the README "Configuration" section for the on-disk filename format and rotation behavior.
+A relative value resolves against the repo root (not `workingDir`, not `process.cwd()`); a leading `~/` expands to the home directory; an absolute path is used as-is. If the chosen directory lives inside the repo, add it to `.gitignore`: an un-ignored `logDir` fills the working tree with untracked log files and trips the `clean-worktree` check on the next run.
+
+`logDir` is not the only way to set this: the `PREFLIGHT_LOG_DIR` environment variable is a second, lower-precedence override, useful when there is no `.preflight.json` to edit (a scratch fixture) or a worktree shares `$HOME` with other checkouts. See the README's log directory precedence table for the full 3-level order and the environment variable's own rules (absolute path required after `~/` expansion, a relative/empty/whitespace-only value warns and falls back). See the README "Configuration" section for the on-disk filename format and rotation behavior.
 
 ## Custom checks
 
