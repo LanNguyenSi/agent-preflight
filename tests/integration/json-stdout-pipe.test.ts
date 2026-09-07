@@ -12,11 +12,12 @@
  * regular file (no pipe-buffer limit) comes through complete.
  *
  * This spawns the REAL built CLI binary (dist/cli.js, built fresh in a
- * top-level beforeAll the same way tests/release-bundle.test.ts does, since
- * the CI workflow's test job does not run `npm run build` before `vitest
- * run`) with a genuinely piped stdout (child_process.spawn's `stdio:
- * ["ignore", "pipe", ...]`, never a TTY) against a fixture whose own failing
- * test output is large enough to reliably exceed that buffer.
+ * top-level beforeAll here because the CI workflow's test job runs `npx
+ * vitest run --coverage` with no preceding `npm run build`, so this file
+ * builds dist/ in its own beforeAll) with a genuinely piped stdout
+ * (child_process.spawn's `stdio: ["ignore", "pipe", ...]`, never a TTY)
+ * against a fixture whose own failing test output is large enough to
+ * reliably exceed that buffer.
  *
  * The T-008 pathological-path-token fixture (single-package-pathological-
  * path-token, 30000 segments) was measured directly and does NOT reproduce
@@ -31,9 +32,9 @@
  * A real EPIPE (the reader closing the pipe before the write completes) is
  * also exercised end to end here (round 2, review of task 0089e6f5): the
  * child's own stdout read end is destroyed immediately after spawn, which is
- * deterministic in practice (measured 10/10 across repeated local runs, see
- * the implementer's round-2 report) because Node's pipe write only completes
- * asynchronously, giving the parent time to close its end first.
+ * deterministic in practice (measured 10/10 over repeated local runs on
+ * macOS / Node 26) because Node's pipe write only completes asynchronously,
+ * giving the parent time to close its end first.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, execSync } from "child_process";
@@ -53,10 +54,9 @@ const FIXTURES_ROOT = path.join(__dirname, "..", "fixtures");
 const TYPICAL_PIPE_BUFFER_BYTES = 65536;
 
 // Builds the real CLI binary once for every test in this file (each spawns
-// dist/cli.js as a separate process), mirroring tests/release-bundle.test.ts:
-// the CI workflow's test job runs `npx vitest run --coverage` without a
-// preceding `npm run build`, so dist/cli.js cannot be assumed to exist (or be
-// current) already.
+// dist/cli.js as a separate process): the CI workflow's test job runs `npx
+// vitest run --coverage` without a preceding `npm run build`, so dist/cli.js
+// cannot be assumed to exist (or be current) already.
 beforeAll(() => {
   execSync("npm run build", { cwd: REPO_ROOT, stdio: "pipe" });
 });

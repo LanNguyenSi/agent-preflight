@@ -317,6 +317,12 @@ describe("batch command — exit-code contract", () => {
     const { exitCode } = await runCommand(["batch", "."]);
     expect(exitCode).toBe(0);
   });
+
+  it("exits 1 via pretty batch output when some repos are not ready", async () => {
+    mockRunBatch.mockResolvedValue({ total: 2, ready: 1, notReady: 1, skipped: 0, results: [] });
+    const { exitCode } = await runCommand(["batch", "."]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 describe("batch command — pretty output acknowledged marker (review finding 3)", () => {
@@ -415,6 +421,14 @@ describe("sandbox command", () => {
 // 'error' event is exercised too, but only as the defensive fallback it
 // actually is on the measured platforms: a callback that is never invoked at
 // all.
+//
+// Every write-outcome case below is run against BOTH intended exit codes (0
+// and 1). Round-2 review (task 0089e6f5) found that a suite exercising only
+// intended code 1 lets a mutant that hardcodes `finish(exitCode)` to
+// `finish(1)` survive, since 1 already happens to be the generic failure
+// code every EPIPE/error case also produces.
+const INTENDED_CODES = [0, 1] as const;
+
 describe("writeJsonAndExit: write-outcome handling", () => {
   function mockWriteInvokingCallbackWith(err: NodeJS.ErrnoException | undefined) {
     return vi.spyOn(process.stdout, "write").mockImplementation(((
@@ -430,96 +444,145 @@ describe("writeJsonAndExit: write-outcome handling", () => {
     }) as typeof process.stdout.write);
   }
 
-  it("keeps the intended exit code when the write callback receives an EPIPE error (the measured production path)", async () => {
+  function spyOnExit() {
     let capturedCode: number | undefined;
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       capturedCode = code;
       return undefined as never;
     }) as typeof process.exit);
-    const epipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
-    const writeSpy = mockWriteInvokingCallbackWith(epipeError);
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    return { exitSpy, getCode: () => capturedCode };
+  }
 
-    try {
-      writeJsonAndExit({ ready: false }, 1);
-      await Promise.resolve();
-      await Promise.resolve();
+  it.each(INTENDED_CODES)(
+    "keeps the intended exit code %i when the write callback receives an EPIPE error (the measured production path)",
+    async (intendedCode) => {
+      const { exitSpy, getCode } = spyOnExit();
+      const epipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+      const writeSpy = mockWriteInvokingCallbackWith(epipeError);
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-      expect(capturedCode).toBe(1);
-      expect(stderrSpy).not.toHaveBeenCalled();
-    } finally {
-      writeSpy.mockRestore();
-      exitSpy.mockRestore();
-      stderrSpy.mockRestore();
+      try {
+        writeJsonAndExit({ ready: intendedCode === 0 }, intendedCode);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(getCode()).toBe(intendedCode);
+        expect(stderrSpy).not.toHaveBeenCalled();
+      } finally {
+        writeSpy.mockRestore();
+        exitSpy.mockRestore();
+        stderrSpy.mockRestore();
+      }
     }
-  });
+  );
 
-  it("writes a one-line diagnostic and exits non-zero when the write callback receives a non-EPIPE error", async () => {
-    let capturedCode: number | undefined;
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      capturedCode = code;
-      return undefined as never;
-    }) as typeof process.exit);
-    const enospcError = Object.assign(new Error("write ENOSPC"), { code: "ENOSPC" });
-    const writeSpy = mockWriteInvokingCallbackWith(enospcError);
+  it.each(INTENDED_CODES)(
+    "writes a one-line diagnostic and exits 1 regardless of intended code %i when the write callback receives a non-EPIPE error",
+    async (intendedCode) => {
+      const { exitSpy, getCode } = spyOnExit();
+      const enospcError = Object.assign(new Error("write ENOSPC"), { code: "ENOSPC" });
+      const writeSpy = mockWriteInvokingCallbackWith(enospcError);
+      const stderrLines: string[] = [];
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+        stderrLines.push(String(chunk));
+        return true;
+      }) as typeof process.stderr.write);
+
+      try {
+        writeJsonAndExit({ ready: intendedCode === 0 }, intendedCode);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(getCode()).toBe(1);
+        expect(stderrLines.join("")).toContain("write ENOSPC");
+        expect(stderrLines).toHaveLength(1);
+      } finally {
+        writeSpy.mockRestore();
+        exitSpy.mockRestore();
+        stderrSpy.mockRestore();
+      }
+    }
+  );
+
+  it.each(INTENDED_CODES)(
+    "exits with the intended code %i on a process.stdout 'error' event when the write callback is never invoked (defensive fallback)",
+    (intendedCode) => {
+      const { exitSpy, getCode } = spyOnExit();
+      // Simulates a platform/Node version where the write callback is never
+      // invoked at all and only the stream's 'error' event fires.
+      const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation((() => true) as typeof process.stdout.write);
+
+      try {
+        writeJsonAndExit({ ready: intendedCode === 0 }, intendedCode);
+        const epipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+        process.stdout.emit("error", epipeError);
+
+        expect(getCode()).toBe(intendedCode);
+      } finally {
+        writeSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+    }
+  );
+
+  it.each(INTENDED_CODES)(
+    "still exits with the intended code %i on a normal, fully-flushed write",
+    async (intendedCode) => {
+      const { exitSpy, getCode } = spyOnExit();
+      const writeSpy = mockWriteInvokingCallbackWith(undefined);
+
+      try {
+        writeJsonAndExit({ ready: intendedCode === 0 }, intendedCode);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(getCode()).toBe(intendedCode);
+      } finally {
+        writeSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+    }
+  );
+
+  it("emits exactly one diagnostic line when the defensive 'error' event fires first and the write callback then also reports an error (shared already-finished guard)", async () => {
+    const { exitSpy, getCode } = spyOnExit();
     const stderrLines: string[] = [];
     const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
       stderrLines.push(String(chunk));
       return true;
     }) as typeof process.stderr.write);
+    // The write callback fires asynchronously (queued via queueMicrotask
+    // below); the defensive 'error' event is emitted synchronously first, so
+    // handleWriteFailure runs twice for the same logical failure and only
+    // the shared `if (exited) return;` guard at its top stops the second
+    // call from writing a second diagnostic or calling process.exit again.
+    let capturedCallback: ((writeErr?: NodeJS.ErrnoException) => void) | undefined;
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(((
+      _chunk: unknown,
+      encodingOrCallback?: unknown,
+      maybeCallback?: unknown
+    ) => {
+      const callback = typeof encodingOrCallback === "function" ? encodingOrCallback : maybeCallback;
+      if (typeof callback === "function") {
+        capturedCallback = callback as (writeErr?: NodeJS.ErrnoException) => void;
+      }
+      return true;
+    }) as typeof process.stdout.write);
 
     try {
-      writeJsonAndExit({ ready: true }, 0);
+      writeJsonAndExit({ ready: false }, 1);
+
+      const enospcError = Object.assign(new Error("write ENOSPC"), { code: "ENOSPC" });
+      process.stdout.emit("error", enospcError);
+      capturedCallback?.(Object.assign(new Error("write ENOSPC"), { code: "ENOSPC" }));
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(capturedCode).toBe(1);
-      expect(stderrLines.join("")).toContain("write ENOSPC");
+      expect(getCode()).toBe(1);
+      expect(stderrLines).toHaveLength(1);
     } finally {
       writeSpy.mockRestore();
       exitSpy.mockRestore();
       stderrSpy.mockRestore();
-    }
-  });
-
-  it("exits with the intended code on a process.stdout 'error' event when the write callback is never invoked (defensive fallback)", () => {
-    let capturedCode: number | undefined;
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      capturedCode = code;
-      return undefined as never;
-    }) as typeof process.exit);
-    // Simulates a platform/Node version where the write callback is never
-    // invoked at all and only the stream's 'error' event fires.
-    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation((() => true) as typeof process.stdout.write);
-
-    try {
-      writeJsonAndExit({ ready: false }, 1);
-      const epipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
-      process.stdout.emit("error", epipeError);
-
-      expect(capturedCode).toBe(1);
-    } finally {
-      writeSpy.mockRestore();
-      exitSpy.mockRestore();
-    }
-  });
-
-  it("still exits with the intended code on a normal, fully-flushed write", async () => {
-    let capturedCode: number | undefined;
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      capturedCode = code;
-      return undefined as never;
-    }) as typeof process.exit);
-    const writeSpy = mockWriteInvokingCallbackWith(undefined);
-
-    try {
-      writeJsonAndExit({ ready: true }, 0);
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(capturedCode).toBe(0);
-    } finally {
-      writeSpy.mockRestore();
-      exitSpy.mockRestore();
     }
   });
 

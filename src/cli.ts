@@ -54,6 +54,7 @@ export function writeJsonAndExit(payload: unknown, exitCode: number): void {
   };
 
   const handleWriteFailure = (err: NodeJS.ErrnoException): void => {
+    if (exited) return;
     if (err && err.code === "EPIPE") {
       finish(exitCode);
       return;
