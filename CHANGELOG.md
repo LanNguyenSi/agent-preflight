@@ -14,22 +14,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   rejected.** A directory a package declares an artifact in that is actually
   checked-in source (an oclif-style `bin/` launcher beside a real `dist/`,
   an `exports` target inside a source tree) still counts as build output and
-  blocks a never-built package. A candidate fix -- exclude a directory from
-  the read whenever it holds a git-tracked file -- was measured against a
-  corpus of real and fixture repositories and rejected: it turned every
-  checked-in placeholder, stale output, and dangling-symlink case in that
-  corpus from a blocking `fail` into the named `skip`, the exact false-green
-  class this rule exists to prevent, with no unintended flip anywhere else.
-  This stays a documented cost (README), fixed only by correcting the
-  declaration; no production code changed.
+  blocks a never-built package; that cost stays open, no opt-out was added
+  for it. A candidate fix -- exclude a directory from the read whenever it
+  holds a git-tracked file -- was tried and rejected on the argument that
+  actually holds: a tracked-file test cannot distinguish a checked-in source
+  directory from a checked-in build-output directory (a committed `dist/`,
+  a committed symlink standing in for one, a committed `.keep` placeholder
+  that lets git carry an otherwise empty output directory), so a repository
+  that commits its output would turn its blocking `fail` into the named
+  `skip`, the exact false-green class this rule exists to prevent. An
+  earlier draft of this rejection cited a corpus flip count as evidence;
+  that count is retracted here because the corpus driver runs `git init &&
+  git add -A` with no `.gitignore` for any case, so every output directory
+  already present before the build is git-tracked by construction, and the
+  count measured "output directory present before the build" rather than
+  "output directory checked in". Re-run with a realistic `.gitignore` for
+  each case's output directories, only one of sixteen cases still flips: the
+  fixture whose declared `dist` is itself a checked-in symlink. A narrower
+  rule (tracked, AND not `.gitignore`d, AND another declared output
+  directory of the same package is populated) was not measured and is not
+  claimed to work. No production code changed.
 
 - **Package-level partial-build rule, item 2: a declared output directory a
   build never fills stays a documented cost, no opt-out added.** An optional
   CSS export, a `types` directory a JavaScript-only build never writes, and
   similar shapes make the precondition hold forever no matter what else the
   package holds. No per-declaration opt-out was added to `.preflight.json`
-  for it: a corpus of real and fixture repositories turned up no case of it
-  beyond the fixture that already pins it. No production code changed.
+  for it: no case of the shape was observed in this package's own fixtures
+  and hand-built reproduction cases beyond the `single-package-second-output-dir`
+  fixture that already pins it, which does not by itself justify a
+  `.preflight.json` surface; the cost is closed by fixing the declaration.
+  No production code changed.
 
 - **Package-level partial-build rule, item 3: the unreadable-output message
   is now pinned for `EACCES`, not only `ENOTDIR`.** A unit test chmods a real

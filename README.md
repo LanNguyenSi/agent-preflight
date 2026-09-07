@@ -254,9 +254,11 @@ Three things have to be true at once, and none of them is enough on its own.
    writes) is the same cost from the other side: the precondition holds
    forever, whatever else the package does hold. No per-declaration opt-out
    is offered for it in `.preflight.json`; it stays a documented cost, closed
-   by fixing the declaration, because a corpus of real and fixture
-   repositories turned up no case of it beyond the one fixture that already
-   pins it.
+   by fixing the declaration. This is a judgment, not an argument from
+   absence: no case of the shape turned up in this package's own fixtures
+   and hand-built reproduction cases beyond `single-package-second-output-dir`,
+   which already pins it, and that one fixture does not by itself justify a
+   `.preflight.json` surface for the rest.
 
    Reading the **directories**, and all of them, is what makes this a package
    property. A declared artifact on disk necessarily makes its own directory
@@ -285,14 +287,7 @@ Three things have to be true at once, and none of them is enough on its own.
      nothing was ever built, and what fixes it is the declaration, not a
      build. A declared directory under `node_modules` is the one exception
      and is never read: installed dependencies say nothing about whether the
-     package was built, which is the rule condition 3 applies to paths too.
-     A narrower reading was tried and rejected: excluding a directory from
-     the read whenever it holds a git-tracked file would fix exactly this
-     shape, but measured against a corpus of real and fixture repositories it
-     also turned every checked-in placeholder, stale output, and
-     dangling-symlink case into a false `skip` -- the exact class this rule
-     exists to keep blocking, since a build never re-runs on a `ready: true`
-     verdict. This stays a documented cost rather than a rule change;
+     package was built, which is the rule condition 3 applies to paths too;
    - the directory state is read **after** the test run, when the failure is
      classified, and nothing is snapshotted beforehand: a test that itself
      writes into its package's output directory (a cache, a fixture, a
@@ -302,6 +297,29 @@ Three things have to be true at once, and none of them is enough on its own.
      reads the real `dist/` directory. That is the opposite of the
      case-sensitive **path** comparison in condition 3, and deliberately so:
      one asks the OS what is on disk, the other compares two strings.
+
+   A narrower reading of the third bullet above was tried and rejected:
+   exclude a directory from the read whenever it holds a git-tracked file, so
+   a checked-in `bin/` launcher stops blocking a package whose real `dist/`
+   is genuinely built. Rejected on the argument that actually holds: a
+   tracked-file test cannot distinguish a checked-in source directory from a
+   checked-in build-output directory (a committed `dist/`, a committed
+   symlink standing in for one, a committed `.keep` placeholder), so a
+   repository that commits its output would turn its blocking `fail` into
+   the named `skip` -- the exact false-green class this rule exists to
+   prevent. An earlier draft of this rejection also cited a flip count from
+   a corpus of real and fixture repositories; that count is not reliable
+   evidence, because the corpus was prepared with `git init && git add -A`
+   and no `.gitignore` for any case, so every output directory already
+   present before the build is git-tracked by construction, and the count
+   measured "output directory present before the build", not "output
+   directory checked in". Under a realistic `.gitignore` for each case's
+   output directories, only one of the flips remains: the fixture whose
+   declared `dist` is itself a checked-in symlink. The oclif-style `bin/`
+   false-block this rejection describes stays an open cost, no opt-out was
+   added for it; a narrower rule (tracked, AND not `.gitignore`d, AND
+   another declared output directory of the same package is populated) was
+   not measured and is not claimed to work.
 
    The remedy is the build, or, where a declaration names a directory that
    is not build output, the declaration; either way blocking is the safe
