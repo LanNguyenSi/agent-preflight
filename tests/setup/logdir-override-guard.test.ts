@@ -23,7 +23,8 @@
  *     doing a plain textual scan); or
  *   - sits inside a test whose enclosing `it`/`test` callback contains an
  *     opt-out comment `// logdir-guard: <reason>` (the reason is
- *     mandatory: a bare `logdir-guard:` does not count), for a call that
+ *     mandatory and must sit on the same line: a bare `logdir-guard:` or a
+ *     punctuation-only reason does not count), for a call that
  *     genuinely cannot reach `persistFailureOutput` (e.g. every
  *     lint/typecheck/test/audit/custom check toggle is `false`, or the
  *     check kind in question, such as gitState/commitConvention/
@@ -43,9 +44,12 @@ import ts from "typescript";
 const TESTS_ROOT = path.resolve(__dirname, "..");
 const GUARD_COMMENT = "logdir-guard:";
 /** The opt-out counts only when the comment names a reason: at least one
- * non-whitespace character after the colon. A bare `// logdir-guard:` is a
- * violation, so the exemption cannot be silenced without saying why. */
-const GUARD_COMMENT_WITH_REASON = /logdir-guard:[ \t]*\S/;
+ * word character after the colon, on the same line as the token (a reason on
+ * the next line does not count). A bare `// logdir-guard:` or a
+ * punctuation-only "reason" is a violation, so the exemption cannot be
+ * silenced without saying why. The check is syntactic; it cannot judge
+ * whether the stated reason is true, that is what the grep audit is for. */
+const GUARD_COMMENT_WITH_REASON = /logdir-guard:[^\n]*\w/;
 const TARGET_CALLS = new Set(["runPreflight", "runShellCheck"]);
 
 interface Violation {
@@ -349,6 +353,39 @@ describe("logDir override guard (structural, Orchestrator D-017)", () => {
 
       expect(violations).toHaveLength(1);
       expect(violations[0].file).toContain("noreason.test.ts");
+    } finally {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  it("self-check: still flags a call whose '// logdir-guard:' opt-out is punctuation only or puts the reason on the next line", () => {
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "logdir-guard-fixture-weakreason-"));
+    const fixturePath = path.join(fixtureDir, "weakreason.test.ts");
+    try {
+      fs.writeFileSync(
+        fixturePath,
+        [
+          "import { it } from 'vitest';",
+          "import { runPreflight } from '../src/runner.js';",
+          "",
+          "it('punctuation only', async () => {",
+          "  const config = { checks: { lint: true } };",
+          "  // logdir-guard: -",
+          "  const result = await runPreflight('.', config);",
+          "});",
+          "",
+          "it('reason on the next line', async () => {",
+          "  const config = { checks: { lint: true } };",
+          "  // logdir-guard:",
+          "  // lint never reaches persistFailureOutput here",
+          "  const result = await runPreflight('.', config);",
+          "});",
+        ].join("\n")
+      );
+
+      const violations = scanFiles([fixturePath]);
+
+      expect(violations).toHaveLength(2);
     } finally {
       fs.rmSync(fixtureDir, { recursive: true, force: true });
     }
