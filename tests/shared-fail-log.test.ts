@@ -281,7 +281,9 @@ describe("runShellCheck full-output logging — default logDir", () => {
       command: catCommand(["boom"], 1),
       weight: 0.1,
       failureMessage: "lint failed",
-      // logDir intentionally omitted — exercise the default.
+      // logDir intentionally omitted — exercise the default. os.homedir()
+      // is mocked to fakeHome above, so this never reaches the real
+      // ~/.agent-preflight/logs. // logdir-guard: default-logDir case, os.homedir() mocked to fakeHome
     });
 
     expect(result.check?.status).toBe("fail");

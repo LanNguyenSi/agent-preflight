@@ -12,11 +12,19 @@ describe('Error Handling Integration Tests', () => {
   // live npm registry. Installed/restored around every test (see
   // src/checks/audit.ts's npmAuditRunner test seam).
   let restoreNpmAudit: () => void;
+  // Every runPreflight() call in this file MUST pass this logDir: several
+  // point at the live repo ('.') with lint/typecheck/audit enabled, and a
+  // failing check's output is persisted via persistFailureOutput(), which
+  // falls back to the real ~/.agent-preflight/logs when no logDir is given
+  // (see the ShellCheckOptions.logDir docblock in src/checks/shared.ts).
+  let logDir: string;
   beforeEach(() => {
     restoreNpmAudit = mockNpmAuditClean();
+    logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-error-handling-logs-'));
   });
   afterEach(() => {
     restoreNpmAudit();
+    fs.rmSync(logDir, { recursive: true, force: true });
   });
 
   it('should handle missing repository path gracefully', async () => {
@@ -30,6 +38,7 @@ describe('Error Handling Integration Tests', () => {
         commitConvention: false,
         ciSimulation: false,
       },
+      logDir,
     };
 
     // Runner degrades gracefully rather than throwing on non-existent path
@@ -40,7 +49,7 @@ describe('Error Handling Integration Tests', () => {
   });
 
   it('should handle empty configuration gracefully', async () => {
-    const config = {};
+    const config = { logDir };
     const result = await runPreflight('.', config);
 
     // Should still return valid result structure
@@ -66,6 +75,7 @@ describe('Error Handling Integration Tests', () => {
       checks: {
         audit: true, // npm audit requires package.json
       },
+      logDir,
     };
 
     // The case used to point runPreflight() at the shared, unfiltered
@@ -105,6 +115,7 @@ describe('Error Handling Integration Tests', () => {
       checks: {
         typecheck: true, // TypeScript check requires tsconfig.json
       },
+      logDir,
     };
 
     const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-no-tsconfig-'));
@@ -141,6 +152,7 @@ describe('Error Handling Integration Tests', () => {
         lint: true,
         typecheck: true,
       },
+      logDir,
     };
 
     // Run multiple preflight checks concurrently
@@ -170,6 +182,7 @@ describe('Error Handling Integration Tests', () => {
         commitConvention: false,
         ciSimulation: false,
       },
+      logDir,
     };
 
     const result = await runPreflight('.', config);
@@ -186,6 +199,7 @@ describe('Error Handling Integration Tests', () => {
       checks: {
         lint: true,
       },
+      logDir,
     };
 
     // Even if lint commands produce weird output, should not crash
@@ -198,6 +212,7 @@ describe('Error Handling Integration Tests', () => {
       checks: {
         typecheck: true,
       },
+      logDir,
     };
 
     const result = await runPreflight('.', config);
@@ -228,6 +243,7 @@ describe('Error Handling Integration Tests', () => {
           failOnError: true,
         },
       ],
+      logDir,
     };
 
     const result = await runPreflight('.', config);

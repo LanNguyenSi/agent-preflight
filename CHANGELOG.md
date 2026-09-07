@@ -9,37 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- **`tests/profiles.test.ts` no longer leaks real `npm-test`/`npm-run-build-setup`
-  writes into `~/.agent-preflight/logs`** (task a53ff28e). Every `runPreflight()`
-  call in this file was missing the `logDir` override the
-  `ShellCheckOptions.logDir` docblock requires, unlike every other test file in
-  the suite; on a flaky run (a mocked binary invoked with unexpected
-  arguments, or a genuinely failing `npm-test`/`--setup` build step) the
-  failure's full output persisted to the real default log directory instead
-  of a throwaway temp dir. This is the call site that matches the batch-39
-  evidence (a `tsc-lint-fallback-*.log` found in the real directory): the
-  "uses tsc as a lint fallback" test's mocked `npx` only matches `$1 == "tsc"`
-  and falls through with no explicit exit path otherwise. All ten
-  `runPreflight()` calls in the file now pass
-  `logDir: path.join(repoPath, ".preflight-test-logs")`, the same pattern
-  `tests/build-required.test.ts` and `tests/workspace.test.ts` already use.
-  The "does not run setup steps unless explicitly enabled" test's mocked
-  `npm` script was also given a real stderr message on its failing branch
-  (previously silent, so its failure carried empty output and could never
-  exercise the log-persistence path at all) so the fix is actually
-  mutation-testable.
-  Separately, `tests/setup/no-real-home-writes.globalSetup.ts`'s existing
-  `process.exitCode = 1` mechanism (introduced with the guard itself, task
-  086ac782) was re-verified against the currently pinned vitest 4.1.5: a
-  real write during the run's window is correctly turned into a non-zero
-  `npx vitest run` exit, not just a printed warning. Investigating the batch
-  38/39 "printed a warning but exited 0" report did not reproduce against
-  this exact guard code; the reproducible cause found instead was multiple
-  concurrent `agent-preflight` worktrees on the same machine sharing
-  `~/.agent-preflight/logs`, whose independent test runs can write into each
-  other's before/after window and get misattributed. That cross-worktree
-  interference is a real, observed risk on this machine but is out of scope
-  for this fix (it is not a bug in this repository's own test suite).
+- **Every `runPreflight()`/`runShellCheck()` call under `tests/` that can
+  reach a failing check now overrides `logDir`, and a structural guard
+  keeps it that way** (task a53ff28e). The symptom that started this: a
+  `tsc-lint-fallback-*.log` was found sitting in the real
+  `~/.agent-preflight/logs`, left over from `tests/profiles.test.ts`'s
+  "uses tsc as a lint fallback" case (its mocked `npx` only accepts
+  `$1 == "tsc"`; under `set -euo pipefail` any other argument exits
+  non-zero via `-e`, which is exactly the failure path `persistFailureOutput`
+  writes out for). `ShellCheckOptions.logDir` (`src/checks/shared.ts`)
+  falls back to the real default log directory whenever a call omits it,
+  and `tests/profiles.test.ts` was missing the override on every one of
+  its ten `runPreflight()` calls, unlike every other test file in the
+  suite at the time.
+  - All ten `tests/profiles.test.ts` calls now pass
+    `logDir: path.join(repoPath, ".preflight-test-logs")`, the pattern
+    `tests/build-required.test.ts` and `tests/workspace.test.ts` already
+    used. The "does not run setup steps unless explicitly enabled" case's
+    mocked `npm` script also gets a real stderr message on its failing
+    branch (previously silent, so its failure carried empty output and
+    never reached the log-persistence path at all), so the fix is
+    mutation-testable.
+  - A follow-up review pass found the same gap in two more files that
+    target the live repo (`.`) with lint/typecheck/audit enabled:
+    `tests/contract/integrations.test.ts` (all 10 cases) and
+    `tests/integration/error-handling.test.ts` ("should handle missing
+    repository path gracefully", "should handle empty configuration
+    gracefully", "should handle repositories without package.json",
+    "should handle repositories without tsconfig.json", "should handle
+    concurrent preflight runs safely", "should handle disabled checks
+    without errors", "should handle malformed command output gracefully",
+    "should provide meaningful error context in check results", "should
+    maintain JSON output contract even on errors" (9 cases total). Both files
+    now create a temp `logDir` per test (`beforeEach`/`afterEach`) and
+    pass it into every config object.
+  - Every other `runPreflight()`/`runShellCheck()` call under `tests/`
+    that genuinely cannot reach `persistFailureOutput` (every
+    lint/typecheck/test/audit/custom-check toggle is `false`, or the
+    check kind never routes through `runShellCheck` at all, e.g.
+    `gitState`, `commitConvention`, `secretDetection`, `tdd`, or the
+    `npm audit` classifier path) is now marked with an inline
+    `// logdir-guard: <reason>` comment instead of silently relying on
+    that being true forever.
+  - New: `tests/setup/logdir-override-guard.test.ts` statically scans
+    every `.ts` file under `tests/` (via the TypeScript compiler API,
+    already a dependency) for `runPreflight(`/`runShellCheck(` calls whose
+    options don't carry a `logDir` property (traced through variable
+    declarations, `.logDir =` assignments, and `...spread`s) and have no
+    `// logdir-guard:` opt-out in their enclosing test body; it fails
+    naming `file:line` for each violation. This makes the class
+    structural: `tests/setup/no-real-home-writes.globalSetup.ts`'s
+    existing guard only catches a missing override after it has already
+    written into the real log directory during a run; this one catches it
+    at the call site before any check ever executes. Three self-check
+    fixtures pin that the scanner actually discriminates (flags a bare
+    call, clears once `logDir` is added, clears with an opt-out comment).
+  - Separately, `tests/setup/no-real-home-writes.globalSetup.ts`'s existing
+    `process.exitCode = 1` mechanism was re-verified against the currently
+    pinned vitest 4.1.5: a real write during the run's window is correctly
+    turned into a non-zero `npx vitest run` exit, not just a printed
+    warning.
 
 ### Added
 

@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { runPreflight } from '../../src/runner.js';
 import type { PreflightResult, CheckResult } from '../../src/types.js';
 import { mockNpmAuditClean } from '../helpers/npm-audit-mock.js';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 describe('Contract Tests - JSON Output Stability', () => {
   // Every runPreflight('.') call below leaves `audit` at its default (on)
@@ -10,11 +13,19 @@ describe('Contract Tests - JSON Output Stability', () => {
   // no test here depends on network availability (see src/checks/audit.ts's
   // npmAuditRunner test seam).
   let restoreNpmAudit: () => void;
+  // Every runPreflight('.') call below also runs lint/typecheck/audit
+  // against the live repo; a failing check's output is persisted via
+  // persistFailureOutput(), which falls back to the real
+  // ~/.agent-preflight/logs when no logDir is given (see the
+  // ShellCheckOptions.logDir docblock in src/checks/shared.ts).
+  let logDir: string;
   beforeEach(() => {
     restoreNpmAudit = mockNpmAuditClean();
+    logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preflight-contract-logs-'));
   });
   afterEach(() => {
     restoreNpmAudit();
+    fs.rmSync(logDir, { recursive: true, force: true });
   });
 
   // All tests in this suite may run lint/checks — increase timeout for CI runners
@@ -24,6 +35,7 @@ describe('Contract Tests - JSON Output Stability', () => {
         lint: true,
         typecheck: false,
       },
+      logDir,
     };
 
     const result: PreflightResult = await runPreflight('.', config);
@@ -62,6 +74,7 @@ describe('Contract Tests - JSON Output Stability', () => {
         commitConvention: true,
         secretDetection: true,
       },
+      logDir,
     };
 
     const result = await runPreflight('.', config);
@@ -92,6 +105,7 @@ describe('Contract Tests - JSON Output Stability', () => {
         lint: true,
         typecheck: true,
       },
+      logDir,
     };
 
     const result = await runPreflight('.', config);
@@ -115,6 +129,7 @@ describe('Contract Tests - JSON Output Stability', () => {
         secretDetection: true,
         commitConvention: true,
       },
+      logDir,
     };
 
     // Run twice with same config
@@ -132,6 +147,7 @@ describe('Contract Tests - JSON Output Stability', () => {
         ciSimulation: false,
         secretDetection: true,
       },
+      logDir,
     };
 
     const result = await runPreflight('.', config);
@@ -154,6 +170,7 @@ describe('Contract Tests - JSON Output Stability', () => {
         lint: true,
         audit: true,
       },
+      logDir,
     };
 
     const result = await runPreflight('.', config);
@@ -173,6 +190,7 @@ describe('Contract Tests - JSON Output Stability', () => {
       checks: {
         lint: true,
       },
+      logDir,
     };
 
     const result = await runPreflight('.', config);
@@ -186,7 +204,7 @@ describe('Contract Tests - JSON Output Stability', () => {
   });
 
   it('should maintain timestamp ISO 8601 format', async () => {
-    const config = {};
+    const config = { logDir };
     const result = await runPreflight('.', config);
 
     // Timestamp should be valid ISO 8601
@@ -202,6 +220,7 @@ describe('Contract Tests - JSON Output Stability', () => {
       checks: {
         secretDetection: true,
       },
+      logDir,
     };
 
     const result = await runPreflight('.', config);
@@ -220,6 +239,7 @@ describe('Contract Tests - JSON Output Stability', () => {
         secretDetection: true,
         commitConvention: true,
       },
+      logDir,
     };
 
     const result = await runPreflight('.', config);
