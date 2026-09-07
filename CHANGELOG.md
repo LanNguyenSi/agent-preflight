@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-07
+
 ### Added
 
 - **`PREFLIGHT_LOG_DIR` environment variable overrides the default
