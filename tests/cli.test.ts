@@ -72,25 +72,31 @@ function makeNotReadyResult(): PreflightResult {
  * Returns a promise that resolves once process.exit has been (or reliably
  * will not be) called.
  *
- * The `run --json` path (see `writeJsonAndExit` in src/cli.ts) calls
- * `process.exit` from inside a `process.stdout.write` callback, deferred
- * to flush the JSON payload before the process tears down (task 0089e6f5:
- * an immediate `process.exit` right after the write could truncate a
- * payload larger than the OS pipe buffer). That callback fires on a later
- * microtask, after this function's `parseAsync` call already resolves (the
- * action itself returns synchronously right after scheduling the write), so
- * `process.exit` is neither mocked to throw nor assumed to have run yet by
- * the time `parseAsync` settles: a couple of microtask turns are flushed
- * below before inspecting `capturedCode`. Every current process.exit call
- * site is the last statement in its branch, so a non-throwing mock never
- * lets unrelated code run past it.
+ * The `run --json` and `batch --json` paths (see `writeJsonAndExit` in
+ * src/cli.ts) call `process.exit` from inside a `process.stdout.write`
+ * callback, deferred to flush the JSON payload before the process tears
+ * down (task 0089e6f5: an immediate `process.exit` right after the write
+ * could truncate a payload larger than the OS pipe buffer). That callback
+ * fires on a later microtask, after this function's `parseAsync` call
+ * already resolves (the action itself returns synchronously right after
+ * scheduling the write), so `process.exit` is neither mocked to throw nor
+ * assumed to have run yet by the time `parseAsync` settles: a couple of
+ * microtask turns are flushed below before inspecting `capturedCode`.
+ *
+ * The mock captures only the FIRST `process.exit` call (first-wins) and
+ * does not throw. Not every branch's `process.exit` call is the last
+ * statement in it purely by inspection (a non-throwing mock lets whatever
+ * follows keep running rather than stopping the action there, the way a
+ * real `process.exit` would), so first-wins is what actually pins the
+ * captured code to the call the action intended, independent of whether a
+ * later statement in the same branch also happens to call `process.exit`.
  */
 async function runCommand(args: string[]): Promise<{ exitCode: number | undefined; stdout: string }> {
   let capturedCode: number | undefined;
   const logLines: string[] = [];
 
   const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-    capturedCode = code;
+    if (capturedCode === undefined) capturedCode = code;
     return undefined as never;
   }) as typeof process.exit);
   const consoleSpy = vi.spyOn(console, "log").mockImplementation((...logArgs: unknown[]) => {
@@ -396,33 +402,96 @@ describe("sandbox command", () => {
   });
 });
 
-// ── writeJsonAndExit: EPIPE handling (task 0089e6f5) ──────────────────────────
+// ── writeJsonAndExit: write-outcome handling (task 0089e6f5) ──────────────────
 //
-// `run --json`'s exit path now waits for the stdout write callback before
-// exiting (see the docblock on writeJsonAndExit in src/cli.ts), so that a
-// payload larger than the OS pipe buffer is fully flushed before the process
-// tears down. That write can itself fail with EPIPE when the reader on the
-// other end of the pipe closes early (e.g. `preflight run --json | head -c
-// 100`); Node has no default handler for a stream 'error' event, so an
-// unhandled EPIPE would otherwise crash the process with a non-deterministic
-// exit code instead of the one the CLI's own ready/not-ready contract
-// intends. These tests exercise writeJsonAndExit directly against a mocked
-// process.stdout, since reproducing a real EPIPE through an actual OS pipe
-// is a race that this repo's own sandboxed test runner cannot reliably force
-// (see the implementer's report for task 0089e6f5 for what was tried).
-describe("writeJsonAndExit: EPIPE handling", () => {
-  it("exits with the intended code when the write fails with EPIPE, instead of crashing or swallowing it", () => {
+// `run --json` and `batch --json`'s exit path now waits for the stdout write
+// callback before exiting (see the docblock on writeJsonAndExit in
+// src/cli.ts), so that a payload larger than the OS pipe buffer is fully
+// flushed before the process tears down. Direct measurement (Node 26, macOS,
+// 25 runs across four reader shapes) found that a real EPIPE, from a reader
+// that closes its end of the pipe early (e.g. `preflight run --json | head -c
+// 100`), always arrives at the WRITE CALLBACK's own `err` argument, so that
+// is the case exercised as the production path below. The `process.stdout`
+// 'error' event is exercised too, but only as the defensive fallback it
+// actually is on the measured platforms: a callback that is never invoked at
+// all.
+describe("writeJsonAndExit: write-outcome handling", () => {
+  function mockWriteInvokingCallbackWith(err: NodeJS.ErrnoException | undefined) {
+    return vi.spyOn(process.stdout, "write").mockImplementation(((
+      _chunk: unknown,
+      encodingOrCallback?: unknown,
+      maybeCallback?: unknown
+    ) => {
+      const callback = typeof encodingOrCallback === "function" ? encodingOrCallback : maybeCallback;
+      if (typeof callback === "function") {
+        queueMicrotask(() => (callback as (writeErr?: NodeJS.ErrnoException) => void)(err));
+      }
+      return true;
+    }) as typeof process.stdout.write);
+  }
+
+  it("keeps the intended exit code when the write callback receives an EPIPE error (the measured production path)", async () => {
     let capturedCode: number | undefined;
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       capturedCode = code;
       return undefined as never;
     }) as typeof process.exit);
-    // Simulates a reader that closed the pipe before the payload was fully
-    // written: the write never calls its success callback, only the stream's
-    // 'error' event fires (Node's real EPIPE behavior for a broken pipe).
+    const epipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    const writeSpy = mockWriteInvokingCallbackWith(epipeError);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      writeJsonAndExit({ ready: false }, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(capturedCode).toBe(1);
+      expect(stderrSpy).not.toHaveBeenCalled();
+    } finally {
+      writeSpy.mockRestore();
+      exitSpy.mockRestore();
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("writes a one-line diagnostic and exits non-zero when the write callback receives a non-EPIPE error", async () => {
+    let capturedCode: number | undefined;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      capturedCode = code;
+      return undefined as never;
+    }) as typeof process.exit);
+    const enospcError = Object.assign(new Error("write ENOSPC"), { code: "ENOSPC" });
+    const writeSpy = mockWriteInvokingCallbackWith(enospcError);
+    const stderrLines: string[] = [];
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+      stderrLines.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+
+    try {
+      writeJsonAndExit({ ready: true }, 0);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(capturedCode).toBe(1);
+      expect(stderrLines.join("")).toContain("write ENOSPC");
+    } finally {
+      writeSpy.mockRestore();
+      exitSpy.mockRestore();
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("exits with the intended code on a process.stdout 'error' event when the write callback is never invoked (defensive fallback)", () => {
+    let capturedCode: number | undefined;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      capturedCode = code;
+      return undefined as never;
+    }) as typeof process.exit);
+    // Simulates a platform/Node version where the write callback is never
+    // invoked at all and only the stream's 'error' event fires.
     const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation((() => true) as typeof process.stdout.write);
 
-    const errorListenersBefore = process.stdout.listeners("error");
     try {
       writeJsonAndExit({ ready: false }, 1);
       const epipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
@@ -430,12 +499,6 @@ describe("writeJsonAndExit: EPIPE handling", () => {
 
       expect(capturedCode).toBe(1);
     } finally {
-      // writeJsonAndExit registers a fresh "error" listener on the real,
-      // shared process.stdout on every call; remove exactly the one this
-      // test added so repeated runs don't accumulate listeners on the
-      // process-wide stream.
-      const addedListeners = process.stdout.listeners("error").filter((l) => !errorListenersBefore.includes(l));
-      addedListeners.forEach((l) => process.stdout.removeListener("error", l as (...args: unknown[]) => void));
       writeSpy.mockRestore();
       exitSpy.mockRestore();
     }
@@ -447,21 +510,30 @@ describe("writeJsonAndExit: EPIPE handling", () => {
       capturedCode = code;
       return undefined as never;
     }) as typeof process.exit);
-    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(((
-      _chunk: unknown,
-      encodingOrCallback?: unknown,
-      maybeCallback?: unknown
-    ) => {
-      const callback = typeof encodingOrCallback === "function" ? encodingOrCallback : maybeCallback;
-      if (typeof callback === "function") queueMicrotask(() => (callback as () => void)());
-      return true;
-    }) as typeof process.stdout.write);
+    const writeSpy = mockWriteInvokingCallbackWith(undefined);
 
     try {
       writeJsonAndExit({ ready: true }, 0);
       await Promise.resolve();
       await Promise.resolve();
       expect(capturedCode).toBe(0);
+    } finally {
+      writeSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+  });
+
+  it("leaves no residual 'error' listener on process.stdout after exiting (once-registered, removed on finish)", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as unknown as typeof process.exit);
+    const writeSpy = mockWriteInvokingCallbackWith(undefined);
+    const listenerCountBefore = process.stdout.listenerCount("error");
+
+    try {
+      writeJsonAndExit({ ready: true }, 0);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(process.stdout.listenerCount("error")).toBe(listenerCountBefore);
     } finally {
       writeSpy.mockRestore();
       exitSpy.mockRestore();

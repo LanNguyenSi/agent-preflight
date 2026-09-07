@@ -9,10 +9,10 @@ import { VERSION } from "./version.js";
 import type { PreflightConfig } from "./types.js";
 
 /**
- * Writes `payload` as pretty-printed JSON to stdout, then exits with
- * `exitCode` only once that write has actually reached the OS (the write
- * callback), instead of calling `process.exit` immediately after
- * `console.log`.
+ * Writes `payload` as pretty-printed JSON to stdout (used by both `run
+ * --json` and `batch --json`), then exits only once that write's own
+ * completion callback has run, instead of calling `process.exit`
+ * immediately after `console.log`.
  *
  * `console.log`/`process.stdout.write` to a pipe is asynchronous: a payload
  * larger than the OS pipe buffer (commonly 64 KB) only has its first chunk
@@ -21,35 +21,56 @@ import type { PreflightConfig } from "./types.js";
  * `process.exit` right after `console.log` tears the process down before
  * that queued remainder is ever written, so a reader on the other end of the
  * pipe sees a cut-off, unparseable JSON document. Waiting for the write
- * callback guarantees the whole payload has been handed to the OS first.
+ * callback guarantees the whole payload has been handed to the OS first,
+ * which also means a consumer piping either command's `--json` output must
+ * read stdout concurrently with the process running: the process no longer
+ * exits before the reader has drained (or closed) the pipe.
  *
  * If the reader closes the pipe early (`... | head -c 100`), the write
- * itself fails with EPIPE. That surfaces as an `error` event on
- * `process.stdout` (not necessarily the write callback), which Node has no
- * default handler for and would otherwise crash the process with an
- * uncaught "write EPIPE" exception and a non-deterministic exit code. The
- * `error` listener here swallows exactly that case and still exits with the
- * intended `exitCode`, so a reader that stops reading early does not change
- * the process's exit status.
+ * itself fails with EPIPE. Measured directly (Node 26, macOS; 25 runs
+ * across four reader shapes: `| head -c 100`, `| true`, a reader that
+ * closes its end before any data arrives, and a reader that reads one byte
+ * then closes): every run delivered the EPIPE to the WRITE CALLBACK's own
+ * `err` argument, never as a `process.stdout` 'error' event. The intended
+ * exit code is kept for an EPIPE either way it is observed. The
+ * `process.stdout.once("error", ...)` listener below is a defensive guard
+ * only, for a platform or Node version where the callback itself is never
+ * invoked; it is not the path a real EPIPE takes on the platforms this was
+ * measured against.
+ *
+ * Any OTHER write failure (e.g. ENOSPC, EIO) is not swallowed as if it were
+ * a clean write: it writes a one-line diagnostic to stderr and exits
+ * non-zero, rather than silently keeping the caller's intended exit code or
+ * crashing the process with an uncaught exception.
  */
 export function writeJsonAndExit(payload: unknown, exitCode: number): void {
   let exited = false;
-  const exitOnce = () => {
+
+  const finish = (code: number) => {
     if (exited) return;
     exited = true;
-    process.exit(exitCode);
+    process.stdout.removeListener("error", onError);
+    process.exit(code);
   };
 
-  process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+  const handleWriteFailure = (err: NodeJS.ErrnoException): void => {
     if (err && err.code === "EPIPE") {
-      exitOnce();
+      finish(exitCode);
       return;
     }
-    throw err;
-  });
+    process.stderr.write(`preflight: failed to write JSON output: ${err?.message ?? err}\n`);
+    finish(1);
+  };
 
-  process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`, () => {
-    exitOnce();
+  const onError = (err: NodeJS.ErrnoException) => handleWriteFailure(err);
+  process.stdout.once("error", onError);
+
+  process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`, (err) => {
+    if (err) {
+      handleWriteFailure(err as NodeJS.ErrnoException);
+      return;
+    }
+    finish(exitCode);
   });
 }
 
@@ -147,8 +168,8 @@ export function createProgram(): Command {
       );
 
       if (opts.json) {
-        console.log(JSON.stringify(batchResult, null, 2));
-        process.exit(batchResult.notReady > 0 ? 1 : 0);
+        writeJsonAndExit(batchResult, batchResult.notReady > 0 ? 1 : 0);
+        return;
       }
 
       console.log(`\n📦 Batch preflight: ${resolvedRoot}`);
