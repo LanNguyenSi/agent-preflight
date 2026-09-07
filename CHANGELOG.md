@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Docs
+
+- **Package-level partial-build rule, item 1: checked-in source declared as
+  an artifact stays a documented cost, a narrower rule was tried and
+  rejected.** A directory a package declares an artifact in that is actually
+  checked-in source (an oclif-style `bin/` launcher beside a real `dist/`,
+  an `exports` target inside a source tree) still counts as build output and
+  blocks a never-built package; that cost stays open, no opt-out was added
+  for it. A candidate fix -- exclude a directory from the read whenever it
+  holds a git-tracked file -- was tried and rejected on the argument that
+  actually holds: a tracked-file test cannot distinguish a checked-in source
+  directory from a checked-in build-output directory (a committed `dist/`,
+  a committed symlink standing in for one, a committed `.keep` placeholder
+  that lets git carry an otherwise empty output directory), so a repository
+  that commits its output would turn its blocking `fail` into the named
+  `skip`, the exact false-green class this rule exists to prevent. An
+  earlier draft of this rejection cited a flip count from a corpus of this
+  package's fixtures and hand-built reproduction cases; that count is
+  retracted: the corpus driver runs `git init && git add -A` with no
+  `.gitignore` for any case, so every output directory already present
+  before the build is git-tracked by construction, and the count measured
+  "output directory present before the build" rather than "output
+  directory checked in". Under realistic ignore rules the flips that
+  survive are the checked-in stand-in shapes (a committed symlink or a
+  committed file where the output directory belongs), the same class the
+  argument above names; the exact count depends on the ignore-pattern
+  convention and on where the filter sits, and is recorded with those
+  parameters in the run files, not here. A narrower
+  rule (tracked, AND not `.gitignore`d, AND another declared output
+  directory of the same package is populated) was not measured and is not
+  claimed to work. No production code changed.
+
+- **Package-level partial-build rule, item 2: a declared output directory a
+  build never fills stays a documented cost, no opt-out added.** An optional
+  CSS export, a `types` directory a JavaScript-only build never writes, and
+  similar shapes make the precondition hold forever no matter what else the
+  package holds. No per-declaration opt-out was added to `.preflight.json`
+  for it: every instance of the shape in this package's fixtures and
+  hand-built reproduction cases was constructed to exercise this rule (the
+  `single-package-second-output-dir` fixture and its reproduction
+  siblings), no organically occurring instance is known, and one hand-built
+  family does not by itself justify a `.preflight.json` surface; the cost
+  is closed by fixing the declaration.
+  No production code changed.
+
+- **Package-level partial-build rule, item 3: the unreadable-output message
+  is now pinned for `EACCES`, not only `ENOTDIR`.** A unit test chmods a real
+  output directory unreadable (skipped when running as root, or when the
+  platform does not enforce the mode) and asserts the message names
+  `EACCES`. No production code changed: the message already carries whatever
+  errno it observed.
+
+- **Package-level partial-build rule, item 4: two declared output
+  directories sharing a basename are now pinned as a unit case.** `a/dist`
+  and `b/dist` under different parents are read as two separate
+  directories, guarding against a future dedupe-by-basename regression. No
+  production code changed: `packageOutputDirs` already dedupes by the full
+  relative path, not `path.basename`.
+
 ### Added
 
 - **`--setup` builds the repo before the test check when CI shows build-before-test** (agent-tasks c5810885). `ensureProjectSetup` (`src/checks/shared.ts`) runs `npm run build` when both hold: `package.json` has a `build` script, AND `.github/workflows/ci.yml` has a `run:` step invoking `npm run build`/`yarn build`/`pnpm build` earlier in the file than a step invoking the test script (`ciShowsBuildBeforeTest`/`workflowTextShowsBuildBeforeTest`). This is a best-effort, single-file, line-order read, not an Actions execution-graph evaluator: reusable workflows, job `needs:` graphs, and `run: |` block scalars are not modeled, and a build step in an unrelated job still reads as "before" a later test job. A miss costs only the extra manual `npm run build` this feature exists to avoid (`--setup` then behaves exactly as before, dependency install only); a false hit costs only a redundant rebuild. A `run:` step whose value is itself a shell comment, or that only echoes a string, is recognized and skipped. The build step has its own wall-clock budget, 300000 ms by default, overridable with the new `setup.buildTimeoutMs` in `.preflight.json` (the dependency-install setup commands keep their shared 120000 ms). A build that exits non-zero keeps the downstream test failure a blocking `fail` naming the exit code and the persisted build log; a build that exhausts the budget leaves the test check "not evaluated" (the named `skip` plus a limitation), never a blocker; after a successful build, any test failure is a genuine blocker. Trust boundary, documented in the README's Security note and `docs/checks.md`: under `--setup`, a `run:` line in the target repo's own workflow file decides whether that repo's `build` script executes locally, so `--setup` belongs only on repositories you already trust to run.
