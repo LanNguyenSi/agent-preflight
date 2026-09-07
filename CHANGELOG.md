@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   for it: a corpus of real and fixture repositories turned up no case of it
   beyond the fixture that already pins it. No production code changed.
 
+- **Package-level partial-build rule, item 3: the unreadable-output message
+  is now pinned for `EACCES`, not only `ENOTDIR`.** A unit test chmods a real
+  output directory unreadable (skipped when running as root, or when the
+  platform does not enforce the mode) and asserts the message names
+  `EACCES`. No production code changed: the message already carries whatever
+  errno it observed.
+
 ### Added
 
 - **`--setup` builds the repo before the test check when CI shows build-before-test** (agent-tasks c5810885). `ensureProjectSetup` (`src/checks/shared.ts`) runs `npm run build` when both hold: `package.json` has a `build` script, AND `.github/workflows/ci.yml` has a `run:` step invoking `npm run build`/`yarn build`/`pnpm build` earlier in the file than a step invoking the test script (`ciShowsBuildBeforeTest`/`workflowTextShowsBuildBeforeTest`). This is a best-effort, single-file, line-order read, not an Actions execution-graph evaluator: reusable workflows, job `needs:` graphs, and `run: |` block scalars are not modeled, and a build step in an unrelated job still reads as "before" a later test job. A miss costs only the extra manual `npm run build` this feature exists to avoid (`--setup` then behaves exactly as before, dependency install only); a false hit costs only a redundant rebuild. A `run:` step whose value is itself a shell comment, or that only echoes a string, is recognized and skipped. The build step has its own wall-clock budget, 300000 ms by default, overridable with the new `setup.buildTimeoutMs` in `.preflight.json` (the dependency-install setup commands keep their shared 120000 ms). A build that exits non-zero keeps the downstream test failure a blocking `fail` naming the exit code and the persisted build log; a build that exhausts the budget leaves the test check "not evaluated" (the named `skip` plus a limitation), never a blocker; after a successful build, any test failure is a genuine blocker. Trust boundary, documented in the README's Security note and `docs/checks.md`: under `--setup`, a `run:` line in the target repo's own workflow file decides whether that repo's `build` script executes locally, so `--setup` belongs only on repositories you already trust to run.

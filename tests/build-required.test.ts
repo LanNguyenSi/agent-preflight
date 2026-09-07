@@ -1486,6 +1486,49 @@ describe("the package-level partial-build rule (unit)", () => {
       }
     });
   });
+
+  // Task bf67cf98, item 3: the unreadable-output message names the errno it
+  // actually observed. Only ENOTDIR (a `dist` that is a file) had a fixture;
+  // this pins EACCES the same way, from a directory that really cannot be
+  // read rather than a mocked error, so a mutant that hardcodes ENOTDIR (or
+  // drops the code from the message) is caught. Skipped where the state
+  // cannot be produced: running as root (which ignores the permission bits),
+  // or a filesystem/container that leaves the directory readable anyway.
+  it("pins EACCES separately from ENOTDIR in the unreadable-output message", () => {
+    if (typeof process.getuid === "function" && process.getuid() === 0) {
+      return;
+    }
+    withTempPackage(
+      {
+        "package.json": pkg({ name: "x", main: "dist/index.js", scripts: { build: "node build.js" } }),
+        "dist/index.js": "module.exports = {};\n",
+      },
+      (dir) => {
+        const distDir = path.join(dir, "dist");
+        fs.chmodSync(distDir, 0o000);
+        try {
+          let readable = true;
+          try {
+            fs.readdirSync(distDir);
+          } catch {
+            readable = false;
+          }
+          if (readable) {
+            // The platform does not enforce the mode (some containers run
+            // privileged, some filesystems ignore it); the case cannot be
+            // produced here.
+            return;
+          }
+          const result = classify(dir, "Error: Cannot find module './dist/index.js'");
+          expect(result.downgrade).toBe(false);
+          expect(result.note).toMatch(/build output directory \(dist\) of this repo could not be read \(EACCES\)/);
+          expect(result.note).not.toMatch(/ENOTDIR/);
+        } finally {
+          fs.chmodSync(distDir, 0o755);
+        }
+      }
+    );
+  });
 });
 
 // The second, message-only mode: no artifact to anchor to (the precondition
