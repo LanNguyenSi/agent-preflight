@@ -1672,13 +1672,45 @@ function outputLines(output: string | undefined): string[] | undefined {
 }
 
 // Default location for the full-output logs written by `computeFailureDetails`
-// when a caller of `runShellCheck` does not override `ShellCheckOptions.logDir`.
+// when a caller of `runShellCheck` does not override `ShellCheckOptions.logDir`
+// (i.e. `.preflight.json`'s `logDir` was not set — that value is resolved
+// ahead of this function, in runner.ts, and always wins when present, see
+// `runner.ts`'s `configuredLogDir`/`effectiveConfig` handling around its own
+// `runPreflight` entry point).
+//
+// Precedence (task 2e8bcc7e): `.preflight.json` `logDir` > `PREFLIGHT_LOG_DIR`
+// env var > `~/.agent-preflight/logs`. The env var exists so a CLI run
+// against a scratch fixture, or a parallel worktree sharing `$HOME` with
+// other agent-preflight checkouts, can be pointed at an isolated log
+// directory without editing or generating a `.preflight.json` for the
+// fixture. Only an ABSOLUTE path is honored: a relative value is ambiguous
+// (relative to what — `process.cwd()`? the repo root?) in a way `.preflight.json`'s
+// `logDir` is not (that one is deliberately resolved against `repoPath`, see
+// runner.ts), so a relative `PREFLIGHT_LOG_DIR` is rejected with a warning on
+// the same `console.warn("[preflight] Warning: ...")` channel `config.ts`'s
+// `loadConfig` already uses for `.preflight.json` diagnostics, rather than
+// silently guessing a base directory. An empty value (`PREFLIGHT_LOG_DIR=`)
+// is treated the same as an unset variable — silently falling back to the
+// home-based default — since shells and `.env` loaders commonly export an
+// empty string without meaning to override anything, and warning on that
+// would be noisier than useful.
+//
 // Kept as a function (not a module-level constant) so it always reflects the
-// current `os.homedir()` rather than a value captured at import time — and
-// resolved LAZILY inside persistFailureOutput's try, so even a throwing
-// os.homedir() degrades to the outputLines() fallback instead of escaping
-// the check path (the never-throw invariant covers this seam too).
+// current `os.homedir()`/`process.env.PREFLIGHT_LOG_DIR` rather than a value
+// captured at import time — and resolved LAZILY inside persistFailureOutput's
+// try, so even a throwing os.homedir() degrades to the outputLines() fallback
+// instead of escaping the check path (the never-throw invariant covers this
+// seam too).
 function defaultLogDir(): string {
+  const override = process.env.PREFLIGHT_LOG_DIR;
+  if (override !== undefined && override !== "") {
+    if (path.isAbsolute(override)) {
+      return override;
+    }
+    console.warn(
+      `[preflight] Warning: PREFLIGHT_LOG_DIR is set to a relative path (${override}); ignoring it and falling back to the default log directory.`
+    );
+  }
   return path.join(os.homedir(), ".agent-preflight", "logs");
 }
 

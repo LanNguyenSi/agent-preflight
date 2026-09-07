@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`PREFLIGHT_LOG_DIR` environment variable overrides the default
+  failure-log directory (task 2e8bcc7e).** `defaultLogDir()` now honours
+  `PREFLIGHT_LOG_DIR` when set to an absolute path, sitting between
+  `.preflight.json`'s `logDir` (still highest precedence) and the
+  `~/.agent-preflight/logs` default. A relative value is ignored with a
+  warning naming the variable; an empty value is treated as unset. Lets a
+  CLI run against a scratch fixture, or a parallel worktree sharing `$HOME`
+  with other checkouts, isolate its failure logs without a `.preflight.json`
+  edit. See README's log directory section for the full precedence table.
+
 ## [0.6.0] - 2026-09-07
 
 ### Docs
