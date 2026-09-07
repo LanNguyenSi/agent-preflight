@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-07
+
 ### Docs
 
 - **Package-level partial-build rule, item 1: checked-in source declared as
