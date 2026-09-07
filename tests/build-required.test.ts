@@ -1529,6 +1529,37 @@ describe("the package-level partial-build rule (unit)", () => {
       }
     );
   });
+
+  // Task bf67cf98, item 4: two declared output directories that share a
+  // basename under different parents must be read as two directories, not
+  // collapsed into one. a/dist holds the entry that makes the package
+  // partially built; b/dist (a DIFFERENT directory, absent) owns the
+  // artifact the failure names. A dedupe-by-basename mutant
+  // (`path.basename` instead of the full relative path) drops a/dist -- the
+  // one holding the entry -- from the read, mistakes the package for
+  // unbuilt, and downgrades.
+  it("reads two declared output directories that share a basename separately", () => {
+    withTempPackage(
+      {
+        "package.json": pkg({
+          name: "x",
+          exports: { ".": "./a/dist/index.js", "./other": "./b/dist/other.js" },
+          scripts: { build: "node build.js" },
+        }),
+        "a/dist/index.js": "module.exports = {};\n",
+      },
+      (dir) => {
+        const state = evaluatePartialBuild(dir);
+        expect(state.partiallyBuilt).toBe(true);
+        expect(state.evidence?.dir.replace(/^\.\//, "")).toBe("a/dist");
+
+        const result = classify(dir, "Error: Cannot find module './b/dist/other.js'");
+        expect(result.downgrade).toBe(false);
+        expect(result.note).toMatch(/build output directory \(a\/dist\) of this repo exists and is not empty/);
+        expect(result.note).toMatch(/b\/dist\/other\.js/);
+      }
+    );
+  });
 });
 
 // The second, message-only mode: no artifact to anchor to (the precondition
