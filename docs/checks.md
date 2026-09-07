@@ -28,7 +28,7 @@ Every check `agent-preflight` can run, what it verifies, and when it fires. Each
   stays visible with its own status and the waiver's reason (see the
   README's "Waiving a permanently-failing check" section).
 
-`clean-worktree` is a blocker because local modifications make the result diverge from what will actually be pushed. `protected-branch` is a warning because direct-push workflows still exist. Under `--setup`, `clean-worktree` still blocks on any change that predates setup, but never on output setup itself produced (untracked or modified files that are not gitignored are named in the check's `details` and in a `limitations` entry instead) — see "Setup phase" below.
+`clean-worktree` is a blocker because local modifications make the result diverge from what will actually be pushed. `protected-branch` is a warning because direct-push workflows still exist. Under `--setup`, `clean-worktree` still blocks on any change that predates setup, and still blocks on a tracked file setup modifies or removes; only untracked output setup itself produced is excused (named in the check's `details`, shown by `--json` and MCP, and in a `limitations` entry shown by the CLI, instead of blocking) -- see "Setup phase" below.
 
 ## Auto-detection
 
@@ -135,7 +135,7 @@ Optional bootstrap before checks. Enable with `--setup` or `setup.enabled: true`
 
 The setup phase is intentionally conservative. It only runs when the project files make the step unambiguous. For specialized setups, use explicit `commands.*` overrides.
 
-`--setup`'s own `npm ci`/build output does not fail `clean-worktree`: the runner snapshots `git status --porcelain` before the setup phase runs, and `clean-worktree` judges the check against that snapshot instead of the current state. A change present in the snapshot (predates setup) still fails the check exactly as it always has; a change absent from the snapshot (produced by setup) does not — it stays a `pass`, with the produced paths named in the check's `details` and in a `limitations` entry recommending `.gitignore`. If the snapshot itself could not be taken (a git error), the check falls back to comparing the full current diff and adds a `limitations` entry saying so. See the README's "`--setup` can run the build for you" section.
+`--setup`'s own `npm ci`/build output does not always fail `clean-worktree`: the runner snapshots `git status --porcelain` before the setup phase runs, and `clean-worktree` judges the check against that snapshot instead of the current state. A change present in the snapshot (predates setup) still fails the check exactly as it always has. Of the paths absent from the snapshot (produced by setup), only UNTRACKED ones are excused: `clean-worktree` stays a `pass`, with the produced paths named in the check's `details` (`--json`/MCP) and in a `limitations` entry (shown by the CLI) recommending `.gitignore`. A TRACKED path setup modified or removed (a committed build artifact the build step rewrote) still fails, naming the paths and recommending they be committed or untracked, with no `.gitignore` suggestion. If the snapshot itself could not be taken (a git error), the check falls back to comparing the full current diff and adds a `limitations` entry saying so. See the README's "`--setup` can run the build for you" section.
 
 ## Behavior notes
 

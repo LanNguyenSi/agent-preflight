@@ -84,6 +84,43 @@ describe("clean-worktree under --setup (fixture: monorepo-build-required)", () =
     });
   });
 
+  it("F1: still fails clean-worktree under --setup when the build rewrites a TRACKED file (committed dist/index.js), naming that setup modified it", async () => {
+    await withFixture("monorepo-build-required", async (repoPath, logDir) => {
+      // Commit a stale dist/index.js as if it had been checked in
+      // deliberately (or left over from a previous, un-gitignored build).
+      // The fixture's build.js always overwrites this file with different
+      // content, so once `--setup` reruns the build this tracked file
+      // changes under git's feet -- untracked-output logic must not
+      // excuse that (review finding F1).
+      const distDir = path.join(repoPath, "packages", "needs-build", "dist");
+      fs.mkdirSync(distDir, { recursive: true });
+      fs.writeFileSync(path.join(distDir, "index.js"), "module.exports = { hello: () => \"stale\" };\n", "utf8");
+      execSync("git add packages/needs-build/dist/index.js", { cwd: repoPath });
+      execSync('git commit -qm "checked-in stale dist"', { cwd: repoPath });
+
+      const result = await runPreflight(repoPath, {
+        checks: CLEAN_WORKTREE_CHECKS,
+        logDir,
+        setup: { enabled: true },
+      });
+
+      // The build really did rewrite the tracked file's content (otherwise
+      // this test proves nothing about the interaction under test).
+      const rebuilt = fs.readFileSync(path.join(distDir, "index.js"), "utf8");
+      expect(rebuilt).not.toContain("stale");
+
+      const check = cleanWorktreeCheckOf(result);
+      expect(check?.status).toBe("fail");
+      expect(check?.message).toBe("--setup modified or removed tracked files");
+      expect(result.ready).toBe(false);
+      expect(result.blockers).toContain("--setup modified or removed tracked files");
+
+      const checkText = `${check?.message ?? ""} ${(check?.details ?? []).join(" ")}`;
+      expect(checkText).toContain("needs-build");
+      expect(checkText).not.toContain(".gitignore");
+    });
+  });
+
   it("still fails clean-worktree under --setup when the worktree was dirty BEFORE setup ran (negative control)", async () => {
     await withFixture("monorepo-build-required", async (repoPath, logDir) => {
       // Dirty a tracked file before setup runs at all.

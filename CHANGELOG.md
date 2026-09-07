@@ -29,22 +29,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- **`--setup`'s own install/build output no longer fails `clean-worktree`
-  (task b16ab5d8).** `ensureProjectSetup` (`npm ci`, the build step) writes
-  into the target worktree, and when the repo does not gitignore that
-  output the tool's own `clean-worktree` check would then fail on the
-  files `--setup` had just created, flipping `ready` to `false` for no
-  real reason. `runPreflight` now snapshots `git status --porcelain`
-  before `ensureProjectSetup` runs, and `runCleanWorktreeCheck` judges the
-  check against that snapshot: a change present before setup still fails
-  the check exactly as before, a change setup itself produced does not —
-  it stays a `pass`, with the produced paths named in the check's
-  `details` and in a `limitations` entry recommending `.gitignore`.
-  Without `--setup`, or when the snapshot itself could not be taken (a
-  git error, flagged via its own `limitations` entry), the check's
-  behaviour is unchanged. See README's "`--setup` can run the build for
-  you" section and `docs/checks.md`'s git-state row and Setup phase
-  section.
+- **`--setup`'s own untracked install/build output no longer fails
+  `clean-worktree`; a tracked file it modifies still does (task b16ab5d8,
+  round 2: review finding F1).** `ensureProjectSetup` (`npm ci`, the build
+  step) writes into the target worktree, and when the repo does not
+  gitignore that output the tool's own `clean-worktree` check would then
+  fail on the files `--setup` had just created, flipping `ready` to
+  `false` for no real reason. `runPreflight` now snapshots `git status
+  --porcelain -z` before `ensureProjectSetup` runs, and
+  `runCleanWorktreeCheck` judges the check against that snapshot: a change
+  present before setup still fails the check exactly as before. Of the
+  paths absent from the snapshot (produced by setup), only UNTRACKED ones
+  are excused, staying a `pass`, with the produced paths named in the
+  check's `details` (`--json` and MCP) and in a `limitations` entry (shown
+  by the CLI) recommending `.gitignore`. A TRACKED path setup modified or
+  removed (a committed `dist/` file the build rewrote, `package-lock.json`
+  rewritten by `npm ci`) still fails, naming the paths and recommending
+  they be committed or untracked, with no `.gitignore` suggestion. Without
+  `--setup`, or when the snapshot itself could not be taken (a git error,
+  flagged via its own `limitations` entry), the check's behaviour is
+  unchanged. Round 2 also moved the snapshot and its per-path comparison
+  from the newline-based `git status --porcelain` text format to `-z`
+  (NUL-separated) parsing, so a repository-controlled filename containing
+  a literal newline or a literal `" -> "` substring can no longer be
+  misread as a rename or corrupt the parsed path (review finding F4). See
+  README's "`--setup` can run the build for you" section and
+  `docs/checks.md`'s git-state row and Setup phase section.
 
 ## [0.6.0] - 2026-09-07
 

@@ -8,57 +8,106 @@ const DEFAULT_PROTECTED_BRANCHES = ["main", "master"];
 // note / limitation before collapsing the rest into a "and N more" tail.
 const MAX_NOTED_SETUP_PATHS = 10;
 
-// A `git status --porcelain` snapshot of `repoPath`, taken by
+// A `git status --porcelain -z` snapshot of `repoPath`, taken by
 // `snapshotWorktreeState` BEFORE `--setup` runs (see runner.ts). Threaded
 // into `runGitStateChecks`/`runCleanWorktreeCheck` so the clean-worktree
 // check can tell dirt that predates `--setup` (still a blocker) apart from
-// output `--setup` itself just produced (never a blocker; see task
-// b16ab5d8). `paths: null` means the snapshot attempt itself failed (a git
-// error) -- distinct from "snapshot succeeded, worktree was clean" (an
-// empty Set) -- so the check can fall back to today's undifferentiated
-// behaviour and say so, instead of silently treating a failed snapshot as
-// "everything is pre-existing" or "everything is setup output".
+// output `--setup` itself just produced (never a blocker for untracked
+// output; still a blocker when `--setup` touched a TRACKED file -- see
+// task b16ab5d8, review finding F1). `paths: null` means the snapshot
+// attempt itself failed (a git error) -- distinct from "snapshot
+// succeeded, worktree was clean" (an empty Set) -- so the check can fall
+// back to today's undifferentiated behaviour and say so, instead of
+// silently treating a failed snapshot as "everything is pre-existing" or
+// "everything is setup output".
 export interface WorktreeSnapshot {
   paths: Set<string> | null;
 }
 
 /**
- * Snapshots `repoPath`'s `git status --porcelain` output before `--setup`
- * runs. Returns `{ paths: null }` on any git error (never throws) so a
- * caller can still proceed and flag the snapshot as unavailable rather than
- * aborting the run.
+ * Snapshots `repoPath`'s `git status --porcelain -z` output before
+ * `--setup` runs. Returns `{ paths: null }` on any git error (never
+ * throws) so a caller can still proceed and flag the snapshot as
+ * unavailable rather than aborting the run.
  */
 export async function snapshotWorktreeState(repoPath: string): Promise<WorktreeSnapshot> {
   try {
-    const { stdout } = await execa("git", ["status", "--porcelain"], { cwd: repoPath });
-    return { paths: new Set(parsePorcelainEntries(stdout).flatMap((entry) => entry.paths)) };
+    const { stdout } = await execa("git", ["status", "--porcelain", "-z"], { cwd: repoPath });
+    return { paths: new Set(parsePorcelainEntriesZ(stdout).flatMap((entry) => entry.paths)) };
   } catch {
     return { paths: null };
   }
 }
 
 interface PorcelainEntry {
-  raw: string;
-  // Usually one path; two for a rename/copy line ("R  old -> new"), since
-  // either side counts as "the same pre-existing thing" for snapshot
-  // membership purposes.
+  // The 2-char XY status prefix, e.g. "??" (untracked), " M" (modified,
+  // unstaged), "R " (renamed, staged), "!!" (ignored -- unreachable via a
+  // default `git status --porcelain` call, since that never lists ignored
+  // paths without `--ignored`; kept so a caller can still treat it like
+  // "??" if that ever changes).
+  status: string;
+  // One path, or [currentPath, fromPath] for a rename/copy record.
   paths: string[];
 }
 
-function parsePorcelainEntries(stdout: string): PorcelainEntry[] {
-  return stdout
-    .split("\n")
-    .filter((line) => line.length > 0)
-    .map((line) => {
-      // Porcelain v1: 2-char XY status + 1 space + path (or "old -> new"
-      // for a rename/copy).
-      const rest = line.slice(3);
-      if (rest.includes(" -> ")) {
-        const [oldPath, newPath] = rest.split(" -> ");
-        return { raw: line, paths: [oldPath.trim(), newPath.trim()] };
-      }
-      return { raw: line, paths: [rest.trim()] };
-    });
+// Parses `git status --porcelain -z` output: NUL-separated records instead
+// of the newline-separated `--porcelain` format's `"XY PATH"` /
+// `"XY OLD -> NEW"` text. A repository-controlled filename containing a
+// literal newline or a literal " -> " substring can no longer be misread
+// as a rename delimiter or truncate an entry (`-z` never quotes and a
+// rename record is unambiguous: two NUL-terminated fields instead of one
+// field containing " -> ") (task b16ab5d8, review finding F4).
+function parsePorcelainEntriesZ(stdout: string): PorcelainEntry[] {
+  // `-z` terminates every field with NUL, including the last one, so
+  // splitting on "\0" always leaves one trailing empty string; nothing
+  // else is ever empty (a status record is always at least "XY ").
+  const fields = stdout.split("\0");
+  if (fields.length > 0 && fields[fields.length - 1] === "") {
+    fields.pop();
+  }
+
+  const entries: PorcelainEntry[] = [];
+  let i = 0;
+  while (i < fields.length) {
+    const record = fields[i];
+    const status = record.slice(0, 2);
+    const currentPath = record.slice(3);
+
+    // A rename/copy status consumes one extra NUL-terminated field: the
+    // "from" path, carrying no status prefix of its own. Checked on
+    // either status column since git can report a rename in either
+    // position depending on staged vs. worktree comparison.
+    if (status[0] === "R" || status[0] === "C" || status[1] === "R" || status[1] === "C") {
+      const fromPath = fields[i + 1] ?? "";
+      entries.push({ status, paths: [currentPath, fromPath] });
+      i += 2;
+    } else {
+      entries.push({ status, paths: [currentPath] });
+      i += 1;
+    }
+  }
+  return entries;
+}
+
+// True when `status` (a `-z` record's 2-char XY prefix) marks the entry
+// untracked (`??`) or ignored (`!!`) -- the only statuses
+// `runCleanWorktreeCheck` excuses as harmless `--setup` output. Any other
+// status (` M`, `M `, ` D`, `A `, `R `, `C `, `MM`, ...) means git is
+// already tracking the path, so `--setup` having touched it is a real
+// content change to a committed file that `.gitignore` cannot wave away
+// (task b16ab5d8, review finding F1).
+function isUntrackedOrIgnoredStatus(status: string): boolean {
+  return status === "??" || status === "!!";
+}
+
+// Joins `names` for a check message/limitation, capping the list at
+// `MAX_NOTED_SETUP_PATHS` and folding the remainder into a "and N more"
+// tail so a repo with dozens of setup-produced paths doesn't blow up the
+// message.
+function formatNotedPaths(names: string[]): string {
+  const capped = names.slice(0, MAX_NOTED_SETUP_PATHS);
+  const remainder = names.length - capped.length;
+  return capped.join(", ") + (remainder > 0 ? `, and ${remainder} more` : "");
 }
 
 export async function runGitStateChecks(
@@ -175,6 +224,10 @@ async function runCleanWorktreeCheck(
   const start = Date.now();
 
   try {
+    // The plain (non `-z`) call this check has always used, kept
+    // byte-identical for the no-snapshot and failed-snapshot fallback
+    // paths below (tracker criterion 3; review finding F2) -- neither
+    // path needs per-path parsing, only "is the worktree dirty at all".
     const { stdout } = await execa("git", ["status", "--porcelain"], {
       cwd: repoPath,
     });
@@ -199,10 +252,15 @@ async function runCleanWorktreeCheck(
       };
     }
 
-    const currentEntries = parsePorcelainEntries(stdout);
+    // A real snapshot exists: re-inspect via `-z` for unambiguous per-path
+    // classification (parsePorcelainEntriesZ; review finding F4).
+    const { stdout: stdoutZ } = await execa("git", ["status", "--porcelain", "-z"], {
+      cwd: repoPath,
+    });
+    const currentEntries = parsePorcelainEntriesZ(stdoutZ);
     const snapshotPaths = preSetupSnapshot.paths;
     const preExisting = currentEntries.filter((entry) => entry.paths.some((p) => snapshotPaths.has(p)));
-    const setupProduced = currentEntries.filter((entry) => !entry.paths.some((p) => snapshotPaths.has(p)));
+    const produced = currentEntries.filter((entry) => !entry.paths.some((p) => snapshotPaths.has(p)));
 
     // Any change that predates `--setup` still blocks, exactly as today,
     // regardless of whether `--setup` also produced its own output.
@@ -210,18 +268,45 @@ async function runCleanWorktreeCheck(
       return { check: buildCleanWorktreeResult(true, start) };
     }
 
-    if (setupProduced.length > 0) {
-      const names = setupProduced.map((entry) => entry.paths[entry.paths.length - 1]);
-      const capped = names.slice(0, MAX_NOTED_SETUP_PATHS);
-      const remainder = names.length - capped.length;
-      const list = capped.join(", ") + (remainder > 0 ? `, and ${remainder} more` : "");
+    // Among the paths `--setup` produced, only untracked (or ignored)
+    // ones are excusable build/install output; anything git already
+    // tracks that `--setup` modified or removed (a committed `dist/`
+    // file the build rewrote, `package-lock.json` rewritten by `npm ci`)
+    // is a real content change to a committed file, not something
+    // `.gitignore` can fix, so it still blocks (review finding F1).
+    const trackedProduced = produced.filter((entry) => !isUntrackedOrIgnoredStatus(entry.status));
+    const untrackedProduced = produced.filter((entry) => isUntrackedOrIgnoredStatus(entry.status));
+
+    if (trackedProduced.length > 0) {
+      const names = trackedProduced.map((entry) => entry.paths[0]);
+      const list = formatNotedPaths(names);
+
+      return {
+        check: {
+          name: "clean-worktree",
+          kind: "git-state",
+          status: "fail",
+          message: "--setup modified or removed tracked files",
+          details: [
+            `Setup-modified tracked paths: ${list}`,
+            "Commit the rebuilt artifacts, or stop tracking build output, before relying on this run",
+          ],
+          durationMs: Date.now() - start,
+          confidenceContribution: 0.05,
+        },
+      };
+    }
+
+    if (untrackedProduced.length > 0) {
+      const names = untrackedProduced.map((entry) => entry.paths[0]);
+      const list = formatNotedPaths(names);
 
       return {
         check: {
           name: "clean-worktree",
           kind: "git-state",
           status: "pass",
-          message: "--setup left untracked or modified files that are not gitignored",
+          message: "--setup left untracked files that are not gitignored",
           details: [
             `Setup-produced paths: ${list}`,
             "Add them to .gitignore so a future clean-worktree check reflects only real repository changes",
@@ -229,7 +314,7 @@ async function runCleanWorktreeCheck(
           durationMs: Date.now() - start,
           confidenceContribution: 0.05,
         },
-        limitation: `--setup left untracked or modified files that are not gitignored (${list}); add them to .gitignore`,
+        limitation: `--setup left untracked files that are not gitignored (${list}); add them to .gitignore`,
       };
     }
 
