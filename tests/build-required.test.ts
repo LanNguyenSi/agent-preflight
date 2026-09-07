@@ -1562,6 +1562,84 @@ describe("the package-level partial-build rule (unit)", () => {
       }
     );
   });
+
+  // Task bf67cf98, round 2 item 3: the mirror of the case above, swapping
+  // which of the two same-basename directories is populated. Here it is
+  // b/dist that holds the entry and a/dist, the FIRST declared, that is
+  // absent and owns the artifact the failure names. Correct code reads both
+  // directories and stays partially built on b/dist's entry; a keep-first
+  // dedupe (`if (!seen.has(basename)) seen.set(basename, d)`) would read only
+  // a/dist -- finds it absent -- and downgrade. Paired with the test above,
+  // the two orientations together kill both a last-wins AND a keep-first
+  // dedupe-by-basename mutant; neither orientation alone does.
+  it("reads two declared output directories that share a basename separately (mirrored: the first is the absent one)", () => {
+    withTempPackage(
+      {
+        "package.json": pkg({
+          name: "x",
+          exports: { ".": "./a/dist/index.js", "./other": "./b/dist/other.js" },
+          scripts: { build: "node build.js" },
+        }),
+        "b/dist/other.js": "module.exports = {};\n",
+      },
+      (dir) => {
+        const state = evaluatePartialBuild(dir);
+        expect(state.partiallyBuilt).toBe(true);
+        expect(state.evidence?.dir.replace(/^\.\//, "")).toBe("b/dist");
+
+        const result = classify(dir, "Error: Cannot find module './a/dist/index.js'");
+        expect(result.downgrade).toBe(false);
+        expect(result.note).toMatch(/build output directory \(b\/dist\) of this repo exists and is not empty/);
+        expect(result.note).toMatch(/a\/dist\/index\.js/);
+      }
+    );
+  });
+
+  // Task bf67cf98, round 2 item 4: the executable anchor of the item-1
+  // rejection (README/CHANGELOG). A package whose declared output directory
+  // is fully git-tracked -- committed here the same way the fixture corpus
+  // commits its fixtures, `git init && git add -A && git commit` -- must
+  // still block on a failure naming a missing artifact in that directory.
+  // `evaluatePartialBuild`/`packageOutputDirs` have no notion of git at all,
+  // so this pins CURRENT behaviour; a future git-tracked-file filter (the
+  // rejected item-1 candidate) would make this test fail, which is the
+  // point: it is the regression guard for that rejection, not evidence that
+  // the code inspects git today.
+  //
+  // The declared directory is deliberately named `out/`, not `dist/`: this
+  // package's only declared output is `out/`, so a filter that excludes it
+  // for being git-tracked empties the declared list, and the CONVENTIONAL
+  // `dist/` fallback (`DEFAULT_BUILD_OUTPUT_DIR`) does not exist here either
+  // -- there is nothing left to read, and the package reads as unbuilt. A
+  // `dist`-named fixture would let a naive git-tracked-file filter survive
+  // by falling through to that same unfiltered conventional default.
+  it("keeps blocking when the declared output directory is fully git-tracked (item-1 rejection anchor)", () => {
+    withTempPackage(
+      {
+        "package.json": pkg({
+          name: "x",
+          exports: { ".": "./out/index.js", "./other": "./out/other.js" },
+          scripts: { build: "node build.js" },
+        }),
+        "out/index.js": "module.exports = {};\n",
+      },
+      (dir) => {
+        execSync("git init -q", { cwd: dir });
+        execSync('git config user.email "t@example.com"', { cwd: dir });
+        execSync('git config user.name "T"', { cwd: dir });
+        execSync("git add -A", { cwd: dir });
+        execSync('git commit -qm "commit the output directory"', { cwd: dir });
+
+        const state = evaluatePartialBuild(dir);
+        expect(state.partiallyBuilt).toBe(true);
+        expect(state.evidence?.dir.replace(/^\.\//, "")).toBe("out");
+
+        const result = classify(dir, "Error: Cannot find module './out/other.js'");
+        expect(result.downgrade).toBe(false);
+        expect(result.note).toMatch(/build output directory \(out\) of this repo exists and is not empty/);
+      }
+    );
+  });
 });
 
 // The second, message-only mode: no artifact to anchor to (the precondition
