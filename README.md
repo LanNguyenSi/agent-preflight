@@ -249,6 +249,15 @@ Three things have to be true at once, and none of them is enough on its own.
    after a successful `npm run build`, because that build does not produce the
    missing artifact either.
 
+   A declaration that names an output a build legitimately never fills at all
+   (an optional CSS export, a `types` directory a JavaScript-only build never
+   writes) is the same cost from the other side: the precondition holds
+   forever, whatever else the package does hold. No per-declaration opt-out
+   is offered for it in `.preflight.json`; it stays a documented cost, closed
+   by fixing the declaration, because a corpus of real and fixture
+   repositories turned up no case of it beyond the one fixture that already
+   pins it.
+
    Reading the **directories**, and all of them, is what makes this a package
    property. A declared artifact on disk necessarily makes its own directory
    non-empty, so "any declared artifact is on disk" is included. Reading only
