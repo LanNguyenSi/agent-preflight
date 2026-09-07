@@ -254,10 +254,11 @@ Three things have to be true at once, and none of them is enough on its own.
    writes) is the same cost from the other side: the precondition holds
    forever, whatever else the package does hold. No per-declaration opt-out
    is offered for it in `.preflight.json`; it stays a documented cost, closed
-   by fixing the declaration. This is a judgment, not an argument from
-   absence: no case of the shape turned up in this package's own fixtures
-   and hand-built reproduction cases beyond `single-package-second-output-dir`,
-   which already pins it, and that one fixture does not by itself justify a
+   by fixing the declaration. This is a judgment: every instance of the
+   shape in this package's fixtures and hand-built reproduction cases was
+   constructed to exercise this rule (`single-package-second-output-dir`
+   and its reproduction siblings), no organically occurring instance is
+   known, and one hand-built family does not by itself justify a
    `.preflight.json` surface for the rest.
 
    Reading the **directories**, and all of them, is what makes this a package
@@ -307,15 +308,10 @@ Three things have to be true at once, and none of them is enough on its own.
    symlink standing in for one, a committed `.keep` placeholder), so a
    repository that commits its output would turn its blocking `fail` into
    the named `skip` -- the exact false-green class this rule exists to
-   prevent. An earlier draft of this rejection also cited a flip count from
-   a corpus of real and fixture repositories; that count is not reliable
-   evidence, because the corpus was prepared with `git init && git add -A`
-   and no `.gitignore` for any case, so every output directory already
-   present before the build is git-tracked by construction, and the count
-   measured "output directory present before the build", not "output
-   directory checked in". Under a realistic `.gitignore` for each case's
-   output directories, only one of the flips remains: the fixture whose
-   declared `dist` is itself a checked-in symlink. The oclif-style `bin/`
+   prevent. The flip evidence behind an earlier draft of this rejection and
+   the preparation bias that invalidated it are recorded in the CHANGELOG
+   entry for this rule; this section carries the decision only. The
+   oclif-style `bin/`
    false-block this rejection describes stays an open cost, no opt-out was
    added for it; a narrower rule (tracked, AND not `.gitignore`d, AND
    another declared output directory of the same package is populated) was

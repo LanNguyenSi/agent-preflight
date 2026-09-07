@@ -23,14 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   that lets git carry an otherwise empty output directory), so a repository
   that commits its output would turn its blocking `fail` into the named
   `skip`, the exact false-green class this rule exists to prevent. An
-  earlier draft of this rejection cited a corpus flip count as evidence;
-  that count is retracted here because the corpus driver runs `git init &&
-  git add -A` with no `.gitignore` for any case, so every output directory
-  already present before the build is git-tracked by construction, and the
-  count measured "output directory present before the build" rather than
-  "output directory checked in". Re-run with a realistic `.gitignore` for
-  each case's output directories, only one of sixteen cases still flips: the
-  fixture whose declared `dist` is itself a checked-in symlink. A narrower
+  earlier draft of this rejection cited a flip count from a corpus of this
+  package's fixtures and hand-built reproduction cases; that count is
+  retracted: the corpus driver runs `git init && git add -A` with no
+  `.gitignore` for any case, so every output directory already present
+  before the build is git-tracked by construction, and the count measured
+  "output directory present before the build" rather than "output
+  directory checked in". Under realistic ignore rules the flips that
+  survive are the checked-in stand-in shapes (a committed symlink or a
+  committed file where the output directory belongs), the same class the
+  argument above names; the exact count depends on the ignore-pattern
+  convention and on where the filter sits, and is recorded with those
+  parameters in the run files, not here. A narrower
   rule (tracked, AND not `.gitignore`d, AND another declared output
   directory of the same package is populated) was not measured and is not
   claimed to work. No production code changed.
@@ -40,10 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   CSS export, a `types` directory a JavaScript-only build never writes, and
   similar shapes make the precondition hold forever no matter what else the
   package holds. No per-declaration opt-out was added to `.preflight.json`
-  for it: no case of the shape was observed in this package's own fixtures
-  and hand-built reproduction cases beyond the `single-package-second-output-dir`
-  fixture that already pins it, which does not by itself justify a
-  `.preflight.json` surface; the cost is closed by fixing the declaration.
+  for it: every instance of the shape in this package's fixtures and
+  hand-built reproduction cases was constructed to exercise this rule (the
+  `single-package-second-output-dir` fixture and its reproduction
+  siblings), no organically occurring instance is known, and one hand-built
+  family does not by itself justify a `.preflight.json` surface; the cost
+  is closed by fixing the declaration.
   No production code changed.
 
 - **Package-level partial-build rule, item 3: the unreadable-output message
