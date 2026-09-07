@@ -276,7 +276,14 @@ Three things have to be true at once, and none of them is enough on its own.
      nothing was ever built, and what fixes it is the declaration, not a
      build. A declared directory under `node_modules` is the one exception
      and is never read: installed dependencies say nothing about whether the
-     package was built, which is the rule condition 3 applies to paths too;
+     package was built, which is the rule condition 3 applies to paths too.
+     A narrower reading was tried and rejected: excluding a directory from
+     the read whenever it holds a git-tracked file would fix exactly this
+     shape, but measured against a corpus of real and fixture repositories it
+     also turned every checked-in placeholder, stale output, and
+     dangling-symlink case into a false `skip` -- the exact class this rule
+     exists to keep blocking, since a build never re-runs on a `ready: true`
+     verdict. This stays a documented cost rather than a rule change;
    - the directory state is read **after** the test run, when the failure is
      classified, and nothing is snapshotted beforehand: a test that itself
      writes into its package's output directory (a cache, a fixture, a

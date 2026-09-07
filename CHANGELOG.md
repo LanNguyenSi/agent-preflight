@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Docs
+
+- **Package-level partial-build rule, item 1: checked-in source declared as
+  an artifact stays a documented cost, a narrower rule was tried and
+  rejected.** A directory a package declares an artifact in that is actually
+  checked-in source (an oclif-style `bin/` launcher beside a real `dist/`,
+  an `exports` target inside a source tree) still counts as build output and
+  blocks a never-built package. A candidate fix -- exclude a directory from
+  the read whenever it holds a git-tracked file -- was measured against a
+  corpus of real and fixture repositories and rejected: it turned every
+  checked-in placeholder, stale output, and dangling-symlink case in that
+  corpus from a blocking `fail` into the named `skip`, the exact false-green
+  class this rule exists to prevent, with no unintended flip anywhere else.
+  This stays a documented cost (README), fixed only by correcting the
+  declaration; no production code changed.
+
 ### Added
 
 - **`--setup` builds the repo before the test check when CI shows build-before-test** (agent-tasks c5810885). `ensureProjectSetup` (`src/checks/shared.ts`) runs `npm run build` when both hold: `package.json` has a `build` script, AND `.github/workflows/ci.yml` has a `run:` step invoking `npm run build`/`yarn build`/`pnpm build` earlier in the file than a step invoking the test script (`ciShowsBuildBeforeTest`/`workflowTextShowsBuildBeforeTest`). This is a best-effort, single-file, line-order read, not an Actions execution-graph evaluator: reusable workflows, job `needs:` graphs, and `run: |` block scalars are not modeled, and a build step in an unrelated job still reads as "before" a later test job. A miss costs only the extra manual `npm run build` this feature exists to avoid (`--setup` then behaves exactly as before, dependency install only); a false hit costs only a redundant rebuild. A `run:` step whose value is itself a shell comment, or that only echoes a string, is recognized and skipped. The build step has its own wall-clock budget, 300000 ms by default, overridable with the new `setup.buildTimeoutMs` in `.preflight.json` (the dependency-install setup commands keep their shared 120000 ms). A build that exits non-zero keeps the downstream test failure a blocking `fail` naming the exit code and the persisted build log; a build that exhausts the budget leaves the test check "not evaluated" (the named `skip` plus a limitation), never a blocker; after a successful build, any test failure is a genuine blocker. Trust boundary, documented in the README's Security note and `docs/checks.md`: under `--setup`, a `run:` line in the target repo's own workflow file decides whether that repo's `build` script executes locally, so `--setup` belongs only on repositories you already trust to run.
