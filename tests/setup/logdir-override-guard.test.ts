@@ -22,7 +22,8 @@
  *     (this is why the guard type-checks the tests project rather than
  *     doing a plain textual scan); or
  *   - sits inside a test whose enclosing `it`/`test` callback contains an
- *     opt-out comment `// logdir-guard: <reason>` — for a call that
+ *     opt-out comment `// logdir-guard: <reason>` (the reason is
+ *     mandatory: a bare `logdir-guard:` does not count), for a call that
  *     genuinely cannot reach `persistFailureOutput` (e.g. every
  *     lint/typecheck/test/audit/custom check toggle is `false`, or the
  *     check kind in question, such as gitState/commitConvention/
@@ -41,6 +42,10 @@ import ts from "typescript";
 
 const TESTS_ROOT = path.resolve(__dirname, "..");
 const GUARD_COMMENT = "logdir-guard:";
+/** The opt-out counts only when the comment names a reason: at least one
+ * non-whitespace character after the colon. A bare `// logdir-guard:` is a
+ * violation, so the exemption cannot be silenced without saying why. */
+const GUARD_COMMENT_WITH_REASON = /logdir-guard:[ \t]*\S/;
 const TARGET_CALLS = new Set(["runPreflight", "runShellCheck"]);
 
 interface Violation {
@@ -188,7 +193,7 @@ function scanProgram(program: ts.Program, filePaths: string[]): Violation[] {
         const arg = calleeName === "runPreflight" ? node.arguments[1] : node.arguments[0];
 
         const satisfied = !!arg && argSatisfiesLogDir(arg, sourceFile, checker);
-        const optedOut = enclosingFunctionText(node, sourceFile).includes(GUARD_COMMENT);
+        const optedOut = GUARD_COMMENT_WITH_REASON.test(enclosingFunctionText(node, sourceFile));
 
         if (!satisfied && !optedOut) {
           const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
@@ -317,6 +322,33 @@ describe("logDir override guard (structural, Orchestrator D-017)", () => {
       const violations = scanFiles([fixturePath]);
 
       expect(violations).toHaveLength(0);
+    } finally {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  it("self-check: still flags a call whose '// logdir-guard:' opt-out names no reason", () => {
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "logdir-guard-fixture-noreason-"));
+    const fixturePath = path.join(fixtureDir, "noreason.test.ts");
+    try {
+      fs.writeFileSync(
+        fixturePath,
+        [
+          "import { it } from 'vitest';",
+          "import { runPreflight } from '../src/runner.js';",
+          "",
+          "it('empty reason', async () => {",
+          "  const config = { checks: { lint: true } };",
+          "  // logdir-guard:",
+          "  const result = await runPreflight('.', config);",
+          "});",
+        ].join("\n")
+      );
+
+      const violations = scanFiles([fixturePath]);
+
+      expect(violations).toHaveLength(1);
+      expect(violations[0].file).toContain("noreason.test.ts");
     } finally {
       fs.rmSync(fixtureDir, { recursive: true, force: true });
     }
