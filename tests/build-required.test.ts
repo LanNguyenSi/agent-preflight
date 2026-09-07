@@ -1491,12 +1491,14 @@ describe("the package-level partial-build rule (unit)", () => {
   // actually observed. Only ENOTDIR (a `dist` that is a file) had a fixture;
   // this pins EACCES the same way, from a directory that really cannot be
   // read rather than a mocked error, so a mutant that hardcodes ENOTDIR (or
-  // drops the code from the message) is caught. Skipped where the state
-  // cannot be produced: running as root (which ignores the permission bits),
-  // or a filesystem/container that leaves the directory readable anyway.
-  it("pins EACCES separately from ENOTDIR in the unreadable-output message", () => {
+  // drops the code from the message) is caught. Skipped VISIBLY (vitest's
+  // test-context `ctx.skip()`, reported as skipped rather than a silent pass)
+  // where the state cannot be produced: running as root (which ignores the
+  // permission bits), or a filesystem/container that leaves the directory
+  // readable anyway.
+  it("pins EACCES separately from ENOTDIR in the unreadable-output message", (ctx) => {
     if (typeof process.getuid === "function" && process.getuid() === 0) {
-      return;
+      ctx.skip();
     }
     withTempPackage(
       {
@@ -1517,7 +1519,7 @@ describe("the package-level partial-build rule (unit)", () => {
             // The platform does not enforce the mode (some containers run
             // privileged, some filesystems ignore it); the case cannot be
             // produced here.
-            return;
+            ctx.skip();
           }
           const result = classify(dir, "Error: Cannot find module './dist/index.js'");
           expect(result.downgrade).toBe(false);
