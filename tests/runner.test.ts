@@ -444,8 +444,46 @@ describe("PREFLIGHT_LOG_DIR warning fires at most once per runPreflight call (re
       expect(warningCalls).toHaveLength(1);
     } finally {
       homedirSpy.mockRestore();
+      warnSpy.mockRestore();
       fs.rmSync(repoPath, { recursive: true, force: true });
       fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("PreflightConfig.logDir takes precedence over an invalid PREFLIGHT_LOG_DIR, with no warning (missing test 1, task 2e8bcc7e review round 2)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("resolves the configured logDir and prints zero PREFLIGHT_LOG_DIR warnings when both a configured logDir and an invalid PREFLIGHT_LOG_DIR are present", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-logdir-precedence-"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Invalid on two counts (relative, not absolute) so a run that ignored
+    // `.preflight.json`'s `logDir` and fell through to `PREFLIGHT_LOG_DIR`
+    // would both warn and resolve a different logDir than asserted below.
+    vi.stubEnv("PREFLIGHT_LOG_DIR", "relative/not/absolute");
+    try {
+      const config = defaultConfig();
+      config.checks = allChecksDisabled();
+      config.logDir = "configured-logs";
+      config.customChecks = [{ name: "always-fail", command: "echo boom && exit 1" }];
+
+      const result = await runPreflight(repoPath, config);
+
+      const failedCheck = result.checks.find((c) => c.name === "always-fail");
+      expect(failedCheck?.status).toBe("fail");
+      const logLine = failedCheck?.details?.[0];
+      const logPath = logLine!.replace(/^full output: /, "");
+      expect(path.dirname(logPath)).toBe(path.join(repoPath, "configured-logs"));
+
+      const warningCalls = warnSpy.mock.calls.filter((call) =>
+        String(call[0]).includes("PREFLIGHT_LOG_DIR")
+      );
+      expect(warningCalls).toHaveLength(0);
+    } finally {
+      warnSpy.mockRestore();
+      fs.rmSync(repoPath, { recursive: true, force: true });
     }
   });
 });

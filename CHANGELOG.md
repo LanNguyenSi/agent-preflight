@@ -16,12 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `logDir`), sitting between `.preflight.json`'s `logDir` (still highest
   precedence) and the `~/.agent-preflight/logs` default. A value that is
   still relative once expanded, or empty, or whitespace-only, is ignored
-  with a warning naming the variable, printed at most once per `preflight
-  run`/`preflight batch` invocation rather than once per failing check.
-  Lets a CLI run against a scratch fixture, or a parallel worktree sharing
-  `$HOME` with other checkouts, isolate its failure logs without a
-  `.preflight.json` edit. See README's log directory section for the full
-  precedence table.
+  with a warning naming the variable, printed once per repository run
+  (once for `preflight run`, once per repository for `preflight batch`,
+  since `runBatch` calls `runPreflight` once per discovered repo) rather
+  than once per failing check. The warning is emitted once when the run
+  starts, resolved alongside the log directory itself before any check
+  executes, whether or not a check ends up failing. Lets a CLI run
+  against a scratch fixture, or a parallel worktree sharing `$HOME` with
+  other checkouts, isolate its failure logs without a `.preflight.json`
+  edit. See README's log directory section for the full precedence
+  table.
 
 ## [0.6.0] - 2026-09-07
 

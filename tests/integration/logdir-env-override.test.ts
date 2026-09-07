@@ -131,21 +131,32 @@ describe("preflight run honours PREFLIGHT_LOG_DIR (task 2e8bcc7e)", () => {
   }, 30_000);
 
   it("prints the PREFLIGHT_LOG_DIR warning on stderr, leaving --json's stdout parseable (missing test, task 2e8bcc7e)", async () => {
-    const relativeEnvLogDir = "relative-not-absolute-logs";
-    const { exitCode, stdout, stderr } = await runCliCapture(
-      ["run", repoPath, "--no-audit", "--no-secrets", "--json"],
-      {
-        ...process.env,
-        HOME: fakeHome,
-        PREFLIGHT_LOG_DIR: relativeEnvLogDir,
-      }
-    );
+    // Own fake HOME, separate from the shared `fakeHome` above (review
+    // finding F4, task 2e8bcc7e): this case's invalid PREFLIGHT_LOG_DIR
+    // falls back to the home-based default and creates
+    // `<home>/.agent-preflight/logs`, which would make the previous case's
+    // "no default logs under fakeHome" assertion pass only because this
+    // case runs after it, not because the code path is actually clean.
+    const ownFakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-env-logdir-fakehome-invalid-"));
+    try {
+      const relativeEnvLogDir = "relative-not-absolute-logs";
+      const { exitCode, stdout, stderr } = await runCliCapture(
+        ["run", repoPath, "--no-audit", "--no-secrets", "--json"],
+        {
+          ...process.env,
+          HOME: ownFakeHome,
+          PREFLIGHT_LOG_DIR: relativeEnvLogDir,
+        }
+      );
 
-    expect(exitCode).toBe(1);
-    expect(stderr).toContain("PREFLIGHT_LOG_DIR");
-    expect(stderr).toContain(relativeEnvLogDir);
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("PREFLIGHT_LOG_DIR");
+      expect(stderr).toContain(relativeEnvLogDir);
 
-    const parsed = JSON.parse(stdout);
-    expect(parsed.ready).toBe(false);
+      const parsed = JSON.parse(stdout);
+      expect(parsed.ready).toBe(false);
+    } finally {
+      fs.rmSync(ownFakeHome, { recursive: true, force: true });
+    }
   }, 30_000);
 });
