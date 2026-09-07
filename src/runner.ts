@@ -1,19 +1,8 @@
 import fs from "fs";
-import os from "os";
 import path from "path";
 import { CheckKind, CheckResult, CheckToggle, PreflightConfig, PreflightResult } from "./types.js";
-import { ensureProjectSetup, getWorkingDirHint, SetupBuildOutcome } from "./checks/shared.js";
-
-// Expands a leading `~/` in a configured path to `os.homedir()`, the way a
-// shell would, before the absolute/relative resolution below runs. Without
-// this, `logDir: "~/logs"` was resolved as the literal relative path
-// `<repoPath>/~/logs` (a directory named `~` inside the repo) instead of
-// under the user's home directory, because `path.isAbsolute("~/logs")` is
-// false. Only the leading-`~/` shape is handled (the common case for a
-// directory value); a bare `~` with no trailing segment is left as-is.
-function expandLeadingTilde(value: string): string {
-  return value.startsWith("~/") ? path.join(os.homedir(), value.slice(2)) : value;
-}
+import { defaultLogDir, ensureProjectSetup, getWorkingDirHint, SetupBuildOutcome } from "./checks/shared.js";
+import { expandLeadingTilde } from "./pathUtils.js";
 
 // Maps a CheckResult's `kind` back to the `.preflight.json` `checks.<key>`
 // toggle that controls it, for the acknowledge feature below. Deliberately
@@ -177,9 +166,34 @@ export async function runPreflight(
   // through the same resolved directory instead of always falling back to
   // the default `~/.agent-preflight/logs`.
   const configuredLogDir = config.logDir ? expandLeadingTilde(config.logDir) : undefined;
-  const effectiveConfig: PreflightConfig = configuredLogDir
-    ? { ...config, logDir: path.isAbsolute(configuredLogDir) ? configuredLogDir : path.resolve(repoPath, configuredLogDir) }
-    : config;
+  // When `.preflight.json` did not configure a `logDir`, resolve
+  // `PREFLIGHT_LOG_DIR`/the home-based default exactly ONCE here (task
+  // 2e8bcc7e, review finding F5) and thread the result through
+  // `effectiveConfig.logDir` the same way a configured value already is,
+  // rather than leaving `logDir` undefined for every check runner to
+  // resolve independently. Every check runner below passes
+  // `effectiveConfig.logDir` straight through to `runShellCheck`, so
+  // without this a run with several failing checks called
+  // `defaultLogDir()` once per failing check, and printed its
+  // PREFLIGHT_LOG_DIR warning once per failing check with it.
+  let resolvedLogDir: string | undefined;
+  if (configuredLogDir) {
+    resolvedLogDir = path.isAbsolute(configuredLogDir) ? configuredLogDir : path.resolve(repoPath, configuredLogDir);
+  } else {
+    try {
+      resolvedLogDir = defaultLogDir();
+    } catch {
+      // A throwing `os.homedir()` must not abort the whole run just to
+      // resolve where a failing check's log would go: leave
+      // `resolvedLogDir` undefined so each check's own
+      // `persistFailureOutput` retries `defaultLogDir()` inside its own
+      // try/catch and degrades to the outputLines() fallback instead
+      // (the same never-throw invariant `persistFailureOutput` already
+      // keeps for this seam).
+      resolvedLogDir = undefined;
+    }
+  }
+  const effectiveConfig: PreflightConfig = { ...config, logDir: resolvedLogDir };
 
   let setupBuildOutcome: SetupBuildOutcome | undefined;
   if (config.setup?.enabled === true) {

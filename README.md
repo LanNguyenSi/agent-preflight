@@ -584,15 +584,22 @@ directory is resolved in this order:
 | precedence | source | notes |
 | --- | --- | --- |
 | 1 (highest) | `logDir` in `.preflight.json` | a relative path resolves against the repo root, not `workingDir` and not the process's cwd; a leading `~/` is expanded to the home directory |
-| 2 | `PREFLIGHT_LOG_DIR` environment variable | only an absolute path is honored; a relative or empty value is ignored (a relative value also prints a warning naming the variable) and resolution falls through to level 3 |
+| 2 | `PREFLIGHT_LOG_DIR` environment variable | a leading `~/` is expanded to the home directory, same as level 1; only an absolute path (after that expansion) is honored, a value that is still relative once expanded, or empty, or whitespace-only, is ignored with a warning naming the variable, and resolution falls through to level 3 |
 | 3 (default) | `~/.agent-preflight/logs` | `os.homedir()`-based default |
 
 `PREFLIGHT_LOG_DIR` is the way to point a CLI run at an isolated log
 directory without generating or editing a `.preflight.json` for the
-target repo — useful for a run against a scratch fixture, or for a
+target repo, useful for a run against a scratch fixture, or for a
 parallel `preflight` worktree that shares `$HOME` with other checkouts on
-the same machine. If `logDir` points inside the repo itself, as the
-`.preflight-logs` example above does, add that
+the same machine. Since the log directory can now be set from the process
+environment as well as from `.preflight.json`, it is worth noting what
+lands there: `preflight` creates it (`mkdir -p`) if missing, writes one
+file per failing check, and rotates old files out of it (unlinking any
+file matching its own `<check>-<epoch>-<pid>-<seq>.log` naming scheme once
+more than 20 accumulate), so point it at a directory this process is meant
+to own rather than one shared with unrelated data. If the resolved log
+directory (from `logDir` or `PREFLIGHT_LOG_DIR`) points inside the repo
+itself, as the `.preflight-logs` example above does, add that
 directory to `.gitignore` — otherwise the log files it fills up show up as
 untracked changes, and the *next* run's own `clean-worktree` check fails on
 them. The pid and per-process sequence number together keep two failures of

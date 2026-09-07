@@ -32,6 +32,17 @@
  * entire run regardless of file ordering or parallelism, without touching
  * `os.homedir()` at all (so the dedicated mock-based test above is
  * unaffected).
+ *
+ * Since task 2e8bcc7e this setup also deletes `PREFLIGHT_LOG_DIR` from
+ * `process.env` before any test file starts: it is a second, lower-precedence
+ * way to redirect where a failing check's log lands (see
+ * `defaultLogDir()` in src/checks/shared.ts), and a value leaking in from
+ * the ambient shell/CI environment would silently redirect writes away from
+ * the `~/.agent-preflight/logs` directory this guard snapshots, masking a
+ * real regression instead of catching one. Individual test cases that need
+ * `PREFLIGHT_LOG_DIR` set opt back in with `vi.stubEnv`/`vi.unstubAllEnvs`
+ * (or a plain `process.env.PREFLIGHT_LOG_DIR = ...` paired with a matching
+ * `afterEach` cleanup) rather than relying on any ambient value.
  */
 import fs from "fs";
 import os from "os";
@@ -50,6 +61,12 @@ function snapshot(): Set<string> {
 }
 
 export default function setup(): () => void {
+  // Neutralize a PREFLIGHT_LOG_DIR the ambient environment might carry
+  // (task 2e8bcc7e) before any test file runs, so the suite's default-logDir
+  // assertions and this guard's own snapshot are never redirected by a
+  // value this process did not set for itself.
+  delete process.env.PREFLIGHT_LOG_DIR;
+
   const before = snapshot();
 
   return function teardown(): void {

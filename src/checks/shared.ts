@@ -3,6 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { CheckResult, CheckKind, PreflightConfig } from "../types.js";
+import { expandLeadingTilde } from "../pathUtils.js";
 
 export interface CheckSetResult {
   checks: CheckResult[];
@@ -1673,8 +1674,8 @@ function outputLines(output: string | undefined): string[] | undefined {
 
 // Default location for the full-output logs written by `computeFailureDetails`
 // when a caller of `runShellCheck` does not override `ShellCheckOptions.logDir`
-// (i.e. `.preflight.json`'s `logDir` was not set — that value is resolved
-// ahead of this function, in runner.ts, and always wins when present, see
+// (i.e. `.preflight.json`'s `logDir` was not set, that value is resolved
+// ahead of this function, in runner.ts, and always wins when present; see
 // `runner.ts`'s `configuredLogDir`/`effectiveConfig` handling around its own
 // `runPreflight` entry point).
 //
@@ -1683,33 +1684,54 @@ function outputLines(output: string | undefined): string[] | undefined {
 // against a scratch fixture, or a parallel worktree sharing `$HOME` with
 // other agent-preflight checkouts, can be pointed at an isolated log
 // directory without editing or generating a `.preflight.json` for the
-// fixture. Only an ABSOLUTE path is honored: a relative value is ambiguous
-// (relative to what — `process.cwd()`? the repo root?) in a way `.preflight.json`'s
-// `logDir` is not (that one is deliberately resolved against `repoPath`, see
-// runner.ts), so a relative `PREFLIGHT_LOG_DIR` is rejected with a warning on
-// the same `console.warn("[preflight] Warning: ...")` channel `config.ts`'s
-// `loadConfig` already uses for `.preflight.json` diagnostics, rather than
-// silently guessing a base directory. An empty value (`PREFLIGHT_LOG_DIR=`)
-// is treated the same as an unset variable — silently falling back to the
-// home-based default — since shells and `.env` loaders commonly export an
-// empty string without meaning to override anything, and warning on that
-// would be noisier than useful.
+// fixture. A leading `~/` is expanded to `os.homedir()` first (via the
+// shared `expandLeadingTilde` helper, the same one `.preflight.json`'s
+// `logDir` uses in runner.ts), then only an ABSOLUTE path is honored: a
+// remaining relative value is ambiguous (relative to what, `process.cwd()`?
+// the repo root?) in a way `.preflight.json`'s `logDir` is not (that one is
+// deliberately resolved against `repoPath`, see runner.ts), so it is
+// rejected with a warning on the same `console.warn("[preflight]
+// Warning: ...")` channel `config.ts`'s `loadConfig` already uses for
+// `.preflight.json` diagnostics, rather than silently guessing a base
+// directory. An empty or whitespace-only value (`PREFLIGHT_LOG_DIR=` or
+// `PREFLIGHT_LOG_DIR="   "`) warns the same way and falls back, rather than
+// being treated as unset: a variable that is SET but blank is more likely a
+// misconfigured shell/`.env` export than a deliberate no-op, and the
+// frozen acceptance criterion for this task requires a warning here (see
+// review finding F1, task 2e8bcc7e).
+//
+// `runner.ts` calls this at most once per `runPreflight` invocation (see
+// its `resolvedLogDir` handling), threading the result through
+// `effectiveConfig.logDir` instead of leaving `logDir` undefined for every
+// check runner to resolve independently; without that, a run with several
+// failing checks called this function, and printed its warning, once per
+// failing check (review finding F5, task 2e8bcc7e). A direct `runShellCheck`
+// call that omits `logDir` (as some unit tests do) still calls this
+// function itself, once per call, through `persistFailureOutput` below.
 //
 // Kept as a function (not a module-level constant) so it always reflects the
 // current `os.homedir()`/`process.env.PREFLIGHT_LOG_DIR` rather than a value
-// captured at import time — and resolved LAZILY inside persistFailureOutput's
-// try, so even a throwing os.homedir() degrades to the outputLines() fallback
-// instead of escaping the check path (the never-throw invariant covers this
-// seam too).
-function defaultLogDir(): string {
+// captured at import time, and resolved LAZILY inside `persistFailureOutput`'s
+// try, so even a throwing `os.homedir()` degrades to the `outputLines()`
+// fallback instead of escaping the check path (the never-throw invariant
+// covers this seam too; `runner.ts`'s own call site wraps this in its own
+// try/catch for the same reason).
+export function defaultLogDir(): string {
   const override = process.env.PREFLIGHT_LOG_DIR;
-  if (override !== undefined && override !== "") {
-    if (path.isAbsolute(override)) {
-      return override;
+  if (override !== undefined) {
+    if (override.trim() !== "") {
+      const expanded = expandLeadingTilde(override);
+      if (path.isAbsolute(expanded)) {
+        return expanded;
+      }
+      console.warn(
+        `[preflight] Warning: PREFLIGHT_LOG_DIR is set to a value that is not an absolute path (${override}); ignoring it and falling back to the default log directory.`
+      );
+    } else {
+      console.warn(
+        "[preflight] Warning: PREFLIGHT_LOG_DIR is set but empty; ignoring it and falling back to the default log directory."
+      );
     }
-    console.warn(
-      `[preflight] Warning: PREFLIGHT_LOG_DIR is set to a relative path (${override}); ignoring it and falling back to the default log directory.`
-    );
   }
   return path.join(os.homedir(), ".agent-preflight", "logs");
 }

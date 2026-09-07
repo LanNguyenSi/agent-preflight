@@ -7,15 +7,15 @@
  * machine.
  *
  * This spawns the REAL built CLI binary (dist/cli.js, built fresh in this
- * file's own beforeAll — the CI test job runs `npx vitest run --coverage`
- * with no preceding `npm run build`, same rationale as
+ * file's own beforeAll, since the CI test job runs `npx vitest run
+ * --coverage` with no preceding `npm run build`, same rationale as
  * tests/integration/json-stdout-pipe.test.ts) against a small fixture repo
  * whose `test` script deliberately fails, so `runShellCheck` persists a
  * full-output log. Both `HOME` and `PREFLIGHT_LOG_DIR` are overridden on the
  * child's env: `HOME` to a throwaway fake-home directory (so a regression
  * that ignores `PREFLIGHT_LOG_DIR` writes into a directory this test itself
- * controls and can inspect, never a machine's real `~/.agent-preflight/logs`
- * — see tests/setup/no-real-home-writes.globalSetup.ts, which guards
+ * controls and can inspect, never a machine's real `~/.agent-preflight/logs`,
+ * see tests/setup/no-real-home-writes.globalSetup.ts, which guards
  * in-process runPreflight() calls only and cannot see a separate spawned
  * process), and `PREFLIGHT_LOG_DIR` to a second throwaway directory that the
  * assertions below expect the log to land in.
@@ -42,8 +42,8 @@ function initGitRepo(repoPath: string): void {
 }
 
 /** A minimal single-package repo whose `npm test` deliberately fails, with
- * no `.preflight.json` of its own — the case PREFLIGHT_LOG_DIR exists for:
- * a scratch fixture that carries no log-dir override of its own. */
+ * no `.preflight.json` of its own (the case PREFLIGHT_LOG_DIR exists for:
+ * a scratch fixture that carries no log-dir override of its own). */
 function setUpFixtureRepo(): string {
   const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-env-logdir-fixture-"));
   fs.writeFileSync(
@@ -66,6 +66,25 @@ function runCli(args: string[], env: NodeJS.ProcessEnv): Promise<{ exitCode: num
     const child = spawn(process.execPath, [CLI_PATH, ...args], { stdio: ["ignore", "ignore", "ignore"], env });
     child.on("error", reject);
     child.on("close", (exitCode) => resolve({ exitCode }));
+  });
+}
+
+/** Same as runCli, but captures stdout/stderr instead of discarding them,
+ * for the case below that needs to assert on both streams: the
+ * PREFLIGHT_LOG_DIR warning must land on stderr, never mixed into `--json`'s
+ * stdout envelope. */
+function runCliCapture(
+  args: string[],
+  env: NodeJS.ProcessEnv
+): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI_PATH, ...args], { stdio: ["ignore", "pipe", "pipe"], env });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (exitCode) => resolve({ exitCode, stdout, stderr }));
   });
 }
 
@@ -109,5 +128,24 @@ describe("preflight run honours PREFLIGHT_LOG_DIR (task 2e8bcc7e)", () => {
 
     const defaultLogsUnderFakeHome = path.join(fakeHome, ".agent-preflight", "logs");
     expect(fs.existsSync(defaultLogsUnderFakeHome)).toBe(false);
+  }, 30_000);
+
+  it("prints the PREFLIGHT_LOG_DIR warning on stderr, leaving --json's stdout parseable (missing test, task 2e8bcc7e)", async () => {
+    const relativeEnvLogDir = "relative-not-absolute-logs";
+    const { exitCode, stdout, stderr } = await runCliCapture(
+      ["run", repoPath, "--no-audit", "--no-secrets", "--json"],
+      {
+        ...process.env,
+        HOME: fakeHome,
+        PREFLIGHT_LOG_DIR: relativeEnvLogDir,
+      }
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("PREFLIGHT_LOG_DIR");
+    expect(stderr).toContain(relativeEnvLogDir);
+
+    const parsed = JSON.parse(stdout);
+    expect(parsed.ready).toBe(false);
   }, 30_000);
 });

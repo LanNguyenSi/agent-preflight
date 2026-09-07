@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
@@ -397,6 +397,51 @@ describe("PreflightConfig.logDir tilde expansion", () => {
       // The literal-'~'-directory-inside-the-repo regression this guards
       // against would have created `<repoPath>/~/tilde-logs` instead.
       expect(fs.existsSync(path.join(repoPath, "~"))).toBe(false);
+    } finally {
+      homedirSpy.mockRestore();
+      fs.rmSync(repoPath, { recursive: true, force: true });
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("PREFLIGHT_LOG_DIR warning fires at most once per runPreflight call (review finding F5, task 2e8bcc7e)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("warns once even when two customChecks entries fail in the same run", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-logdir-warn-once-"));
+    const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-logdir-warn-once-home-"));
+    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("PREFLIGHT_LOG_DIR", "relative/not/absolute");
+    try {
+      const config = defaultConfig();
+      config.checks = allChecksDisabled();
+      // logDir intentionally left unconfigured so the invalid
+      // PREFLIGHT_LOG_DIR above is what resolves defaultLogDir(); two
+      // failing customChecks entries share the single logDir resolution
+      // runner.ts now does once, rather than each calling defaultLogDir()
+      // (and its warning) independently.
+      // logdir-guard: no logDir configured is the scenario under test, os.homedir() mocked to fakeHome
+      config.customChecks = [
+        { name: "always-fail-1", command: "echo boom1 && exit 1" },
+        { name: "always-fail-2", command: "echo boom2 && exit 1" },
+      ];
+
+      const result = await runPreflight(repoPath, config);
+
+      const failed = result.checks.filter((c) => c.status === "fail");
+      expect(failed).toHaveLength(2);
+      for (const check of failed) {
+        const logPath = check.details?.[0]?.replace(/^full output: /, "");
+        expect(logPath).toBe(path.join(fakeHome, ".agent-preflight", "logs", path.basename(logPath!)));
+      }
+      const warningCalls = warnSpy.mock.calls.filter((call) =>
+        String(call[0]).includes("PREFLIGHT_LOG_DIR")
+      );
+      expect(warningCalls).toHaveLength(1);
     } finally {
       homedirSpy.mockRestore();
       fs.rmSync(repoPath, { recursive: true, force: true });
