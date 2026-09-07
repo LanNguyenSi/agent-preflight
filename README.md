@@ -576,6 +576,26 @@ but not the numerator, and the accompanying `limitations` entry adds the usual
 a `pass`, and it is not scored more harshly than an `npm-audit` skip for the
 same reason (no report to judge).
 
+**`--setup`'s own output never fails `clean-worktree`.** `npm ci` and the
+build step above write into the target worktree, and when the repo does not
+gitignore that output (a fresh `dist/`, a generated client) it would
+otherwise show up as untracked changes and fail the tool's own
+`clean-worktree` check on the run that just created them. `--setup`
+snapshots the worktree's `git status --porcelain` state before it runs
+`ensureProjectSetup`, and `clean-worktree` then judges the change against
+that snapshot instead of the raw current state: a path that was already
+dirty before `--setup` ran still fails the check exactly as it always has,
+but a path `--setup` itself produced does not. When setup output is the only
+difference, `clean-worktree` stays a `pass`, and the produced paths (capped
+to 10, with the rest counted) are named in the check's own `details` and in
+a `limitations` entry recommending they be added to `.gitignore` -- never as
+a blocker. If the pre-setup snapshot itself cannot be taken (a git error),
+`clean-worktree` falls back to its normal undifferentiated check and says so
+in a `limitations` entry, rather than silently treating every current change
+as either pre-existing or setup-produced. Without `--setup`, none of this
+applies: `clean-worktree` runs exactly as it did before this behavior
+existed.
+
 When a shell-based check (lint, typecheck, test, audit, custom) fails, its
 complete stdout+stderr is written best-effort to
 `~/.agent-preflight/logs/<check>-<epoch-ms>-<pid>-<sequence>.log`. The log

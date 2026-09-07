@@ -3,6 +3,7 @@ import path from "path";
 import { CheckKind, CheckResult, CheckToggle, PreflightConfig, PreflightResult } from "./types.js";
 import { defaultLogDir, ensureProjectSetup, getWorkingDirHint, SetupBuildOutcome } from "./checks/shared.js";
 import { expandLeadingTilde } from "./pathUtils.js";
+import type { WorktreeSnapshot } from "./checks/git.js";
 
 // Maps a CheckResult's `kind` back to the `.preflight.json` `checks.<key>`
 // toggle that controls it, for the acknowledge feature below. Deliberately
@@ -195,15 +196,6 @@ export async function runPreflight(
   }
   const effectiveConfig: PreflightConfig = { ...config, logDir: resolvedLogDir };
 
-  let setupBuildOutcome: SetupBuildOutcome | undefined;
-  if (config.setup?.enabled === true) {
-    const setupResult = await ensureProjectSetup(targetPath, effectiveConfig.logDir, {
-      buildTimeoutMs: effectiveConfig.setup?.buildTimeoutMs,
-    });
-    limitations.push(...setupResult.limitations);
-    setupBuildOutcome = setupResult.buildOutcome;
-  }
-
   // Import check runners dynamically to keep dependencies optional
   const { runLintChecks } = await import("./checks/lint.js");
   const { runTypecheckChecks } = await import("./checks/typecheck.js");
@@ -213,10 +205,30 @@ export async function runPreflight(
   const { runCommitConventionCheck } = await import("./checks/commits.js");
   const { runCiSimulation } = await import("./checks/ci.js");
   const { runCustomChecks } = await import("./checks/custom.js");
-  const { runGitStateChecks } = await import("./checks/git.js");
+  const { runGitStateChecks, snapshotWorktreeState } = await import("./checks/git.js");
+
+  let setupBuildOutcome: SetupBuildOutcome | undefined;
+  // Snapshotted BEFORE `ensureProjectSetup` runs, and only when the
+  // clean-worktree check is actually going to run, so the check can judge
+  // `--setup`'s own install/build output against the worktree state that
+  // predates it instead of blaming its own writes (task b16ab5d8). `--setup`
+  // disabled or the git-state check disabled both leave this `undefined`,
+  // which keeps `runCleanWorktreeCheck`'s undifferentiated (byte-identical)
+  // behaviour for every run that isn't the `--setup` case this exists for.
+  let preSetupSnapshot: WorktreeSnapshot | undefined;
+  if (config.setup?.enabled === true) {
+    if (config.checks?.gitState !== false) {
+      preSetupSnapshot = await snapshotWorktreeState(targetPath);
+    }
+    const setupResult = await ensureProjectSetup(targetPath, effectiveConfig.logDir, {
+      buildTimeoutMs: effectiveConfig.setup?.buildTimeoutMs,
+    });
+    limitations.push(...setupResult.limitations);
+    setupBuildOutcome = setupResult.buildOutcome;
+  }
 
   if (config.checks?.gitState !== false) {
-    const result = await runGitStateChecks(targetPath, config);
+    const result = await runGitStateChecks(targetPath, config, preSetupSnapshot);
     checks.push(...result.checks);
     limitations.push(...result.limitations);
   }

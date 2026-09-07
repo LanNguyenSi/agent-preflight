@@ -27,6 +27,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   edit. See README's log directory section for the full precedence
   table.
 
+### Fixed
+
+- **`--setup`'s own install/build output no longer fails `clean-worktree`
+  (task b16ab5d8).** `ensureProjectSetup` (`npm ci`, the build step) writes
+  into the target worktree, and when the repo does not gitignore that
+  output the tool's own `clean-worktree` check would then fail on the
+  files `--setup` had just created, flipping `ready` to `false` for no
+  real reason. `runPreflight` now snapshots `git status --porcelain`
+  before `ensureProjectSetup` runs, and `runCleanWorktreeCheck` judges the
+  check against that snapshot: a change present before setup still fails
+  the check exactly as before, a change setup itself produced does not —
+  it stays a `pass`, with the produced paths named in the check's
+  `details` and in a `limitations` entry recommending `.gitignore`.
+  Without `--setup`, or when the snapshot itself could not be taken (a
+  git error, flagged via its own `limitations` entry), the check's
+  behaviour is unchanged. See README's "`--setup` can run the build for
+  you" section and `docs/checks.md`'s git-state row and Setup phase
+  section.
+
 ## [0.6.0] - 2026-09-07
 
 ### Docs

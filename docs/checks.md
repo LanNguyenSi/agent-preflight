@@ -6,7 +6,7 @@ Every check `agent-preflight` can run, what it verifies, and when it fires. Each
 
 | Check | Kind | What it catches | Tools tried | Status semantics |
 |-------|------|-----------------|-------------|------------------|
-| Git state, clean worktree | `git-state` | Tracked or untracked local changes that would diverge from what gets pushed | `git status --porcelain` | `fail` (blocker) when dirty |
+| Git state, clean worktree | `git-state` | Tracked or untracked local changes that would diverge from what gets pushed | `git status --porcelain` | `fail` (blocker) when dirty; under `--setup`, judged against a snapshot taken before setup ran, so setup's own install/build output is never the reason for a `fail` (see "Setup phase" below) |
 | Git state, protected branch | `git-state` | Pushing directly to `main`, `master`, or other configured branches | `git rev-parse --abbrev-ref HEAD` | `warn`, since some workflows allow direct push |
 | Lint | `lint` | Code-quality issues | `eslint`, `ruff`, `pint`, `phpcs`, plus `package.json` `scripts.lint` and other repo-native scripts (Java has no default linter; set `commands.lint`) | `fail` on lint errors |
 | Typecheck | `typecheck` | Type errors and broken builds | `tsc --noEmit`, `mypy`, `phpstan`, `psalm`, `mvn compile`, `gradle classes` | `fail` on type errors |
@@ -28,7 +28,7 @@ Every check `agent-preflight` can run, what it verifies, and when it fires. Each
   stays visible with its own status and the waiver's reason (see the
   README's "Waiving a permanently-failing check" section).
 
-`clean-worktree` is a blocker because local modifications make the result diverge from what will actually be pushed. `protected-branch` is a warning because direct-push workflows still exist.
+`clean-worktree` is a blocker because local modifications make the result diverge from what will actually be pushed. `protected-branch` is a warning because direct-push workflows still exist. Under `--setup`, `clean-worktree` still blocks on any change that predates setup, but never on output setup itself produced (untracked or modified files that are not gitignored are named in the check's `details` and in a `limitations` entry instead) — see "Setup phase" below.
 
 ## Auto-detection
 
@@ -134,6 +134,8 @@ Optional bootstrap before checks. Enable with `--setup` or `setup.enabled: true`
 - Gradle: `classes testClasses` before the Java compile and test checks
 
 The setup phase is intentionally conservative. It only runs when the project files make the step unambiguous. For specialized setups, use explicit `commands.*` overrides.
+
+`--setup`'s own `npm ci`/build output does not fail `clean-worktree`: the runner snapshots `git status --porcelain` before the setup phase runs, and `clean-worktree` judges the check against that snapshot instead of the current state. A change present in the snapshot (predates setup) still fails the check exactly as it always has; a change absent from the snapshot (produced by setup) does not — it stays a `pass`, with the produced paths named in the check's `details` and in a `limitations` entry recommending `.gitignore`. If the snapshot itself could not be taken (a git error), the check falls back to comparing the full current diff and adds a `limitations` entry saying so. See the README's "`--setup` can run the build for you" section.
 
 ## Behavior notes
 
