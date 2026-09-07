@@ -30,7 +30,7 @@ vi.mock("../src/sandbox.js", () => ({ runSandbox: mockRunSandbox }));
 vi.mock("../src/config.js", () => ({ loadConfig: mockLoadConfig }));
 
 // ── Import after mocks are registered ────────────────────────────────────────
-import { createProgram } from "../src/cli.js";
+import { createProgram, writeJsonAndExit } from "../src/cli.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -69,38 +69,61 @@ function makeNotReadyResult(): PreflightResult {
  * Call a CLI command using a fresh per-test program instance and capture the
  * exit code and console.log output.
  *
- * Returns a promise that resolves when process.exit is called (or parseAsync
- * completes without calling it).
+ * Returns a promise that resolves once process.exit has been (or reliably
+ * will not be) called.
+ *
+ * The `run --json` path (see `writeJsonAndExit` in src/cli.ts) calls
+ * `process.exit` from inside a `process.stdout.write` callback, deferred
+ * to flush the JSON payload before the process tears down (task 0089e6f5:
+ * an immediate `process.exit` right after the write could truncate a
+ * payload larger than the OS pipe buffer). That callback fires on a later
+ * microtask, after this function's `parseAsync` call already resolves (the
+ * action itself returns synchronously right after scheduling the write), so
+ * `process.exit` is neither mocked to throw nor assumed to have run yet by
+ * the time `parseAsync` settles: a couple of microtask turns are flushed
+ * below before inspecting `capturedCode`. Every current process.exit call
+ * site is the last statement in its branch, so a non-throwing mock never
+ * lets unrelated code run past it.
  */
 async function runCommand(args: string[]): Promise<{ exitCode: number | undefined; stdout: string }> {
   let capturedCode: number | undefined;
   const logLines: string[] = [];
 
-  const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
-    capturedCode = code as number;
-    // Throw to stop execution immediately after process.exit is called
-    throw new ExitSignal(code as number);
-  });
+  const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+    capturedCode = code;
+    return undefined as never;
+  }) as typeof process.exit);
   const consoleSpy = vi.spyOn(console, "log").mockImplementation((...logArgs: unknown[]) => {
     logLines.push(logArgs.map(String).join(" "));
   });
+  // Silences and short-circuits process.stdout.write (used by the --json
+  // path via writeJsonAndExit) so the JSON payload never actually prints
+  // during the test run, while still invoking the write callback
+  // asynchronously the way a real pipe/TTY write would.
+  const stdoutWriteSpy = vi.spyOn(process.stdout, "write").mockImplementation(((
+    _chunk: unknown,
+    encodingOrCallback?: unknown,
+    maybeCallback?: unknown
+  ) => {
+    const callback = typeof encodingOrCallback === "function" ? encodingOrCallback : maybeCallback;
+    if (typeof callback === "function") queueMicrotask(() => (callback as () => void)());
+    return true;
+  }) as typeof process.stdout.write);
 
   try {
     await localProgram.parseAsync(args, { from: "user" });
-  } catch (err) {
-    if (!(err instanceof ExitSignal)) throw err;
   } finally {
+    // Flush enough microtask turns for a deferred writeJsonAndExit exit
+    // call (write callback -> exitOnce -> process.exit) to have run.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
     exitSpy.mockRestore();
     consoleSpy.mockRestore();
+    stdoutWriteSpy.mockRestore();
   }
 
   return { exitCode: capturedCode, stdout: logLines.join("\n") };
-}
-
-class ExitSignal extends Error {
-  constructor(public readonly code: number) {
-    super(`process.exit(${code})`);
-  }
 }
 
 // ── Setup / Teardown ──────────────────────────────────────────────────────────
@@ -370,5 +393,78 @@ describe("sandbox command", () => {
     expect(repoPath).toBe(".");
     expect(opts.print).toBe(true);
     expect(opts.json).toBe(true);
+  });
+});
+
+// ── writeJsonAndExit: EPIPE handling (task 0089e6f5) ──────────────────────────
+//
+// `run --json`'s exit path now waits for the stdout write callback before
+// exiting (see the docblock on writeJsonAndExit in src/cli.ts), so that a
+// payload larger than the OS pipe buffer is fully flushed before the process
+// tears down. That write can itself fail with EPIPE when the reader on the
+// other end of the pipe closes early (e.g. `preflight run --json | head -c
+// 100`); Node has no default handler for a stream 'error' event, so an
+// unhandled EPIPE would otherwise crash the process with a non-deterministic
+// exit code instead of the one the CLI's own ready/not-ready contract
+// intends. These tests exercise writeJsonAndExit directly against a mocked
+// process.stdout, since reproducing a real EPIPE through an actual OS pipe
+// is a race that this repo's own sandboxed test runner cannot reliably force
+// (see the implementer's report for task 0089e6f5 for what was tried).
+describe("writeJsonAndExit: EPIPE handling", () => {
+  it("exits with the intended code when the write fails with EPIPE, instead of crashing or swallowing it", () => {
+    let capturedCode: number | undefined;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      capturedCode = code;
+      return undefined as never;
+    }) as typeof process.exit);
+    // Simulates a reader that closed the pipe before the payload was fully
+    // written: the write never calls its success callback, only the stream's
+    // 'error' event fires (Node's real EPIPE behavior for a broken pipe).
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation((() => true) as typeof process.stdout.write);
+
+    const errorListenersBefore = process.stdout.listeners("error");
+    try {
+      writeJsonAndExit({ ready: false }, 1);
+      const epipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+      process.stdout.emit("error", epipeError);
+
+      expect(capturedCode).toBe(1);
+    } finally {
+      // writeJsonAndExit registers a fresh "error" listener on the real,
+      // shared process.stdout on every call; remove exactly the one this
+      // test added so repeated runs don't accumulate listeners on the
+      // process-wide stream.
+      const addedListeners = process.stdout.listeners("error").filter((l) => !errorListenersBefore.includes(l));
+      addedListeners.forEach((l) => process.stdout.removeListener("error", l as (...args: unknown[]) => void));
+      writeSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+  });
+
+  it("still exits with the intended code on a normal, fully-flushed write", async () => {
+    let capturedCode: number | undefined;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      capturedCode = code;
+      return undefined as never;
+    }) as typeof process.exit);
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(((
+      _chunk: unknown,
+      encodingOrCallback?: unknown,
+      maybeCallback?: unknown
+    ) => {
+      const callback = typeof encodingOrCallback === "function" ? encodingOrCallback : maybeCallback;
+      if (typeof callback === "function") queueMicrotask(() => (callback as () => void)());
+      return true;
+    }) as typeof process.stdout.write);
+
+    try {
+      writeJsonAndExit({ ready: true }, 0);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(capturedCode).toBe(0);
+    } finally {
+      writeSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
   });
 });

@@ -9,6 +9,51 @@ import { VERSION } from "./version.js";
 import type { PreflightConfig } from "./types.js";
 
 /**
+ * Writes `payload` as pretty-printed JSON to stdout, then exits with
+ * `exitCode` only once that write has actually reached the OS (the write
+ * callback), instead of calling `process.exit` immediately after
+ * `console.log`.
+ *
+ * `console.log`/`process.stdout.write` to a pipe is asynchronous: a payload
+ * larger than the OS pipe buffer (commonly 64 KB) only has its first chunk
+ * copied into the kernel synchronously, and the remainder is queued
+ * internally by Node to be written once the reader drains the pipe. Calling
+ * `process.exit` right after `console.log` tears the process down before
+ * that queued remainder is ever written, so a reader on the other end of the
+ * pipe sees a cut-off, unparseable JSON document. Waiting for the write
+ * callback guarantees the whole payload has been handed to the OS first.
+ *
+ * If the reader closes the pipe early (`... | head -c 100`), the write
+ * itself fails with EPIPE. That surfaces as an `error` event on
+ * `process.stdout` (not necessarily the write callback), which Node has no
+ * default handler for and would otherwise crash the process with an
+ * uncaught "write EPIPE" exception and a non-deterministic exit code. The
+ * `error` listener here swallows exactly that case and still exits with the
+ * intended `exitCode`, so a reader that stops reading early does not change
+ * the process's exit status.
+ */
+export function writeJsonAndExit(payload: unknown, exitCode: number): void {
+  let exited = false;
+  const exitOnce = () => {
+    if (exited) return;
+    exited = true;
+    process.exit(exitCode);
+  };
+
+  process.stdout.on("error", (err: NodeJS.ErrnoException) => {
+    if (err && err.code === "EPIPE") {
+      exitOnce();
+      return;
+    }
+    throw err;
+  });
+
+  process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`, () => {
+    exitOnce();
+  });
+}
+
+/**
  * Build a fresh Command tree. Exported so tests can obtain an isolated
  * instance per test — Commander retains option state between parseAsync
  * calls on the same instance, which causes option leaks across tests.
@@ -41,8 +86,8 @@ export function createProgram(): Command {
       const result = await runPreflight(resolvedPath, config);
 
       if (opts.json) {
-        console.log(JSON.stringify(result, null, 2));
-        process.exit(result.ready ? 0 : 1);
+        writeJsonAndExit(result, result.ready ? 0 : 1);
+        return;
       }
 
       const icon = result.ready ? "✅" : "❌";
