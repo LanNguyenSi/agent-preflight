@@ -717,6 +717,10 @@ describe("npm audit unavailable outcome through runPreflight", () => {
       timedOut: false,
     });
 
+    // logdir-guard: baseConfig only enables checks.audit, and the npm-audit
+    // path (npmAuditRunner + the classifier above) never calls
+    // runShellCheck/persistFailureOutput, so this never reaches the real
+    // ~/.agent-preflight/logs.
     const skippedResult = await runPreflight(repoPath, baseConfig);
     restore();
 

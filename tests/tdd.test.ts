@@ -168,6 +168,8 @@ describe("runTddCheck", () => {
 
     const target = path.join(tmpDir, "packages/a");
     expect((await runTddCheck(target, defaultConfig)).checks[0].status).toBe("pass");
+    // logdir-guard: tddOnlyConfig() only enables checks.tdd, and tdd.ts
+    // never calls runShellCheck/persistFailureOutput.
     expect((await runPreflight(tmpDir, tddOnlyConfig("packages/a"))).checks.find((check) => check.kind === "tdd")?.status).toBe("pass");
   });
 

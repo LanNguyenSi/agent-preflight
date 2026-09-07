@@ -348,6 +348,9 @@ describe("loadConfig malformed field handling (integration)", () => {
 
     const config = loadConfig(repoPath);
 
+    // logdir-guard: lint/typecheck/test/audit are all false above, so this
+    // never reaches persistFailureOutput regardless of the malformed
+    // logDir:123 (dropped back to the default by loadConfig's validation).
     await expect(runPreflight(repoPath, config)).resolves.toBeDefined();
     expect(warnSpy).toHaveBeenCalled();
   });
@@ -400,6 +403,9 @@ describe("loadConfig malformed field handling (integration)", () => {
     // defaultConfig()'s `secretDetection: true`.
     expect(config.checks?.secretDetection).toEqual({ acknowledge: "reviewed, false positive" });
 
+    // logdir-guard: lint/typecheck/test/audit are all false above, and
+    // secretDetection doesn't route through runShellCheck/persistFailureOutput,
+    // so this never reaches the real ~/.agent-preflight/logs.
     const result = await runPreflight(repoPath, config);
 
     expect(

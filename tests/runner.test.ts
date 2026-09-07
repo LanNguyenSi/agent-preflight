@@ -35,7 +35,11 @@ describe("runPreflight", () => {
       commitConvention: true,
       secretDetection: true,
     };
-
+    // logdir-guard: lint/typecheck/test/audit are all false above, and
+    // gitState/commitConvention/secretDetection don't route through
+    // runShellCheck/persistFailureOutput, so this never reaches the real
+    // ~/.agent-preflight/logs even though the repoPath below is this
+    // package's own root rather than a temp dir.
     const result = await runPreflight(path.resolve(__dirname, ".."), config);
 
     expect(result).toHaveProperty("ready");
@@ -55,6 +59,8 @@ describe("runPreflight", () => {
     const config = defaultConfig();
     config.checks = { gitState: false, lint: false, typecheck: false, test: false, audit: false, ciSimulation: false, commitConvention: false, secretDetection: false, tdd: false };
 
+    // logdir-guard: every checks.* toggle above is false, so this never
+    // reaches persistFailureOutput.
     const result = await runPreflight(path.resolve(__dirname, ".."), config);
 
     // With no checks running, no blockers → confidence is low but result is valid
@@ -67,6 +73,8 @@ describe("confidence scoring", () => {
     const config = defaultConfig();
     config.checks = { gitState: false, lint: false, typecheck: false, test: false, audit: false, ciSimulation: false, commitConvention: false, secretDetection: false, tdd: false };
 
+    // logdir-guard: every checks.* toggle above is false, so this never
+    // reaches persistFailureOutput.
     const result = await runPreflight(path.resolve(__dirname, ".."), config);
     // All checks skipped → many limitations → low confidence
     expect(result.confidence).toBeLessThan(0.5);
@@ -333,6 +341,8 @@ describe("checks.secretDetection.acknowledge is not supported (Orchestrator deci
         secretDetection: { acknowledge: "reviewed, false positive" },
       } as unknown as NonNullable<PreflightConfig["checks"]>;
 
+      // logdir-guard: every other checks.* toggle above is false, and
+      // secretDetection doesn't route through runShellCheck/persistFailureOutput.
       const result = await runPreflight(repoPath, config);
 
       const secretCheck = result.checks.find((c) => c.kind === "secret-detection");
@@ -353,6 +363,8 @@ describe("checks.secretDetection.acknowledge is not supported (Orchestrator deci
       const config = defaultConfig();
       config.checks = { ...allChecksDisabled(), secretDetection: false };
 
+      // logdir-guard: every checks.* toggle above is false, so this never
+      // reaches persistFailureOutput.
       const result = await runPreflight(repoPath, config);
 
       expect(

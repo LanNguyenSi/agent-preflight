@@ -92,6 +92,7 @@ describe("profile configuration", () => {
       commands: {
         test: ["true"],
       },
+      logDir: path.join(repoPath, ".preflight-test-logs"),
     });
 
     expect(result.blockers).toHaveLength(0);
@@ -147,6 +148,7 @@ exit 1
         commitConvention: false,
         ciSimulation: false,
       },
+      logDir: path.join(repoPath, ".preflight-test-logs"),
     });
 
     expect(fs.existsSync(path.join(repoPath, "node_modules", ".install-complete"))).toBe(true);
@@ -185,6 +187,7 @@ if [[ "$1" == "run" && "$2" == "test" ]]; then
   if [[ -f node_modules/.install-complete ]]; then
     exit 0
   else
+    echo "Error: cannot find module 'node_modules/.install-complete' -- run npm ci first" >&2
     exit 1
   fi
 fi
@@ -202,6 +205,7 @@ exit 1
         commitConvention: false,
         ciSimulation: false,
       },
+      logDir: path.join(repoPath, ".preflight-test-logs"),
     });
 
     expect(fs.existsSync(path.join(repoPath, "node_modules", ".install-complete"))).toBe(false);
@@ -237,6 +241,7 @@ exit 1
           command: `[ "$(pwd)" = "${resolvedWorkingDir}" ]`,
         },
       ],
+      logDir: path.join(repoPath, ".preflight-test-logs"),
     });
 
     expect(result.blockers).toHaveLength(0);
@@ -261,6 +266,7 @@ exit 1
         commitConvention: false,
         ciSimulation: false,
       },
+      logDir: path.join(repoPath, ".preflight-test-logs"),
     });
 
     expect(result.limitations).toContain("package.json found in cli/ - set workingDir: cli in .preflight.json");
@@ -313,6 +319,7 @@ exit 1
         commitConvention: false,
         ciSimulation: false,
       },
+      logDir: path.join(repoPath, ".preflight-test-logs"),
     });
 
     expect(fs.existsSync(path.join(repoPath, "vendor", "autoload.php"))).toBe(true);
@@ -364,6 +371,7 @@ exit 1
         commitConvention: false,
         ciSimulation: false,
       },
+      logDir: path.join(repoPath, ".preflight-test-logs"),
     });
 
     expect(fs.existsSync(path.join(repoPath, ".preflight-venv", "bin", "pytest"))).toBe(true);
@@ -404,6 +412,7 @@ exit 1
         commitConvention: false,
         ciSimulation: false,
       },
+      logDir: path.join(repoPath, ".preflight-test-logs"),
     });
 
     expect(fs.existsSync(path.join(repoPath, "target", ".setup-complete"))).toBe(true);
@@ -449,6 +458,7 @@ exit 0
         commitConvention: false,
         ciSimulation: false,
       },
+      logDir: path.join(repoPath, ".preflight-test-logs"),
     });
 
     expect(result.checks.find((check) => check.name === "tsc-lint-fallback")?.status).toBe("pass");
@@ -475,6 +485,7 @@ exit 0
           failOnError: false,
         },
       ],
+      logDir: path.join(repoPath, ".preflight-test-logs"),
     });
 
     expect(result.blockers).toHaveLength(0);
