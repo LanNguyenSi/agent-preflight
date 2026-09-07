@@ -27,6 +27,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   edit. See README's log directory section for the full precedence
   table.
 
+### Fixed
+
+- **`--setup`'s own untracked install/build output no longer fails
+  `clean-worktree`; a tracked file it modifies still does (task b16ab5d8,
+  round 2: review finding F1).** `ensureProjectSetup` (`npm ci`, the build
+  step) writes into the target worktree, and when the repo does not
+  gitignore that output the tool's own `clean-worktree` check would then
+  fail on the files `--setup` had just created, flipping `ready` to
+  `false` for no real reason. `runPreflight` now snapshots `git status
+  --porcelain -z` before `ensureProjectSetup` runs, and
+  `runCleanWorktreeCheck` judges the check against that snapshot: a change
+  present before setup still fails the check exactly as before. Of the
+  paths absent from the snapshot (produced by setup), only UNTRACKED ones
+  are excused, staying a `pass`, with the produced paths named in the
+  check's `details` (`--json` and MCP) and in a `limitations` entry (shown
+  by the CLI) recommending `.gitignore`. A TRACKED path setup modified or
+  removed (a committed `dist/` file the build rewrote, `package-lock.json`
+  rewritten by `npm ci`) still fails, naming the paths and recommending
+  they be committed or untracked, with no `.gitignore` suggestion. Without
+  `--setup`, or when the snapshot itself could not be taken (a git error,
+  flagged via its own `limitations` entry), the check's behaviour is
+  unchanged. Round 2 also moved the snapshot and its per-path comparison
+  from the newline-based `git status --porcelain` text format to `-z`
+  (NUL-separated) parsing, so a repository-controlled filename containing
+  a literal newline or a literal `" -> "` substring can no longer be
+  misread as a rename or corrupt the parsed path (review finding F4).
+  Round 3 additionally names the paths (and adds the `.gitignore` remedy)
+  when a SECOND `--setup` run finds that same untracked output already
+  present in the pre-setup snapshot (left un-ignored, it now reads as
+  pre-existing dirt and blocks, rather than the old undifferentiated
+  message), adds a `limitations` entry to the TRACKED-path failure so the
+  CLI shows the paths too (review round 3 finding N2), and sanitizes every
+  path name emitted in a check message/limitation (control characters
+  escaped, length capped) before interpolating it, so a repository-
+  controlled filename can no longer forge extra output lines (review
+  round 3 finding N3). See README's "`--setup` can run the build for
+  you" section and `docs/checks.md`'s git-state row and Setup phase
+  section.
+
 ## [0.6.0] - 2026-09-07
 
 ### Docs
