@@ -113,7 +113,14 @@ const MAX_PATH_NAME_LENGTH = 200;
 // newline can no longer forge an extra line in the CLI's Limitations
 // block, and caps the result at `MAX_PATH_NAME_LENGTH` so one absurdly
 // long name can't blow up the message either (task b16ab5d8, review
-// round 3 finding N3).
+// round 3 finding N3). Reusing `JSON.stringify`'s escaping also means a
+// literal backslash or double quote in a path renders escaped (`\\`,
+// `\"`) rather than verbatim -- an accepted side effect of borrowing the
+// same escaper, not something a caller needs to unescape (task 4036f6b7:
+// kept as-is rather than narrowed to control characters only, since a
+// literal backslash rendering escaped is harmless and narrowing would add
+// surface for no behaviour gain; see CHANGELOG).
+
 function sanitizePathName(name: string): string {
   const escaped = JSON.stringify(name).slice(1, -1);
   return escaped.length > MAX_PATH_NAME_LENGTH
@@ -295,7 +302,7 @@ async function runCleanWorktreeCheck(
     // status keeps today's undifferentiated message unchanged: nothing
     // about a tracked change suggests a `.gitignore` remedy.
     if (preExisting.length > 0) {
-      const allPreExistingUntracked = preExisting.every((entry) => entry.status === "??");
+      const allPreExistingUntracked = preExisting.every((entry) => isUntrackedOrIgnoredStatus(entry.status));
 
       if (allPreExistingUntracked) {
         const names = preExisting.map((entry) => entry.paths[0]);

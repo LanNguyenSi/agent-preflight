@@ -232,6 +232,52 @@ describe("clean-worktree under --setup (fixture: monorepo-build-required)", () =
     });
   });
 
+  // Task 4036f6b7 (lows from b16ab5d8's review): the "control" test above
+  // only exercises an all-tracked pre-existing set, and the untracked
+  // build-output test only exercises an all-untracked pre-existing set
+  // (run 1, no prior --setup run). Neither pins the MIXED case -- one
+  // pre-existing untracked entry alongside one pre-existing tracked
+  // entry -- where `allPreExistingUntracked` must read false (not every
+  // entry is untracked) and fall through to today's undifferentiated
+  // message, with no .gitignore remedy and no path list, exactly like an
+  // all-tracked pre-existing set. A predicate weakened to
+  // `preExisting.length > 0` would instead take the untracked-remedy
+  // branch here, so this discriminates that mutant.
+  it("a MIXED pre-existing set (one untracked plus one tracked entry, both predating --setup) still yields the plain undifferentiated message, no .gitignore remedy or path list", async () => {
+    await withFixture("monorepo-build-required", async (repoPath, logDir) => {
+      const run1 = await runPreflight(repoPath, {
+        checks: CLEAN_WORKTREE_CHECKS,
+        logDir,
+        setup: { enabled: true },
+      });
+      expect(cleanWorktreeCheckOf(run1)?.status).toBe("pass");
+
+      // Before the second --setup run: the untracked dist/ output from
+      // run 1 is still there (un-gitignored, exactly like N1), AND a
+      // tracked file is also dirtied -- one pre-existing untracked entry
+      // plus one pre-existing tracked entry.
+      fs.appendFileSync(path.join(repoPath, "package.json"), "\n");
+
+      const run2 = await runPreflight(repoPath, {
+        checks: CLEAN_WORKTREE_CHECKS,
+        logDir,
+        setup: { enabled: true },
+      });
+
+      const check2 = cleanWorktreeCheckOf(run2);
+      expect(check2?.status).toBe("fail");
+      expect(check2?.message).toBe("Repository has uncommitted changes");
+      expect(check2?.details).toEqual([
+        "Commit or stash changes before relying on preflight results for a push",
+      ]);
+      expect(run2.ready).toBe(false);
+
+      const text2 = `${(check2?.details ?? []).join(" ")} ${run2.limitations.join(" ")}`;
+      expect(text2.toLowerCase()).not.toContain(".gitignore");
+      expect(text2).not.toContain("Untracked paths:");
+    });
+  });
+
   it("a pre-existing untracked DIRECTORY (collapsed '?? dir/' in both the snapshot and the current state) is treated as pre-existing dirt and fails, naming the directory", async () => {
     await withFixture("monorepo-build-required", async (repoPath, logDir) => {
       // Simulate a leftover un-gitignored dist/ directory that predates
