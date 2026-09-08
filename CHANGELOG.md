@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Cleaned up three lows accepted at the end of task b16ab5d8 (task
+  4036f6b7).** `allPreExistingUntracked` (`src/checks/git.ts`) now reuses
+  `isUntrackedOrIgnoredStatus` instead of testing `entry.status === "??"`
+  directly, so an ignored (`!!`) pre-existing entry reads the same way an
+  untracked one does (unreachable today, since the check never passes
+  `--ignored`), matching the produced-paths branch a few lines below it;
+  a test added to `tests/setup-clean-worktree.test.ts` covers a
+  MIXED pre-existing set (one untracked entry alongside one tracked
+  entry) to pin the fall-through to the plain "Repository has
+  uncommitted changes" message, which previously was only pinned
+  indirectly via the all-tracked control test. `sanitizePathName`'s
+  comment now states, rather than leaves implicit, that reusing
+  `JSON.stringify`'s escaping also renders a literal backslash or double
+  quote in a path escaped (`\\`, `\"`); kept as-is (not narrowed to
+  control characters only) since that's a harmless side effect of
+  borrowing the escaper and narrowing it would add surface for no
+  behaviour gain. No behaviour change to the snapshot rule itself.
+
 ## [0.6.1] - 2026-09-07
 
 ### Added
