@@ -124,6 +124,10 @@ const MAX_PATH_NAME_LENGTH = 200;
 // (task dd8258ca: narrowed rather than accepted, since U+009B is a
 // terminal-honoured escape introducer and the extra pass is a small
 // replace over one code-point class; see CHANGELOG).
+// Left deliberately out of scope for task dd8258ca and still passed
+// through verbatim: the bidi control characters U+202A to U+202E and
+// U+2066 to U+2069, other Cf/invisible format characters such as
+// U+200B (zero-width space) and U+FEFF (BOM), and NBSP (U+00A0).
 const EXTRA_ESCAPE_PATTERN = /[\u007f-\u009f\u2028\u2029]/g;
 
 function escapeExtraControlChars(escaped: string): string {

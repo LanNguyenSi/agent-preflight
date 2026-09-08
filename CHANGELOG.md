@@ -26,7 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   wording from task 4036f6b7. A new test in `tests/git-state.test.ts`
   pins a path name containing DEL, U+009B and U+2028 to the escaped
   rendering. No change to the C0 escaping, the backslash/quote
-  side-effect, or `MAX_PATH_NAME_LENGTH` truncation.
+  side-effect, or the `MAX_PATH_NAME_LENGTH` truncation rule itself;
+  the cap counts the escaped string's length, so a name carrying the
+  newly escaped class now truncates earlier than before, and a cut
+  can land inside a `\uXXXX` sequence, as it already could for the
+  C0 class.
 
 - **Cleaned up three lows accepted at the end of task b16ab5d8 (task
   4036f6b7).** `allPreExistingUntracked` (`src/checks/git.ts`) now reuses
