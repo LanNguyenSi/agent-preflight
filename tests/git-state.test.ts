@@ -379,4 +379,45 @@ describe("clean-worktree with a pre-setup snapshot", () => {
     expect(detail).toContain("a".repeat(200));
     expect(detail).not.toContain("a".repeat(201));
   });
+
+  it("dd8258ca: a setup-produced path name containing DEL, a C1 control character (U+009B CSI) and a Unicode line separator (U+2028) is escaped, not passed through", async () => {
+    const repoPath = makeTempDir("preflight-git-state-c1-name-");
+    initGitRepo(repoPath);
+    git(repoPath, ["checkout", "-b", "feature/example"]);
+
+    const DEL = String.fromCharCode(0x7f);
+    const CSI = String.fromCharCode(0x9b);
+    const LINE_SEPARATOR = String.fromCharCode(0x2028);
+    const weirdName = `weird${DEL}${CSI}${LINE_SEPARATOR}name.txt`;
+    let weirdNameSupported = true;
+    try {
+      fs.writeFileSync(path.join(repoPath, weirdName), "content\n", "utf8");
+    } catch {
+      weirdNameSupported = false;
+    }
+    if (!weirdNameSupported) {
+      // Some filesystems reject DEL/C1/line-separator bytes in a name;
+      // nothing to pin here in that case.
+      return;
+    }
+    fs.rmSync(path.join(repoPath, weirdName));
+
+    const snapshot = await snapshotWorktreeState(repoPath);
+    expect(snapshot.paths?.size).toBe(0);
+
+    fs.writeFileSync(path.join(repoPath, weirdName), "content\n", "utf8");
+
+    const result = await runGitStateChecks(repoPath, defaultConfig(), snapshot);
+
+    const check = result.checks.find((c) => c.name === "clean-worktree");
+    expect(check?.status).toBe("pass");
+    const expectedEscaped = "weird\\u007f\\u009b\\u2028name.txt";
+    const detail = (check?.details ?? []).find((d) => d.includes("weird")) ?? "";
+    expect(detail).toContain(expectedEscaped);
+    expect(detail).not.toContain(DEL);
+    expect(detail).not.toContain(CSI);
+    expect(detail).not.toContain(LINE_SEPARATOR);
+    const limitation = result.limitations.find((l) => l.includes("weird")) ?? "";
+    expect(limitation).toContain(expectedEscaped);
+  });
 });
