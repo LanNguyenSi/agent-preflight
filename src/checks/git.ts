@@ -109,21 +109,33 @@ const MAX_PATH_NAME_LENGTH = 200;
 // path can be named anything the filesystem allows), and this string gets
 // interpolated verbatim into `details`/`limitations` text that the CLI
 // prints as-is. Escapes C0 control characters (below U+0020, including
-// \n, \r, \t, \x1b) the same way `JSON.stringify` would; DEL (U+007F)
-// and the C1 range (U+0080-U+009F, including U+009B CSI) are not escaped
-// and pass through, so an embedded C0 newline can no longer forge an
-// extra line in the CLI's Limitations block, and caps the result at
-// `MAX_PATH_NAME_LENGTH` so one absurdly long name can't blow up the
-// message either (task b16ab5d8, review round 3 finding N3). Reusing
-// `JSON.stringify`'s escaping also means a literal backslash or double
-// quote in a path renders escaped (`\\`, `\"`) rather than verbatim --
-// an accepted side effect of borrowing the same escaper, not something a
-// caller needs to unescape (task 4036f6b7: kept as-is rather than
-// narrowed to control characters only, since a literal backslash
-// rendering escaped is harmless and narrowing would add surface for no
-// behaviour gain; see CHANGELOG).
+// \n, \r, \t, \x1b) the same way `JSON.stringify` would, so an embedded
+// C0 newline can no longer forge an extra line in the CLI's Limitations
+// block, and caps the result at `MAX_PATH_NAME_LENGTH` so one absurdly
+// long name can't blow up the message either (task b16ab5d8, review
+// round 3 finding N3). Reusing `JSON.stringify`'s escaping also means a
+// literal backslash or double quote in a path renders escaped (`\\`,
+// `\"`) rather than verbatim -- an accepted side effect of borrowing the
+// same escaper, not something a caller needs to unescape (task 4036f6b7).
+// `JSON.stringify` alone leaves DEL (U+007F), the C1 range (U+0080-U+009F,
+// including U+009B CSI, an 8-bit escape introducer some terminals honour)
+// and the line separators U+2028/U+2029 untouched, so this additionally
+// renders that class as `\uXXXX` the same way the C0 range already is
+// (task dd8258ca: narrowed rather than accepted, since U+009B is a
+// terminal-honoured escape introducer and the extra pass is a small
+// replace over one code-point class; see CHANGELOG).
+// Left deliberately out of scope for task dd8258ca and still passed
+// through verbatim: the bidi control characters U+202A to U+202E and
+// U+2066 to U+2069, other Cf/invisible format characters such as
+// U+200B (zero-width space) and U+FEFF (BOM), and NBSP (U+00A0).
+const EXTRA_ESCAPE_PATTERN = /[\u007f-\u009f\u2028\u2029]/g;
+
+function escapeExtraControlChars(escaped: string): string {
+  return escaped.replace(EXTRA_ESCAPE_PATTERN, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
 function sanitizePathName(name: string): string {
-  const escaped = JSON.stringify(name).slice(1, -1);
+  const escaped = escapeExtraControlChars(JSON.stringify(name).slice(1, -1));
   return escaped.length > MAX_PATH_NAME_LENGTH
     ? `${escaped.slice(0, MAX_PATH_NAME_LENGTH)}…`
     : escaped;

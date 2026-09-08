@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`sanitizePathName` now escapes DEL, the C1 range and the Unicode line
+  separators, narrowing the residual left open by task 4036f6b7 (task
+  dd8258ca).** Measured at the base with node: `JSON.stringify` renders
+  U+001F as `\u001f` (length 8, quotes included) but passes U+007F
+  (DEL), the whole C1 range U+0080-U+009F (including U+009B, a CSI
+  escape introducer some terminals honour), U+2028 and U+2029 through
+  verbatim (length 3: just the quotes plus the raw character). Decision:
+  narrowed, not accepted. `src/checks/git.ts`'s `sanitizePathName` now
+  runs a second pass after `JSON.stringify` that renders that class as
+  `\uXXXX` the same way the C0 range already is, so a `--setup`-produced
+  path name carrying one of these code points can no longer smuggle a
+  raw C1 escape sequence or a Unicode line terminator into the CLI's
+  Limitations text. The comment above the function documents the
+  narrowed class and supersedes the "not escaped and pass through"
+  wording from task 4036f6b7. A new test in `tests/git-state.test.ts`
+  pins a path name containing DEL, U+009B and U+2028 to the escaped
+  rendering. No change to the C0 escaping, the backslash/quote
+  side-effect, or the `MAX_PATH_NAME_LENGTH` truncation rule itself;
+  the cap counts the escaped string's length, so a name carrying the
+  newly escaped class now truncates earlier than before, and a cut
+  can land inside a `\uXXXX` sequence, as it already could for the
+  C0 class.
+
 - **Cleaned up three lows accepted at the end of task b16ab5d8 (task
   4036f6b7).** `allPreExistingUntracked` (`src/checks/git.ts`) now reuses
   `isUntrackedOrIgnoredStatus` instead of testing `entry.status === "??"`

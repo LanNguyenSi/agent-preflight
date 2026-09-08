@@ -379,4 +379,53 @@ describe("clean-worktree with a pre-setup snapshot", () => {
     expect(detail).toContain("a".repeat(200));
     expect(detail).not.toContain("a".repeat(201));
   });
+
+  it("dd8258ca: a setup-produced path name containing DEL, the C1 range's bounds (U+0080, U+009B CSI, U+009F) and both Unicode line separators (U+2028, U+2029) is escaped, not passed through", async (ctx) => {
+    const repoPath = makeTempDir("preflight-git-state-c1-name-");
+    initGitRepo(repoPath);
+    git(repoPath, ["checkout", "-b", "feature/example"]);
+
+    const DEL = String.fromCharCode(0x7f);
+    const C1_LOW = String.fromCharCode(0x80);
+    const CSI = String.fromCharCode(0x9b);
+    const C1_HIGH = String.fromCharCode(0x9f);
+    const LINE_SEPARATOR = String.fromCodePoint(0x2028);
+    const PARAGRAPH_SEPARATOR = String.fromCodePoint(0x2029);
+    const weirdName = `weird${DEL}${C1_LOW}${CSI}${C1_HIGH}${LINE_SEPARATOR}${PARAGRAPH_SEPARATOR}name.txt`;
+    let weirdNameSupported = true;
+    try {
+      fs.writeFileSync(path.join(repoPath, weirdName), "content\n", "utf8");
+    } catch {
+      weirdNameSupported = false;
+    }
+    if (!weirdNameSupported) {
+      // Some filesystems reject DEL/C1/line-separator bytes in a name;
+      // nothing to pin here in that case.
+      ctx.skip();
+      return;
+    }
+    fs.rmSync(path.join(repoPath, weirdName));
+
+    const snapshot = await snapshotWorktreeState(repoPath);
+    expect(snapshot.paths?.size).toBe(0);
+
+    fs.writeFileSync(path.join(repoPath, weirdName), "content\n", "utf8");
+
+    const result = await runGitStateChecks(repoPath, defaultConfig(), snapshot);
+
+    const check = result.checks.find((c) => c.name === "clean-worktree");
+    expect(check?.status).toBe("pass");
+    const expectedEscaped =
+      "weird\\u007f\\u0080\\u009b\\u009f\\u2028\\u2029name.txt";
+    const detail = (check?.details ?? []).find((d) => d.includes("weird")) ?? "";
+    expect(detail).toContain(expectedEscaped);
+    expect(detail).not.toContain(DEL);
+    expect(detail).not.toContain(C1_LOW);
+    expect(detail).not.toContain(CSI);
+    expect(detail).not.toContain(C1_HIGH);
+    expect(detail).not.toContain(LINE_SEPARATOR);
+    expect(detail).not.toContain(PARAGRAPH_SEPARATOR);
+    const limitation = result.limitations.find((l) => l.includes("weird")) ?? "";
+    expect(limitation).toContain(expectedEscaped);
+  });
 });
