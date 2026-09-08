@@ -108,19 +108,20 @@ const MAX_PATH_NAME_LENGTH = 200;
 // `names` are repository-controlled (a committed or `--setup`-produced
 // path can be named anything the filesystem allows), and this string gets
 // interpolated verbatim into `details`/`limitations` text that the CLI
-// prints as-is. Escapes control characters (C0, DEL, C1 -- at minimum
-// \n, \r, \t, \x1b) the same way `JSON.stringify` would, so an embedded
-// newline can no longer forge an extra line in the CLI's Limitations
-// block, and caps the result at `MAX_PATH_NAME_LENGTH` so one absurdly
-// long name can't blow up the message either (task b16ab5d8, review
-// round 3 finding N3). Reusing `JSON.stringify`'s escaping also means a
-// literal backslash or double quote in a path renders escaped (`\\`,
-// `\"`) rather than verbatim -- an accepted side effect of borrowing the
-// same escaper, not something a caller needs to unescape (task 4036f6b7:
-// kept as-is rather than narrowed to control characters only, since a
-// literal backslash rendering escaped is harmless and narrowing would add
-// surface for no behaviour gain; see CHANGELOG).
-
+// prints as-is. Escapes C0 control characters (below U+0020, including
+// \n, \r, \t, \x1b) the same way `JSON.stringify` would; DEL (U+007F)
+// and the C1 range (U+0080-U+009F, including U+009B CSI) are not escaped
+// and pass through, so an embedded C0 newline can no longer forge an
+// extra line in the CLI's Limitations block, and caps the result at
+// `MAX_PATH_NAME_LENGTH` so one absurdly long name can't blow up the
+// message either (task b16ab5d8, review round 3 finding N3). Reusing
+// `JSON.stringify`'s escaping also means a literal backslash or double
+// quote in a path renders escaped (`\\`, `\"`) rather than verbatim --
+// an accepted side effect of borrowing the same escaper, not something a
+// caller needs to unescape (task 4036f6b7: kept as-is rather than
+// narrowed to control characters only, since a literal backslash
+// rendering escaped is harmless and narrowing would add surface for no
+// behaviour gain; see CHANGELOG).
 function sanitizePathName(name: string): string {
   const escaped = JSON.stringify(name).slice(1, -1);
   return escaped.length > MAX_PATH_NAME_LENGTH

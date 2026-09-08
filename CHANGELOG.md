@@ -13,8 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   4036f6b7).** `allPreExistingUntracked` (`src/checks/git.ts`) now reuses
   `isUntrackedOrIgnoredStatus` instead of testing `entry.status === "??"`
   directly, so an ignored (`!!`) pre-existing entry reads the same way an
-  untracked one does, matching the produced-paths branch a few lines
-  below it; a test added to `tests/setup-clean-worktree.test.ts` covers a
+  untracked one does (unreachable today, since the check never passes
+  `--ignored`), matching the produced-paths branch a few lines below it;
+  a test added to `tests/setup-clean-worktree.test.ts` covers a
   MIXED pre-existing set (one untracked entry alongside one tracked
   entry) to pin the fall-through to the plain "Repository has
   uncommitted changes" message, which previously was only pinned

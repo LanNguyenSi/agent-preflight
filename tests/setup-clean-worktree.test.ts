@@ -252,11 +252,25 @@ describe("clean-worktree under --setup (fixture: monorepo-build-required)", () =
       });
       expect(cleanWorktreeCheckOf(run1)?.status).toBe("pass");
 
+      // Run 1 really did produce untracked output (otherwise the MIXED
+      // set below has no untracked half, and this test degrades into a
+      // duplicate of the all-tracked control above).
+      expect(fs.existsSync(path.join(repoPath, "packages", "needs-build", "dist", "index.js"))).toBe(true);
+
       // Before the second --setup run: the untracked dist/ output from
       // run 1 is still there (un-gitignored, exactly like N1), AND a
       // tracked file is also dirtied -- one pre-existing untracked entry
       // plus one pre-existing tracked entry.
       fs.appendFileSync(path.join(repoPath, "package.json"), "\n");
+
+      // Pin the MIXED shape directly, before run 2 acts on it: at least
+      // one porcelain line is untracked ("??") and at least one is not,
+      // so this really is a mixed pre-existing set and not, say, an
+      // all-untracked or all-tracked one in disguise.
+      const porcelain = execSync("git status --porcelain", { cwd: repoPath }).toString();
+      const statusLines = porcelain.split("\n").filter((line) => line.length > 0);
+      expect(statusLines.some((line) => line.startsWith("??"))).toBe(true);
+      expect(statusLines.some((line) => !line.startsWith("??"))).toBe(true);
 
       const run2 = await runPreflight(repoPath, {
         checks: CLEAN_WORKTREE_CHECKS,
