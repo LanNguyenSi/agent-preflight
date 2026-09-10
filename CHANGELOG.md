@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-10
+
 ### Changed
 
 - The publish workflow now authenticates through npm Trusted Publishing
