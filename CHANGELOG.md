@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The publish workflow now authenticates through npm Trusted Publishing
+  (OIDC) instead of a token, and no longer needs the `NPM_TOKEN` secret.
+
 - **`sanitizePathName` now escapes DEL, the C1 range and the Unicode line
   separators, narrowing the residual left open by task 4036f6b7 (task
   dd8258ca).** Measured at the base with node: `JSON.stringify` renders
