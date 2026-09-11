@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- Bumped `js-yaml` (transitive, via eslint) to 4.3.2, closing
+  GHSA-2883-xcg3-v3hh.
+- Bumped `hono` (transitive, via `@modelcontextprotocol/sdk`) to 4.13.7,
+  closing GHSA-gqvv-2mrq-wpjv, GHSA-g6gw-c38x-mqfc and GHSA-crvj-82cr-hjcx.
+- Bumped `vitest`, `@vitest/coverage-v8` and `@vitest/mocker` to 4.1.11,
+  closing GHSA-82fw-gwwq-j7x9.
+
 ## [0.6.2] - 2026-09-10
 
 ### Changed
