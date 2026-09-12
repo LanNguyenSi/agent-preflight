@@ -17,27 +17,43 @@ export default defineConfig({
     // tests past the 30s testTimeout (flaky main-branch failures, see the CI
     // incident this fix addresses).
     //
-    // maxWorkers: 2 (matching the runner's core count) is NOT enough: the
-    // actual failing CI run already measured ~2 concurrent workers by
-    // default (sum of per-file durations 188.1s / observed wall clock 93.5s
-    // = 2.01x), so bounding to 2 changes nothing there. The two heaviest
-    // files, contract/integrations.test.ts (~92.4s) and
-    // integration/error-handling.test.ts (~58.9s), can still land on
-    // separate workers and run concurrently at maxWorkers 2, and that
-    // overlap is exactly what pushes their ~6s tests past 30s. Only forcing
-    // test files to run one at a time removes the overlap.
+    // Re-measured (task 7fb922e4, 2026-09-12) after task 580b3171/PR #73 cut
+    // integration/error-handling.test.ts from ~58.9s to ~7-22s by no longer
+    // scanning the shared /tmp: that file is no longer one of the two
+    // heaviest, but the underlying overlap risk is unchanged because two
+    // other files spawn the same many-runPreflight() child processes.
     //
-    // Measured locally (12-core machine, `npx vitest run --coverage`):
-    //   default (unbounded file parallelism): ~86s
-    //   maxWorkers: 2 (rejected, see above):   ~92s
-    //   fileParallelism: false (this setting): ~161s
-    // Fully serial cap. Expected CI cost: per-file-duration sum stays
-    // ~188s but now runs serially instead of overlapping, so CI wall clock
-    // for this step goes from ~93s to roughly ~190s (job moves from ~2m31s
-    // to ~4min). That cost is accepted: the operator chose determinism over
-    // speed and explicitly rejected raising testTimeout instead. Do not
-    // change this back to a worker cap > 1 without first re-measuring
-    // effective CI concurrency from actual run logs, not local timings.
+    // Measured locally (`npx vitest run --coverage --reporter=verbose`,
+    // this setting, unrelated machine specs omitted): total 116.5s. Per-file,
+    // heaviest first: build-required.test.ts ~36.5s (max single case 7.8s,
+    // 52 runPreflight() calls), contract/integrations.test.ts ~16.3s (max
+    // single case 3.1s, 13 calls), install.test.ts ~12.0s, secrets.test.ts
+    // ~8.8s, integration/error-handling.test.ts now ~7.2s (was ~58.9s).
+    //
+    // Measured on CI (latest green run on main, this setting, 2-core
+    // ubuntu-latest): sum of per-file durations 147.7s equals the observed
+    // step wall clock (vitest's own "tests 147.73s"), confirming this is a
+    // fully serial run. Per-file, heaviest first: build-required.test.ts
+    // ~45.9s, contract/integrations.test.ts ~41.3s,
+    // integration/error-handling.test.ts now ~21.8s (was ~58.9s).
+    //
+    // Decision: keep fileParallelism: false. The two current heaviest files
+    // (build-required.test.ts, contract/integrations.test.ts) still spawn
+    // many runPreflight() child processes each, the same contention
+    // mechanism that caused the original incident, and their combined
+    // CI duration (~87s) is well over the 30s testTimeout. Locally their
+    // slowest individual cases already run 7.8s and 3.1s. Whether those two
+    // files would overlap dangerously under a worker cap was NOT measured
+    // in this round (no CI run with parallelism enabled was taken), so the
+    // serial cap stays on the strength of the per-file durations alone.
+    // Re-enabling any parallelism (maxWorkers > 1 or the
+    // default) would need a fresh CI measurement of actual concurrent
+    // overlap between build-required.test.ts and contract/integrations.test.ts,
+    // and five consecutive green CI runs confirming no timeout, before it
+    // replaces this comment. Do not change this back to a worker cap > 1
+    // without doing that re-measurement from actual run logs, not local
+    // timings. testTimeout stays 30s: the operator already rejected raising
+    // it instead of fixing the parallelism.
     fileParallelism: false,
     coverage: {
       provider: "v8",
