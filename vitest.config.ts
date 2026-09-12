@@ -26,9 +26,9 @@ export default defineConfig({
     // Measured locally (`npx vitest run --coverage --reporter=verbose`,
     // this setting, unrelated machine specs omitted): total 116.5s. Per-file,
     // heaviest first: build-required.test.ts ~36.5s (max single case 7.8s,
-    // 54 runPreflight() calls), contract/integrations.test.ts ~16.3s (max
-    // single case 3.1s, 14 calls), install.test.ts ~12.0s,
-    // integration/error-handling.test.ts now ~7.2s (was ~58.9s).
+    // 52 runPreflight() calls), contract/integrations.test.ts ~16.3s (max
+    // single case 3.1s, 13 calls), install.test.ts ~12.0s, secrets.test.ts
+    // ~8.8s, integration/error-handling.test.ts now ~7.2s (was ~58.9s).
     //
     // Measured on CI (latest green run on main, this setting, 2-core
     // ubuntu-latest): sum of per-file durations 147.7s equals the observed
@@ -42,10 +42,11 @@ export default defineConfig({
     // many runPreflight() child processes each, the same contention
     // mechanism that caused the original incident, and their combined
     // CI duration (~87s) is well over the 30s testTimeout. Locally their
-    // slowest individual cases already run 7.8s and 3.1s, and the original
-    // incident needed only about a 5x contention slowdown to push a ~6s
-    // case past 30s; nothing measured here rules out the same overlap for
-    // these two files. Re-enabling any parallelism (maxWorkers > 1 or the
+    // slowest individual cases already run 7.8s and 3.1s. Whether those two
+    // files would overlap dangerously under a worker cap was NOT measured
+    // in this round (no CI run with parallelism enabled was taken), so the
+    // serial cap stays on the strength of the per-file durations alone.
+    // Re-enabling any parallelism (maxWorkers > 1 or the
     // default) would need a fresh CI measurement of actual concurrent
     // overlap between build-required.test.ts and contract/integrations.test.ts,
     // and five consecutive green CI runs confirming no timeout, before it
