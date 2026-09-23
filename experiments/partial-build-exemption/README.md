@@ -76,7 +76,7 @@ Each case writes its ignore rules before the initial commit. Generated `dist/`
 and `lib/` files stay ignored/untracked; committed controls explicitly unignore
 them and use ordinary `git add`, never force-add. The symlink control declares
 only `dist/`, with a tracked `dist -> lib` link; the mutual control declares both
-`dist/` and `lib/`. Local and system Git configuration are disabled for the
+`dist/` and `lib/`. Global and system Git configuration are disabled for the
 experiment. A canonical case is copied, preserving symlink targets, into both
 arms. Recursive hashes include paths, entry types, modes, empty directories,
 file contents and link targets, including ignored outputs; only `.git` is
