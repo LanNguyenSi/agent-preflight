@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Measured and rejected the proposed narrow partial-build exemption (task
+  ac5b94b3). The literal `tracked AND not ignored AND another populated
+  declared output directory` condition left both motivating unbuilt shapes
+  blocked. Of 15 corpus rows, only the mutual-exemption control changed:
+  two committed, nonignored output directories exempted each other, turning
+  a real failure into a build-required skip. The three committed-output
+  controls and seven existing built partial-build fixtures stayed blocked. No
+  production partial-build behavior changed; the portable corpus, candidate
+  patch, normalized verdicts, and raw replay instructions live in
+  `experiments/partial-build-exemption/`.
+
 ### Security
 
 - Bumped `js-yaml` (transitive, via eslint) to 4.3.2, closing
