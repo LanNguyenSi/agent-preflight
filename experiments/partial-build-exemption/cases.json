@@ -1,0 +1,20 @@
+{
+  "schema": 2,
+  "rows": [
+    { "name": "oclif-bin-dist-unbuilt", "shape": "oclif", "build": false, "packages": ["."] },
+    { "name": "oclif-bin-dist-built", "shape": "oclif", "build": true, "packages": ["."] },
+    { "name": "exports-src-dist-unbuilt", "shape": "exports", "build": false, "packages": ["."] },
+    { "name": "exports-src-dist-built", "shape": "exports", "build": true, "packages": ["."] },
+    { "name": "committed-populated-output", "shape": "populated", "build": false, "committed": true, "packages": ["."] },
+    { "name": "committed-dist-symlink-lib", "shape": "symlink", "build": false, "committed": true, "packages": ["."] },
+    { "name": "committed-placeholder", "shape": "placeholder", "build": false, "committed": true, "packages": ["."] },
+    { "name": "fixture-partial-build-types", "fixture": "single-package-partial-build-types", "build": true, "packages": ["."] },
+    { "name": "fixture-partial-build-exports", "fixture": "single-package-partial-build-exports", "build": true, "packages": ["."] },
+    { "name": "fixture-nested-artifact-dir", "fixture": "single-package-nested-artifact-dir", "build": true, "packages": ["."] },
+    { "name": "fixture-second-output-dir", "fixture": "single-package-second-output-dir", "build": true, "packages": ["."] },
+    { "name": "fixture-bin-never-emitted", "fixture": "single-package-bin-never-emitted", "build": true, "packages": ["."] },
+    { "name": "fixture-partial-build-uncopied-asset", "fixture": "single-package-partial-build-uncopied-asset", "build": true, "packages": ["."] },
+    { "name": "fixture-monorepo-partial-build-uncopied-asset", "fixture": "monorepo-partial-build-uncopied-asset", "build": true, "packages": ["packages/renderer"] },
+    { "name": "mutual-exemption-control", "shape": "mutual", "build": false, "committed": true, "packages": ["."] }
+  ]
+}

@@ -1,0 +1,3665 @@
+{
+  "schema": 2,
+  "task": "T-003",
+  "acceptance_baseline": {
+    "id": "astra-old-eight",
+    "revision": "r1"
+  },
+  "criteria": [
+    "T003-AC1",
+    "T003-AC2",
+    "T003-AC3"
+  ],
+  "attempt": "measured-01",
+  "repository": "$CASE_ROOT/source-repository",
+  "source_state": {
+    "revision": "05ffb86ea16fce0444058500ed3c593f95ad4603",
+    "status": " M CHANGELOG.md\n M README.md\n?? experiments/partial-build-exemption/README.md\n?? experiments/partial-build-exemption/candidate.patch\n?? experiments/partial-build-exemption/cases.json\n?? experiments/partial-build-exemption/driver.mjs\n?? experiments/partial-build-exemption/results.json\n",
+    "diff_sha256": "ce5955e1bef9819241987170d68427a1cb466b3867abeab7d851dcfa6c7bea93",
+    "driver_sha256": "ae18e95ea4b11505eed6c0071558841b8ce6e0ed82dce864bab9edae98e2e794",
+    "cases_sha256": "c1dfd3fe8d7fb53defba48bd2f0736c88b612482d3f67a28bc23a3d063df62ae"
+  },
+  "command": [
+    "node",
+    "$CASE_ROOT/source-repository/experiments/partial-build-exemption/driver.mjs",
+    "--repository=$CASE_ROOT/source-repository",
+    "--output=$CASE_ROOT"
+  ],
+  "candidate_patch_sha256": "c099835b723470f1ab6e39bcfa2b54cab29e930e4ba3cba588d684f5d5827b8f",
+  "repos": {
+    "base": {
+      "path": "$CASE_ROOT/base-repo",
+      "revision": "05ffb86ea16fce0444058500ed3c593f95ad4603",
+      "applied_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha256": "89fc25d7e4b1a9a9a5474cba66cccc48744f8e5af2524f91f0c8e4bf2fcde712",
+      "built_sha256": "e29077787d4140e406d55a84a51a4890c4251afe7941c58bd762f217e3211c5a",
+      "build": "commands/008.json"
+    },
+    "candidate": {
+      "path": "$CASE_ROOT/candidate-repo",
+      "revision": "05ffb86ea16fce0444058500ed3c593f95ad4603",
+      "applied_diff_sha256": "c099835b723470f1ab6e39bcfa2b54cab29e930e4ba3cba588d684f5d5827b8f",
+      "source_sha256": "aa1f650f059dd75127e2492152ce7d70c8945399d90e214d1878bf5cf005bd0a",
+      "built_sha256": "ba6a8a8db7e81de916e6e0a5ca097a3418f72d7cfa18a2dc9b4a8201870c1bae",
+      "build": "commands/014.json"
+    }
+  },
+  "rows": [
+    {
+      "name": "oclif-bin-dist-unbuilt",
+      "recipe": {
+        "name": "oclif-bin-dist-unbuilt",
+        "shape": "oclif",
+        "build": false,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "3421375b12b09a3834380b89a488224778efa635",
+      "initial_sha256": "22ba3a09426d3b9204544a19e6427f59fb74f566315e4e72113753409dac3e72",
+      "build": null,
+      "snapshots": {
+        "canonical": "22ba3a09426d3b9204544a19e6427f59fb74f566315e4e72113753409dac3e72",
+        "base": "22ba3a09426d3b9204544a19e6427f59fb74f566315e4e72113753409dac3e72",
+        "candidate": "22ba3a09426d3b9204544a19e6427f59fb74f566315e4e72113753409dac3e72"
+      },
+      "snapshot": {
+        "sha256": "22ba3a09426d3b9204544a19e6427f59fb74f566315e4e72113753409dac3e72",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "74e375b627508be25190547ee53443301d0d127f850704e988f0f0eda9fcd9e5"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "bin",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "bin/run.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "98a8c11a6bdf89522898354602f2d3c466a1e612a3086be2ec978b77ed704ffa"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "9fcc75da4a14d7b386e74ae0d4387d702326e53112c83877218cae2bd82686de"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "9c162aea7b1c4b77f4ac21e838ed59e221f5ff3bf7f15002f450e0ae83e75b96"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "740ed133dc6fd94b31e8a41dfc2756141a9015c38310b59259b2db23eb6df7ef"
+          }
+        ]
+      },
+      "tracked": "100644 9292b272f4a661fcfe8edb2b87c67d0d66c4b6f3 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 07435cf475e35e364efd3dc438879087fd76a7ca 0\tbin/run.js\n100644 bfab4d02055da81b96af5edf3db5ed780ddec14b 0\tbuild.js\n100644 78e279a9d0cb13439426805372b13b13904f8689 0\tpackage.json\n100644 1b95a676ee074b97301248468ebf19ff195e9f74 0\ttest.js\n",
+      "ignore_classification": "",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "absent",
+              "entries": [],
+              "errorCode": "ENOENT",
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": false,
+              "ignore_classification": "",
+              "commands": [
+                "commands/021.json",
+                "commands/022.json",
+                "commands/023.json"
+              ]
+            },
+            {
+              "dir": "bin",
+              "state": "entries",
+              "entries": [
+                "run.js"
+              ],
+              "tracked": true,
+              "tracked_entries": [
+                "bin/run.js"
+              ],
+              "ignored": false,
+              "ignore_classification": "",
+              "commands": [
+                "commands/024.json",
+                "commands/025.json",
+                "commands/026.json"
+              ]
+            }
+          ],
+          "exempt": [],
+          "remaining": [
+            "dist",
+            "bin"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (bin) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/028.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (bin) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/oclif-bin-dist-unbuilt/.preflight-logs/npm-test-1790153058255-51822-1.log",
+                "> oclif-bin-dist-unbuilt@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module '$CASE_ROOT/cases/base/oclif-bin-dist-unbuilt/dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/base/oclif-bin-dist-unbuilt/bin/run.js",
+                "- $CASE_ROOT/cases/base/oclif-bin-dist-unbuilt/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)"
+              ],
+              "durationMs": 170,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (bin) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 175,
+          "timestamp": "2026-09-23T08:44:18.257Z"
+        },
+        "test_output": "test-output/base/oclif-bin-dist-unbuilt.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "bin",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module '$CASE_ROOT/cases/base/oclif-bin-dist-unb..."
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (bin) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (bin) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/029.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (bin) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/oclif-bin-dist-unbuilt/.preflight-logs/npm-test-1790153058422-51873-1.log",
+                "> oclif-bin-dist-unbuilt@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module '$CASE_ROOT/cases/candidate/oclif-bin-dist-unbuilt/dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/candidate/oclif-bin-dist-unbuilt/bin/run.js",
+                "- $CASE_ROOT/cases/candidate/oclif-bin-dist-unbuilt/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)"
+              ],
+              "durationMs": 113,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (bin) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 144,
+          "timestamp": "2026-09-23T08:44:18.451Z"
+        },
+        "test_output": "test-output/candidate/oclif-bin-dist-unbuilt.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "bin",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module '$CASE_ROOT/cases/candidate/oclif-bin-dis..."
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (bin) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      }
+    },
+    {
+      "name": "oclif-bin-dist-built",
+      "recipe": {
+        "name": "oclif-bin-dist-built",
+        "shape": "oclif",
+        "build": true,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "a8349698a7215a2f2845a1b8e741a31ff505177a",
+      "initial_sha256": "79d48a79dc9bbb30ba9414d264ae1d9dbebd71d57180c93251bbbc712127a1c4",
+      "build": "commands/033.json",
+      "snapshots": {
+        "canonical": "c70c83478df0af09ee169ced38cb8ae744e707bb5e3f88dd5d8ff888d64386fb",
+        "base": "c70c83478df0af09ee169ced38cb8ae744e707bb5e3f88dd5d8ff888d64386fb",
+        "candidate": "c70c83478df0af09ee169ced38cb8ae744e707bb5e3f88dd5d8ff888d64386fb"
+      },
+      "snapshot": {
+        "sha256": "c70c83478df0af09ee169ced38cb8ae744e707bb5e3f88dd5d8ff888d64386fb",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "74e375b627508be25190547ee53443301d0d127f850704e988f0f0eda9fcd9e5"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "bin",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "bin/run.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "98a8c11a6bdf89522898354602f2d3c466a1e612a3086be2ec978b77ed704ffa"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "9fcc75da4a14d7b386e74ae0d4387d702326e53112c83877218cae2bd82686de"
+          },
+          {
+            "path": "dist",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "dist/other.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "8222b8169ee86f25cdccd84d340340060ae3f0cff55e2ea9d344d7c332733b71"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "6840e16287db1b49366c75428c9e121bb37c8a3276b4865ead777ff88ea5c168"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "740ed133dc6fd94b31e8a41dfc2756141a9015c38310b59259b2db23eb6df7ef"
+          }
+        ]
+      },
+      "tracked": "100644 9292b272f4a661fcfe8edb2b87c67d0d66c4b6f3 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 07435cf475e35e364efd3dc438879087fd76a7ca 0\tbin/run.js\n100644 bfab4d02055da81b96af5edf3db5ed780ddec14b 0\tbuild.js\n100644 774d1b98c3470fa475a4617de63a190f3ad7cebb 0\tpackage.json\n100644 1b95a676ee074b97301248468ebf19ff195e9f74 0\ttest.js\n",
+      "ignore_classification": ".gitignore:2:dist/\tdist\n.gitignore:2:dist/\tdist/other.js\n",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                "other.js"
+              ],
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": true,
+              "ignore_classification": ".gitignore:2:dist/\tdist\n",
+              "commands": [
+                "commands/037.json",
+                "commands/038.json",
+                "commands/039.json"
+              ]
+            },
+            {
+              "dir": "bin",
+              "state": "entries",
+              "entries": [
+                "run.js"
+              ],
+              "tracked": true,
+              "tracked_entries": [
+                "bin/run.js"
+              ],
+              "ignored": false,
+              "ignore_classification": "",
+              "commands": [
+                "commands/040.json",
+                "commands/041.json",
+                "commands/042.json"
+              ]
+            }
+          ],
+          "exempt": [
+            "bin"
+          ],
+          "remaining": [
+            "dist"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/044.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/oclif-bin-dist-built/.preflight-logs/npm-test-1790153058882-52121-1.log",
+                "> oclif-bin-dist-built@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module '$CASE_ROOT/cases/base/oclif-bin-dist-built/dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/base/oclif-bin-dist-built/bin/run.js",
+                "- $CASE_ROOT/cases/base/oclif-bin-dist-built/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)"
+              ],
+              "durationMs": 111,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 115,
+          "timestamp": "2026-09-23T08:44:18.884Z"
+        },
+        "test_output": "test-output/base/oclif-bin-dist-built.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module '$CASE_ROOT/cases/base/oclif-bin-dist-bui..."
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/045.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/oclif-bin-dist-built/.preflight-logs/npm-test-1790153059044-52167-1.log",
+                "> oclif-bin-dist-built@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module '$CASE_ROOT/cases/candidate/oclif-bin-dist-built/dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/candidate/oclif-bin-dist-built/bin/run.js",
+                "- $CASE_ROOT/cases/candidate/oclif-bin-dist-built/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)"
+              ],
+              "durationMs": 109,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 139,
+          "timestamp": "2026-09-23T08:44:19.072Z"
+        },
+        "test_output": "test-output/candidate/oclif-bin-dist-built.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module '$CASE_ROOT/cases/candidate/oclif-bin-dis..."
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      }
+    },
+    {
+      "name": "exports-src-dist-unbuilt",
+      "recipe": {
+        "name": "exports-src-dist-unbuilt",
+        "shape": "exports",
+        "build": false,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "5d5b39d5bae4dfb5959f4d68a069866d73b768bc",
+      "initial_sha256": "b9aca6788b90f81c185f4a03a502fb8f2cdf6b323d9ada9f6dc5f5b3c9471ae5",
+      "build": null,
+      "snapshots": {
+        "canonical": "b9aca6788b90f81c185f4a03a502fb8f2cdf6b323d9ada9f6dc5f5b3c9471ae5",
+        "base": "b9aca6788b90f81c185f4a03a502fb8f2cdf6b323d9ada9f6dc5f5b3c9471ae5",
+        "candidate": "b9aca6788b90f81c185f4a03a502fb8f2cdf6b323d9ada9f6dc5f5b3c9471ae5"
+      },
+      "snapshot": {
+        "sha256": "b9aca6788b90f81c185f4a03a502fb8f2cdf6b323d9ada9f6dc5f5b3c9471ae5",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "74e375b627508be25190547ee53443301d0d127f850704e988f0f0eda9fcd9e5"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "9fcc75da4a14d7b386e74ae0d4387d702326e53112c83877218cae2bd82686de"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "db5ebc8779c0c16fc0181e912436efd807ec2f990533773a49c686cd5b8ac910"
+          },
+          {
+            "path": "src",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "src/entry.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "9412a110b5916708ab607ebd9005217f32b560c66b5dcaea949ab075e79556ae"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "32d9419d04f8037a1ffac30d0c8b3cf11d894df520d734159458b0c96aada5bf"
+          }
+        ]
+      },
+      "tracked": "100644 9292b272f4a661fcfe8edb2b87c67d0d66c4b6f3 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 bfab4d02055da81b96af5edf3db5ed780ddec14b 0\tbuild.js\n100644 2d0d684690dd1b0651f668e8bb481ebb12c936d8 0\tpackage.json\n100644 4e529feea64dd50849673faede3e0b7cb1e6bcb9 0\tsrc/entry.js\n100644 14fbdf07cc70ca023cf67b15314eb9c5b5c55831 0\ttest.js\n",
+      "ignore_classification": "",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "absent",
+              "entries": [],
+              "errorCode": "ENOENT",
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": false,
+              "ignore_classification": "",
+              "commands": [
+                "commands/052.json",
+                "commands/053.json",
+                "commands/054.json"
+              ]
+            },
+            {
+              "dir": "./src",
+              "state": "entries",
+              "entries": [
+                "entry.js"
+              ],
+              "tracked": true,
+              "tracked_entries": [
+                "src/entry.js"
+              ],
+              "ignored": false,
+              "ignore_classification": "",
+              "commands": [
+                "commands/055.json",
+                "commands/056.json",
+                "commands/057.json"
+              ]
+            }
+          ],
+          "exempt": [],
+          "remaining": [
+            "dist",
+            "./src"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (src) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/059.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (src) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/exports-src-dist-unbuilt/.preflight-logs/npm-test-1790153059406-52396-1.log",
+                "> exports-src-dist-unbuilt@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module '$CASE_ROOT/cases/base/exports-src-dist-unbuilt/dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/base/exports-src-dist-unbuilt/src/entry.js",
+                "- $CASE_ROOT/cases/base/exports-src-dist-unbuilt/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)"
+              ],
+              "durationMs": 113,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (src) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 117,
+          "timestamp": "2026-09-23T08:44:19.408Z"
+        },
+        "test_output": "test-output/base/exports-src-dist-unbuilt.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "./src",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module '$CASE_ROOT/cases/base/exports-src-dist-u..."
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (src) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (src) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/060.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (src) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/exports-src-dist-unbuilt/.preflight-logs/npm-test-1790153059572-52444-1.log",
+                "> exports-src-dist-unbuilt@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module '$CASE_ROOT/cases/candidate/exports-src-dist-unbuilt/dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/candidate/exports-src-dist-unbuilt/src/entry.js",
+                "- $CASE_ROOT/cases/candidate/exports-src-dist-unbuilt/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)"
+              ],
+              "durationMs": 114,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (src) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 145,
+          "timestamp": "2026-09-23T08:44:19.601Z"
+        },
+        "test_output": "test-output/candidate/exports-src-dist-unbuilt.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "./src",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module '$CASE_ROOT/cases/candidate/exports-src-d..."
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (src) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      }
+    },
+    {
+      "name": "exports-src-dist-built",
+      "recipe": {
+        "name": "exports-src-dist-built",
+        "shape": "exports",
+        "build": true,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "1d3f109785fe027d41e7ee2ce51b850cf4bea934",
+      "initial_sha256": "d7a17b83bff20b42b7d9e66df24ea8525f5d073d885c5e1f57e071446aabdc4e",
+      "build": "commands/064.json",
+      "snapshots": {
+        "canonical": "ee246f0bcd00984c6c77408d7143a1100da1394edffa270999e2e6cd830e2ebd",
+        "base": "ee246f0bcd00984c6c77408d7143a1100da1394edffa270999e2e6cd830e2ebd",
+        "candidate": "ee246f0bcd00984c6c77408d7143a1100da1394edffa270999e2e6cd830e2ebd"
+      },
+      "snapshot": {
+        "sha256": "ee246f0bcd00984c6c77408d7143a1100da1394edffa270999e2e6cd830e2ebd",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "74e375b627508be25190547ee53443301d0d127f850704e988f0f0eda9fcd9e5"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "9fcc75da4a14d7b386e74ae0d4387d702326e53112c83877218cae2bd82686de"
+          },
+          {
+            "path": "dist",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "dist/other.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "8222b8169ee86f25cdccd84d340340060ae3f0cff55e2ea9d344d7c332733b71"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "45aff7bb9ce31887e925ec0f08a13fd3800de363d3ec0c24179cfeeb22bc1280"
+          },
+          {
+            "path": "src",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "src/entry.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "9412a110b5916708ab607ebd9005217f32b560c66b5dcaea949ab075e79556ae"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "32d9419d04f8037a1ffac30d0c8b3cf11d894df520d734159458b0c96aada5bf"
+          }
+        ]
+      },
+      "tracked": "100644 9292b272f4a661fcfe8edb2b87c67d0d66c4b6f3 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 bfab4d02055da81b96af5edf3db5ed780ddec14b 0\tbuild.js\n100644 5204e9befdc18d0656edbb34043af651d25e8d5b 0\tpackage.json\n100644 4e529feea64dd50849673faede3e0b7cb1e6bcb9 0\tsrc/entry.js\n100644 14fbdf07cc70ca023cf67b15314eb9c5b5c55831 0\ttest.js\n",
+      "ignore_classification": ".gitignore:2:dist/\tdist\n.gitignore:2:dist/\tdist/other.js\n",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                "other.js"
+              ],
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": true,
+              "ignore_classification": ".gitignore:2:dist/\tdist\n",
+              "commands": [
+                "commands/068.json",
+                "commands/069.json",
+                "commands/070.json"
+              ]
+            },
+            {
+              "dir": "./src",
+              "state": "entries",
+              "entries": [
+                "entry.js"
+              ],
+              "tracked": true,
+              "tracked_entries": [
+                "src/entry.js"
+              ],
+              "ignored": false,
+              "ignore_classification": "",
+              "commands": [
+                "commands/071.json",
+                "commands/072.json",
+                "commands/073.json"
+              ]
+            }
+          ],
+          "exempt": [
+            "./src"
+          ],
+          "remaining": [
+            "dist"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/075.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/exports-src-dist-built/.preflight-logs/npm-test-1790153060034-52691-1.log",
+                "> exports-src-dist-built@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module '$CASE_ROOT/cases/base/exports-src-dist-built/dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/base/exports-src-dist-built/src/entry.js",
+                "- $CASE_ROOT/cases/base/exports-src-dist-built/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)"
+              ],
+              "durationMs": 113,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 116,
+          "timestamp": "2026-09-23T08:44:20.035Z"
+        },
+        "test_output": "test-output/base/exports-src-dist-built.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module '$CASE_ROOT/cases/base/exports-src-dist-b..."
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/076.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/exports-src-dist-built/.preflight-logs/npm-test-1790153060200-52738-1.log",
+                "> exports-src-dist-built@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module '$CASE_ROOT/cases/candidate/exports-src-dist-built/dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/candidate/exports-src-dist-built/src/entry.js",
+                "- $CASE_ROOT/cases/candidate/exports-src-dist-built/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)"
+              ],
+              "durationMs": 114,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 146,
+          "timestamp": "2026-09-23T08:44:20.230Z"
+        },
+        "test_output": "test-output/candidate/exports-src-dist-built.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module '$CASE_ROOT/cases/candidate/exports-src-d..."
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      }
+    },
+    {
+      "name": "committed-populated-output",
+      "recipe": {
+        "name": "committed-populated-output",
+        "shape": "populated",
+        "build": false,
+        "committed": true,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "38bd94d643aa5d1437b30560c9dce0d5ba096ab1",
+      "initial_sha256": "de8c7f437f83cbecebaccd365eb7f1546e2d212e82be7e5f8c05104fadda2fdc",
+      "build": null,
+      "snapshots": {
+        "canonical": "de8c7f437f83cbecebaccd365eb7f1546e2d212e82be7e5f8c05104fadda2fdc",
+        "base": "de8c7f437f83cbecebaccd365eb7f1546e2d212e82be7e5f8c05104fadda2fdc",
+        "candidate": "de8c7f437f83cbecebaccd365eb7f1546e2d212e82be7e5f8c05104fadda2fdc"
+      },
+      "snapshot": {
+        "sha256": "de8c7f437f83cbecebaccd365eb7f1546e2d212e82be7e5f8c05104fadda2fdc",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "30b6368af7cb541b9c8eb37fcc8e538949cfae04d9033818718cbb9fb240a103"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "9fcc75da4a14d7b386e74ae0d4387d702326e53112c83877218cae2bd82686de"
+          },
+          {
+            "path": "dist",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "dist/other.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "8222b8169ee86f25cdccd84d340340060ae3f0cff55e2ea9d344d7c332733b71"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "2b5d7ac605e1c6bc6ebfc63528d9ed8deee5bcd2d88693be7f091c1a5b805593"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "c3d0f9a348c22c21a199b0fc3f3d3afbaf8a17d5d01d1191285d303cd1433a89"
+          }
+        ]
+      },
+      "tracked": "100644 ff3891cd2bf6a10031045e33e3a69ca7421d755c 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 bfab4d02055da81b96af5edf3db5ed780ddec14b 0\tbuild.js\n100644 f053ebf7976e3726d11f3c03fade2170903889a5 0\tdist/other.js\n100644 c843e2a4a46c9442eedeb0c5fbe3d6574f1c976d 0\tpackage.json\n100644 15eeae2446cf9bf555641469b0619cf1050717a3 0\ttest.js\n",
+      "ignore_classification": ".gitignore:6:!dist/\tdist\n.gitignore:7:!dist/**\tdist/other.js\n",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                "other.js"
+              ],
+              "tracked": true,
+              "tracked_entries": [
+                "dist/other.js"
+              ],
+              "ignored": false,
+              "ignore_classification": ".gitignore:6:!dist/\tdist\n",
+              "commands": [
+                "commands/083.json",
+                "commands/084.json",
+                "commands/085.json"
+              ]
+            }
+          ],
+          "exempt": [],
+          "remaining": [
+            "dist"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/087.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/committed-populated-output/.preflight-logs/npm-test-1790153060538-52940-1.log",
+                "> committed-populated-output@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module './dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/base/committed-populated-output/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)",
+                "at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)"
+              ],
+              "durationMs": 113,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 116,
+          "timestamp": "2026-09-23T08:44:20.539Z"
+        },
+        "test_output": "test-output/base/committed-populated-output.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module './dist/index.js'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/088.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/committed-populated-output/.preflight-logs/npm-test-1790153060704-52986-1.log",
+                "> committed-populated-output@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module './dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/candidate/committed-populated-output/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)",
+                "at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)"
+              ],
+              "durationMs": 115,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 133,
+          "timestamp": "2026-09-23T08:44:20.721Z"
+        },
+        "test_output": "test-output/candidate/committed-populated-output.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module './dist/index.js'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      }
+    },
+    {
+      "name": "committed-dist-symlink-lib",
+      "recipe": {
+        "name": "committed-dist-symlink-lib",
+        "shape": "symlink",
+        "build": false,
+        "committed": true,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "4fb6a315f1ae908a07333eb503b47652b2619d90",
+      "initial_sha256": "25daec3a794c8c4fe8ba1cad4a65112d80d61ab653e20eceff09bab3ab20d501",
+      "build": null,
+      "snapshots": {
+        "canonical": "25daec3a794c8c4fe8ba1cad4a65112d80d61ab653e20eceff09bab3ab20d501",
+        "base": "25daec3a794c8c4fe8ba1cad4a65112d80d61ab653e20eceff09bab3ab20d501",
+        "candidate": "25daec3a794c8c4fe8ba1cad4a65112d80d61ab653e20eceff09bab3ab20d501"
+      },
+      "snapshot": {
+        "sha256": "25daec3a794c8c4fe8ba1cad4a65112d80d61ab653e20eceff09bab3ab20d501",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "30b6368af7cb541b9c8eb37fcc8e538949cfae04d9033818718cbb9fb240a103"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "9fcc75da4a14d7b386e74ae0d4387d702326e53112c83877218cae2bd82686de"
+          },
+          {
+            "path": "dist",
+            "kind": "symlink",
+            "mode": 493,
+            "target": "lib"
+          },
+          {
+            "path": "lib",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "lib/other.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "8222b8169ee86f25cdccd84d340340060ae3f0cff55e2ea9d344d7c332733b71"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "64f9ef1bd59e4f59d04d6e2d9f4ba72cc703f9ee552bc9e84386ef5058af9972"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "c3d0f9a348c22c21a199b0fc3f3d3afbaf8a17d5d01d1191285d303cd1433a89"
+          }
+        ]
+      },
+      "tracked": "100644 ff3891cd2bf6a10031045e33e3a69ca7421d755c 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 bfab4d02055da81b96af5edf3db5ed780ddec14b 0\tbuild.js\n120000 7951405f85a569efbacc12fccfee529ef1866602 0\tdist\n100644 f053ebf7976e3726d11f3c03fade2170903889a5 0\tlib/other.js\n100644 948ad462e2c2c32c87de19a29643195261945229 0\tpackage.json\n100644 15eeae2446cf9bf555641469b0619cf1050717a3 0\ttest.js\n",
+      "ignore_classification": ".gitignore:5:!dist\tdist\n.gitignore:8:!lib/\tlib\n.gitignore:9:!lib/**\tlib/other.js\n",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                "other.js"
+              ],
+              "tracked": true,
+              "tracked_entries": [
+                "dist"
+              ],
+              "ignored": false,
+              "ignore_classification": ".gitignore:5:!dist\tdist\n",
+              "commands": [
+                "commands/095.json",
+                "commands/096.json",
+                "commands/097.json"
+              ]
+            }
+          ],
+          "exempt": [],
+          "remaining": [
+            "dist"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/099.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/committed-dist-symlink-lib/.preflight-logs/npm-test-1790153061002-53146-1.log",
+                "> committed-dist-symlink-lib@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module './dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/base/committed-dist-symlink-lib/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)",
+                "at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)"
+              ],
+              "durationMs": 113,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 116,
+          "timestamp": "2026-09-23T08:44:21.004Z"
+        },
+        "test_output": "test-output/base/committed-dist-symlink-lib.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module './dist/index.js'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/100.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/committed-dist-symlink-lib/.preflight-logs/npm-test-1790153061165-53192-1.log",
+                "> committed-dist-symlink-lib@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module './dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/candidate/committed-dist-symlink-lib/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)",
+                "at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)"
+              ],
+              "durationMs": 111,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 130,
+          "timestamp": "2026-09-23T08:44:21.182Z"
+        },
+        "test_output": "test-output/candidate/committed-dist-symlink-lib.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module './dist/index.js'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      }
+    },
+    {
+      "name": "committed-placeholder",
+      "recipe": {
+        "name": "committed-placeholder",
+        "shape": "placeholder",
+        "build": false,
+        "committed": true,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "a8084db9ea6b2d40e0f892b00a375290716b83fa",
+      "initial_sha256": "48e297880c677a022e568083dbeddd3bb37cf17aea1e4d9139d8233db3995839",
+      "build": null,
+      "snapshots": {
+        "canonical": "48e297880c677a022e568083dbeddd3bb37cf17aea1e4d9139d8233db3995839",
+        "base": "48e297880c677a022e568083dbeddd3bb37cf17aea1e4d9139d8233db3995839",
+        "candidate": "48e297880c677a022e568083dbeddd3bb37cf17aea1e4d9139d8233db3995839"
+      },
+      "snapshot": {
+        "sha256": "48e297880c677a022e568083dbeddd3bb37cf17aea1e4d9139d8233db3995839",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "30b6368af7cb541b9c8eb37fcc8e538949cfae04d9033818718cbb9fb240a103"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "9fcc75da4a14d7b386e74ae0d4387d702326e53112c83877218cae2bd82686de"
+          },
+          {
+            "path": "dist",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "dist/.keep",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "c125e0c8e4f76a661b49e1f89edc3fff7a95d491f7e2c85c82ca7c16fc706ee8"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "c3d0f9a348c22c21a199b0fc3f3d3afbaf8a17d5d01d1191285d303cd1433a89"
+          }
+        ]
+      },
+      "tracked": "100644 ff3891cd2bf6a10031045e33e3a69ca7421d755c 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 bfab4d02055da81b96af5edf3db5ed780ddec14b 0\tbuild.js\n100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tdist/.keep\n100644 c04ea8179035bc7522eb249c3cbcd80a1763689a 0\tpackage.json\n100644 15eeae2446cf9bf555641469b0619cf1050717a3 0\ttest.js\n",
+      "ignore_classification": ".gitignore:6:!dist/\tdist\n.gitignore:7:!dist/**\tdist/.keep\n",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                ".keep"
+              ],
+              "tracked": true,
+              "tracked_entries": [
+                "dist/.keep"
+              ],
+              "ignored": false,
+              "ignore_classification": ".gitignore:6:!dist/\tdist\n",
+              "commands": [
+                "commands/107.json",
+                "commands/108.json",
+                "commands/109.json"
+              ]
+            }
+          ],
+          "exempt": [],
+          "remaining": [
+            "dist"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/111.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/committed-placeholder/.preflight-logs/npm-test-1790153061465-53352-1.log",
+                "> committed-placeholder@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module './dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/base/committed-placeholder/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)",
+                "at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)"
+              ],
+              "durationMs": 114,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 117,
+          "timestamp": "2026-09-23T08:44:21.467Z"
+        },
+        "test_output": "test-output/base/committed-placeholder.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module './dist/index.js'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/112.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/committed-placeholder/.preflight-logs/npm-test-1790153061630-53398-1.log",
+                "> committed-placeholder@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module './dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/candidate/committed-placeholder/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)",
+                "at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)"
+              ],
+              "durationMs": 113,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 131,
+          "timestamp": "2026-09-23T08:44:21.646Z"
+        },
+        "test_output": "test-output/candidate/committed-placeholder.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module './dist/index.js'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      }
+    },
+    {
+      "name": "fixture-partial-build-types",
+      "recipe": {
+        "name": "fixture-partial-build-types",
+        "fixture": "single-package-partial-build-types",
+        "build": true,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "eb1a1109e5c20419beceb38709920b26f58d0c96",
+      "initial_sha256": "68004739d0b0f6f19f33efadc11fe53608973efd3d1e3f39c53a0d4538421990",
+      "build": "commands/116.json",
+      "snapshots": {
+        "canonical": "89eb9527f4e3a24063aa8315700578edc9a5a9cd7d70d30180ef94e532039bd0",
+        "base": "89eb9527f4e3a24063aa8315700578edc9a5a9cd7d70d30180ef94e532039bd0",
+        "candidate": "89eb9527f4e3a24063aa8315700578edc9a5a9cd7d70d30180ef94e532039bd0"
+      },
+      "snapshot": {
+        "sha256": "89eb9527f4e3a24063aa8315700578edc9a5a9cd7d70d30180ef94e532039bd0",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "74e375b627508be25190547ee53443301d0d127f850704e988f0f0eda9fcd9e5"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "d0399dc3a6bee442a97d84c2bec6f0364355456848b9ad8d9ba65e2073bb09d4"
+          },
+          {
+            "path": "dist",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "dist/index.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "b83b408f91665ad47a625e15323a5fd83ae10e619505fddf2c730684d7558c9d"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "e8bd85369c8c7ee5b7ea05dd22dc1614ddf7b372765fc84a10f43e73872249d0"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "650a547add4bb9caae7ea2130b1547873aabab45f630f54b7d60ccdd02542918"
+          }
+        ]
+      },
+      "tracked": "100644 9292b272f4a661fcfe8edb2b87c67d0d66c4b6f3 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 60b20b6696453a4ba511b39de63bf5f966ec799e 0\tbuild.js\n100644 856343be23652c80a0430011c4c9d5d88c7df74e 0\tpackage.json\n100644 47735423fcffc3032a4524a4b7f5fbc14adfe58a 0\ttest.js\n",
+      "ignore_classification": ".gitignore:2:dist/\tdist\n.gitignore:2:dist/\tdist/index.js\n",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                "index.js"
+              ],
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": true,
+              "ignore_classification": ".gitignore:2:dist/\tdist\n",
+              "commands": [
+                "commands/120.json",
+                "commands/121.json",
+                "commands/122.json"
+              ]
+            }
+          ],
+          "exempt": [],
+          "remaining": [
+            "dist"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: a declared build artifact (dist/index.d.ts) is missing, but the failure in this repo does not name it, so it is reported as a real failure",
+        "raw": "commands/124.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: a declared build artifact (dist/index.d.ts) is missing, but the failure in this repo does not name it, so it is reported as a real failure",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/fixture-partial-build-types/.preflight-logs/npm-test-1790153062031-53582-1.log",
+                "> fixture-single-package-partial-build-types@1.0.0 test",
+                "> node test.js",
+                "$CASE_ROOT/cases/base/fixture-partial-build-types/dist/index.js:2",
+                "throw new Error(\"boom: real bug\");",
+                "^",
+                "Error: boom: real bug",
+                "at exports.add ($CASE_ROOT/cases/base/fixture-partial-build-types/dist/index.js:2:9)",
+                "at Object.<anonymous> ($CASE_ROOT/cases/base/fixture-partial-build-types/test.js:6:1)",
+                "at Module._compile (node:internal/modules/cjs/loader:1934:14)",
+                "at Object..js (node:internal/modules/cjs/loader:2074:10)"
+              ],
+              "durationMs": 113,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: a declared build artifact (dist/index.d.ts) is missing, but the failure in this repo does not name it, so it is reported as a real failure"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 116,
+          "timestamp": "2026-09-23T08:44:22.032Z"
+        },
+        "test_output": "test-output/base/fixture-partial-build-types.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.d.ts"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": null
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "a declared build artifact (dist/index.d.ts) is missing, but the failure in this repo does not name it, so it is reported as a real failure"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: a declared build artifact (dist/index.d.ts) is missing, but the failure in this repo does not name it, so it is reported as a real failure",
+        "raw": "commands/125.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: a declared build artifact (dist/index.d.ts) is missing, but the failure in this repo does not name it, so it is reported as a real failure",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/fixture-partial-build-types/.preflight-logs/npm-test-1790153062199-53628-1.log",
+                "> fixture-single-package-partial-build-types@1.0.0 test",
+                "> node test.js",
+                "$CASE_ROOT/cases/candidate/fixture-partial-build-types/dist/index.js:2",
+                "throw new Error(\"boom: real bug\");",
+                "^",
+                "Error: boom: real bug",
+                "at exports.add ($CASE_ROOT/cases/candidate/fixture-partial-build-types/dist/index.js:2:9)",
+                "at Object.<anonymous> ($CASE_ROOT/cases/candidate/fixture-partial-build-types/test.js:6:1)",
+                "at Module._compile (node:internal/modules/cjs/loader:1934:14)",
+                "at Object..js (node:internal/modules/cjs/loader:2074:10)"
+              ],
+              "durationMs": 117,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: a declared build artifact (dist/index.d.ts) is missing, but the failure in this repo does not name it, so it is reported as a real failure"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 135,
+          "timestamp": "2026-09-23T08:44:22.216Z"
+        },
+        "test_output": "test-output/candidate/fixture-partial-build-types.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.d.ts"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": null
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "a declared build artifact (dist/index.d.ts) is missing, but the failure in this repo does not name it, so it is reported as a real failure"
+        }
+      }
+    },
+    {
+      "name": "fixture-partial-build-exports",
+      "recipe": {
+        "name": "fixture-partial-build-exports",
+        "fixture": "single-package-partial-build-exports",
+        "build": true,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "c8f08a99a5afd990e133cd886f557395825be57d",
+      "initial_sha256": "be50d881706f0373782e1de0305e5c512bdf005dfe666e901efd9d4514180409",
+      "build": "commands/129.json",
+      "snapshots": {
+        "canonical": "72fa8b3556c7ad6fe4da0de73613378ec9deb0622c87a922c7dc6908fc4f1e19",
+        "base": "72fa8b3556c7ad6fe4da0de73613378ec9deb0622c87a922c7dc6908fc4f1e19",
+        "candidate": "72fa8b3556c7ad6fe4da0de73613378ec9deb0622c87a922c7dc6908fc4f1e19"
+      },
+      "snapshot": {
+        "sha256": "72fa8b3556c7ad6fe4da0de73613378ec9deb0622c87a922c7dc6908fc4f1e19",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "74e375b627508be25190547ee53443301d0d127f850704e988f0f0eda9fcd9e5"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "29dda4e1e79b2b6f1f9dfc4b31de1bda97a44d63a997247160d611bdd5b2fe70"
+          },
+          {
+            "path": "dist",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "dist/index.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "82dc1178f110df907dda29e5434a308a4a4454b389e92e81989853a19f9d9a36"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "33bf997d382b72ee5e4eaec20f3ef5d281345801b3b367d2cb1718e9bf959b8f"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "a5cd405a5e5b2fb7b169298794489f6fd7e69d96218c0c1250082564c391919e"
+          }
+        ]
+      },
+      "tracked": "100644 9292b272f4a661fcfe8edb2b87c67d0d66c4b6f3 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 0a1e77bb275984058abe800f64895d19512d8db7 0\tbuild.js\n100644 a539c1576213a8a4d8b1f68a62fa1e326d173e78 0\tpackage.json\n100644 8b03099a0574db0d6f33fa319bf95924d483624b 0\ttest.js\n",
+      "ignore_classification": ".gitignore:2:dist/\tdist\n.gitignore:2:dist/\tdist/index.js\n",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                "index.js"
+              ],
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": true,
+              "ignore_classification": ".gitignore:2:dist/\tdist\n",
+              "commands": [
+                "commands/133.json",
+                "commands/134.json",
+                "commands/135.json"
+              ]
+            },
+            {
+              "dir": "./dist",
+              "state": "entries",
+              "entries": [
+                "index.js"
+              ],
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": true,
+              "ignore_classification": ".gitignore:2:dist/\t./dist\n",
+              "commands": [
+                "commands/136.json",
+                "commands/137.json",
+                "commands/138.json"
+              ]
+            }
+          ],
+          "exempt": [],
+          "remaining": [
+            "dist",
+            "./dist"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: a declared build artifact (dist/extra.js) is missing, but the failure in this repo does not name it, so it is reported as a real failure",
+        "raw": "commands/140.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: a declared build artifact (dist/extra.js) is missing, but the failure in this repo does not name it, so it is reported as a real failure",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/fixture-partial-build-exports/.preflight-logs/npm-test-1790153062632-53849-1.log",
+                "> fixture-single-package-partial-build-exports@1.0.0 test",
+                "> node test.js",
+                "$CASE_ROOT/cases/base/fixture-partial-build-exports/dist/index.js:2",
+                "throw new Error(\"genuine regression\");",
+                "^",
+                "Error: genuine regression",
+                "at exports.f ($CASE_ROOT/cases/base/fixture-partial-build-exports/dist/index.js:2:9)",
+                "at Object.<anonymous> ($CASE_ROOT/cases/base/fixture-partial-build-exports/test.js:4:28)",
+                "at Module._compile (node:internal/modules/cjs/loader:1934:14)",
+                "at Object..js (node:internal/modules/cjs/loader:2074:10)"
+              ],
+              "durationMs": 112,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: a declared build artifact (dist/extra.js) is missing, but the failure in this repo does not name it, so it is reported as a real failure"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 115,
+          "timestamp": "2026-09-23T08:44:22.634Z"
+        },
+        "test_output": "test-output/base/fixture-partial-build-exports.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "./dist/extra.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": null
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "a declared build artifact (dist/extra.js) is missing, but the failure in this repo does not name it, so it is reported as a real failure"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: a declared build artifact (dist/extra.js) is missing, but the failure in this repo does not name it, so it is reported as a real failure",
+        "raw": "commands/141.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: a declared build artifact (dist/extra.js) is missing, but the failure in this repo does not name it, so it is reported as a real failure",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/fixture-partial-build-exports/.preflight-logs/npm-test-1790153062803-53895-1.log",
+                "> fixture-single-package-partial-build-exports@1.0.0 test",
+                "> node test.js",
+                "$CASE_ROOT/cases/candidate/fixture-partial-build-exports/dist/index.js:2",
+                "throw new Error(\"genuine regression\");",
+                "^",
+                "Error: genuine regression",
+                "at exports.f ($CASE_ROOT/cases/candidate/fixture-partial-build-exports/dist/index.js:2:9)",
+                "at Object.<anonymous> ($CASE_ROOT/cases/candidate/fixture-partial-build-exports/test.js:4:28)",
+                "at Module._compile (node:internal/modules/cjs/loader:1934:14)",
+                "at Object..js (node:internal/modules/cjs/loader:2074:10)"
+              ],
+              "durationMs": 117,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: a declared build artifact (dist/extra.js) is missing, but the failure in this repo does not name it, so it is reported as a real failure"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 150,
+          "timestamp": "2026-09-23T08:44:22.834Z"
+        },
+        "test_output": "test-output/candidate/fixture-partial-build-exports.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "./dist/extra.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": null
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "a declared build artifact (dist/extra.js) is missing, but the failure in this repo does not name it, so it is reported as a real failure"
+        }
+      }
+    },
+    {
+      "name": "fixture-nested-artifact-dir",
+      "recipe": {
+        "name": "fixture-nested-artifact-dir",
+        "fixture": "single-package-nested-artifact-dir",
+        "build": true,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "412fa3e1e862cc1bb24e56aa7d5c0046c2b3afe2",
+      "initial_sha256": "4e78d946f1acc463f56f74a9a21a228e09f95a6285333829a50b99a7f772de09",
+      "build": "commands/145.json",
+      "snapshots": {
+        "canonical": "68304708c71657b3e49b7e1655b11c994aa7bd2119739deab38b448b7eca926d",
+        "base": "68304708c71657b3e49b7e1655b11c994aa7bd2119739deab38b448b7eca926d",
+        "candidate": "68304708c71657b3e49b7e1655b11c994aa7bd2119739deab38b448b7eca926d"
+      },
+      "snapshot": {
+        "sha256": "68304708c71657b3e49b7e1655b11c994aa7bd2119739deab38b448b7eca926d",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "74e375b627508be25190547ee53443301d0d127f850704e988f0f0eda9fcd9e5"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "43d09e78cd47451f7b17e7082667fef9608fa4f4c4601836da1d60d8d0c25322"
+          },
+          {
+            "path": "dist",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "dist/index.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "8222b8169ee86f25cdccd84d340340060ae3f0cff55e2ea9d344d7c332733b71"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "120043a822813308b1716d256cdfcd82feb187917564690603309c39004446d4"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "f5d655fc2535eb4b5de4faf59e679cf83917085f867a1b6202f12cc924da2ec1"
+          }
+        ]
+      },
+      "tracked": "100644 9292b272f4a661fcfe8edb2b87c67d0d66c4b6f3 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 1080bd9869c57c168db011d60b814ac6394159bd 0\tbuild.js\n100644 1d7f481022377975d5fae240f7a0bf30d1a3e345 0\tpackage.json\n100644 824850d1aafb8c835855b10eae8b89e2dab3d486 0\ttest.js\n",
+      "ignore_classification": ".gitignore:2:dist/\tdist\n.gitignore:2:dist/\tdist/index.js\n",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                "index.js"
+              ],
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": true,
+              "ignore_classification": ".gitignore:2:dist/\tdist\n",
+              "commands": [
+                "commands/149.json",
+                "commands/150.json",
+                "commands/151.json"
+              ]
+            },
+            {
+              "dir": "dist/types",
+              "state": "absent",
+              "entries": [],
+              "errorCode": "ENOENT",
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": true,
+              "ignore_classification": ".gitignore:2:dist/\tdist/types\n",
+              "commands": [
+                "commands/152.json",
+                "commands/153.json",
+                "commands/154.json"
+              ]
+            }
+          ],
+          "exempt": [],
+          "remaining": [
+            "dist",
+            "dist/types"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/types/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/156.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/types/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/fixture-nested-artifact-dir/.preflight-logs/npm-test-1790153063266-54148-1.log",
+                "> fixture-single-package-nested-artifact-dir@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module './dist/types/index.d.ts'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/base/fixture-nested-artifact-dir/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)",
+                "at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)"
+              ],
+              "durationMs": 114,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/types/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 117,
+          "timestamp": "2026-09-23T08:44:23.268Z"
+        },
+        "test_output": "test-output/base/fixture-nested-artifact-dir.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/types/index.d.ts"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module './dist/types/index.d.ts'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/types/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/types/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/157.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/types/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/fixture-nested-artifact-dir/.preflight-logs/npm-test-1790153063429-54194-1.log",
+                "> fixture-single-package-nested-artifact-dir@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module './dist/types/index.d.ts'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/candidate/fixture-nested-artifact-dir/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)",
+                "at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)"
+              ],
+              "durationMs": 110,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/types/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 142,
+          "timestamp": "2026-09-23T08:44:23.459Z"
+        },
+        "test_output": "test-output/candidate/fixture-nested-artifact-dir.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/types/index.d.ts"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module './dist/types/index.d.ts'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/types/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      }
+    },
+    {
+      "name": "fixture-second-output-dir",
+      "recipe": {
+        "name": "fixture-second-output-dir",
+        "fixture": "single-package-second-output-dir",
+        "build": true,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "b44a962df1912e90d7bb1f6cb8cc3cad412f8531",
+      "initial_sha256": "41d117d4047f9db956eef263c24e8cabf3b4f7f0722812a18b1a212261fa6689",
+      "build": "commands/161.json",
+      "snapshots": {
+        "canonical": "540b724694a2012d61a4764a68dc4369f01e79c113919f4925977655f344c846",
+        "base": "540b724694a2012d61a4764a68dc4369f01e79c113919f4925977655f344c846",
+        "candidate": "540b724694a2012d61a4764a68dc4369f01e79c113919f4925977655f344c846"
+      },
+      "snapshot": {
+        "sha256": "540b724694a2012d61a4764a68dc4369f01e79c113919f4925977655f344c846",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "74e375b627508be25190547ee53443301d0d127f850704e988f0f0eda9fcd9e5"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "2da1d68f3245123bc66e3df3804766a8cebbff8ee0c50cd2587de96bfe9d2df1"
+          },
+          {
+            "path": "dist",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "dist/index.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "8222b8169ee86f25cdccd84d340340060ae3f0cff55e2ea9d344d7c332733b71"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "9dc6f01726c69a4750272d8b20cf36a0ef6ae04b9ccc94df4d2f0a658b2c13c6"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "fb331596c2dd82bb35e29938cb61f26fef608fc341b82f91acc3180d50e58ac8"
+          }
+        ]
+      },
+      "tracked": "100644 9292b272f4a661fcfe8edb2b87c67d0d66c4b6f3 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 3d82e83de65111e6284451b4e8f826de52702676 0\tbuild.js\n100644 896fcd1c726308b3da808c6c0848c72e0835cca8 0\tpackage.json\n100644 3807fb4ed9de3746d8927b2955a0f379ecb5f824 0\ttest.js\n",
+      "ignore_classification": ".gitignore:2:dist/\tdist\n.gitignore:2:dist/\tdist/index.js\n",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                "index.js"
+              ],
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": true,
+              "ignore_classification": ".gitignore:2:dist/\tdist\n",
+              "commands": [
+                "commands/165.json",
+                "commands/166.json",
+                "commands/167.json"
+              ]
+            },
+            {
+              "dir": "./dist",
+              "state": "entries",
+              "entries": [
+                "index.js"
+              ],
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": true,
+              "ignore_classification": ".gitignore:2:dist/\t./dist\n",
+              "commands": [
+                "commands/168.json",
+                "commands/169.json",
+                "commands/170.json"
+              ]
+            },
+            {
+              "dir": "./lib",
+              "state": "absent",
+              "entries": [],
+              "errorCode": "ENOENT",
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": false,
+              "ignore_classification": "",
+              "commands": [
+                "commands/171.json",
+                "commands/172.json",
+                "commands/173.json"
+              ]
+            }
+          ],
+          "exempt": [],
+          "remaining": [
+            "dist",
+            "./dist",
+            "./lib"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (lib/styles.css) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/175.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (lib/styles.css) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/fixture-second-output-dir/.preflight-logs/npm-test-1790153063901-54462-1.log",
+                "> fixture-single-package-second-output-dir@1.0.0 test",
+                "> node test.js",
+                "Error: ENOENT: no such file or directory, open './lib/styles.css'"
+              ],
+              "durationMs": 113,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (lib/styles.css) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 116,
+          "timestamp": "2026-09-23T08:44:23.903Z"
+        },
+        "test_output": "test-output/base/fixture-second-output-dir.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "./lib/styles.css"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: ENOENT: no such file or directory, open './lib/styles.css'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (lib/styles.css) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (lib/styles.css) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/176.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (lib/styles.css) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/fixture-second-output-dir/.preflight-logs/npm-test-1790153064068-54509-1.log",
+                "> fixture-single-package-second-output-dir@1.0.0 test",
+                "> node test.js",
+                "Error: ENOENT: no such file or directory, open './lib/styles.css'"
+              ],
+              "durationMs": 114,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (lib/styles.css) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 158,
+          "timestamp": "2026-09-23T08:44:24.111Z"
+        },
+        "test_output": "test-output/candidate/fixture-second-output-dir.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "./lib/styles.css"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: ENOENT: no such file or directory, open './lib/styles.css'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (lib/styles.css) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      }
+    },
+    {
+      "name": "fixture-bin-never-emitted",
+      "recipe": {
+        "name": "fixture-bin-never-emitted",
+        "fixture": "single-package-bin-never-emitted",
+        "build": true,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "a5d5915a6fdaac5dad72ed336050b1517a255450",
+      "initial_sha256": "66837704089797889567cddfdbe8b4e882d684f59bad645e5295fcda9b485788",
+      "build": "commands/180.json",
+      "snapshots": {
+        "canonical": "a13986ecb49a4e021c8478f1aba45173cbc788295202d2cba0fb6b40214e6cbf",
+        "base": "a13986ecb49a4e021c8478f1aba45173cbc788295202d2cba0fb6b40214e6cbf",
+        "candidate": "a13986ecb49a4e021c8478f1aba45173cbc788295202d2cba0fb6b40214e6cbf"
+      },
+      "snapshot": {
+        "sha256": "a13986ecb49a4e021c8478f1aba45173cbc788295202d2cba0fb6b40214e6cbf",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "74e375b627508be25190547ee53443301d0d127f850704e988f0f0eda9fcd9e5"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "bc457b45f8bc5e4f1d350622c04f0d16e0a8bcd7837958b562b205dcb9bef35c"
+          },
+          {
+            "path": "dist",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "dist/index.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "8222b8169ee86f25cdccd84d340340060ae3f0cff55e2ea9d344d7c332733b71"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "4a2b1f78b041a16cf3533be91b13a298f0a151baf7dd7b0fa0d554f8dce29af1"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "3bd202f23b0709c5abb7f0f8970853cd8b8609804c7b96099db13430900c5e7f"
+          }
+        ]
+      },
+      "tracked": "100644 9292b272f4a661fcfe8edb2b87c67d0d66c4b6f3 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 44dd6885f480c45964ec679a758100f34a05cdcf 0\tbuild.js\n100644 b0f04aa13560d873d369a992f46133c60e33ed50 0\tpackage.json\n100644 330e56ffa85347dc5b4f2a4d58d79b7450533528 0\ttest.js\n",
+      "ignore_classification": ".gitignore:2:dist/\tdist\n.gitignore:2:dist/\tdist/index.js\n",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                "index.js"
+              ],
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": true,
+              "ignore_classification": ".gitignore:2:dist/\tdist\n",
+              "commands": [
+                "commands/184.json",
+                "commands/185.json",
+                "commands/186.json"
+              ]
+            }
+          ],
+          "exempt": [],
+          "remaining": [
+            "dist"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/cli.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/188.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/cli.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/fixture-bin-never-emitted/.preflight-logs/npm-test-1790153064544-54777-1.log",
+                "> fixture-single-package-bin-never-emitted@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module './dist/cli.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/base/fixture-bin-never-emitted/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)",
+                "at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)"
+              ],
+              "durationMs": 116,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/cli.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 119,
+          "timestamp": "2026-09-23T08:44:24.546Z"
+        },
+        "test_output": "test-output/base/fixture-bin-never-emitted.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/cli.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module './dist/cli.js'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/cli.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/cli.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/189.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/cli.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/fixture-bin-never-emitted/.preflight-logs/npm-test-1790153064708-54823-1.log",
+                "> fixture-single-package-bin-never-emitted@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module './dist/cli.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/candidate/fixture-bin-never-emitted/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)",
+                "at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)"
+              ],
+              "durationMs": 113,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/cli.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 131,
+          "timestamp": "2026-09-23T08:44:24.725Z"
+        },
+        "test_output": "test-output/candidate/fixture-bin-never-emitted.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/cli.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module './dist/cli.js'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/cli.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      }
+    },
+    {
+      "name": "fixture-partial-build-uncopied-asset",
+      "recipe": {
+        "name": "fixture-partial-build-uncopied-asset",
+        "fixture": "single-package-partial-build-uncopied-asset",
+        "build": true,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "048ec03c632047ed40409705a64e6d5bcdaa717b",
+      "initial_sha256": "1a3487efdbc21b078d118cb3b78bfee381984cf1476c3b8365cd73705a356df5",
+      "build": "commands/193.json",
+      "snapshots": {
+        "canonical": "fc028168eaa4327f4f6584afc73df613d8bb6df5258cb672c3df409a1650a896",
+        "base": "fc028168eaa4327f4f6584afc73df613d8bb6df5258cb672c3df409a1650a896",
+        "candidate": "fc028168eaa4327f4f6584afc73df613d8bb6df5258cb672c3df409a1650a896"
+      },
+      "snapshot": {
+        "sha256": "fc028168eaa4327f4f6584afc73df613d8bb6df5258cb672c3df409a1650a896",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "74e375b627508be25190547ee53443301d0d127f850704e988f0f0eda9fcd9e5"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "eca302b0285c31f1c8c49356012c2b74b6b1129cecbe7028ca5723f6d5ca7885"
+          },
+          {
+            "path": "dist",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "dist/index.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "f1c0f5c390805cbd5207ca30e542e95f034568c7592cef96d79d0b09c5b01dca"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "ac1ddbb64e6658ff69cff2b4c438a29dacafe84c3fcf35d281307218810b312d"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "ba2358ac5cbf0f5f6b56ff5838e17fd4eb338dd0ea54438bd2be852b1998d7f4"
+          }
+        ]
+      },
+      "tracked": "100644 9292b272f4a661fcfe8edb2b87c67d0d66c4b6f3 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 9136d9b23b34c89a8eebac604e07c5f9e593af41 0\tbuild.js\n100644 382fe97932f41c2ff966d6a7e12720177816e41e 0\tpackage.json\n100644 8b29f6c363da4ee3eda274e231e0047f2cbd1363 0\ttest.js\n",
+      "ignore_classification": ".gitignore:2:dist/\tdist\n.gitignore:2:dist/\tdist/index.js\n",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                "index.js"
+              ],
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": true,
+              "ignore_classification": ".gitignore:2:dist/\tdist\n",
+              "commands": [
+                "commands/197.json",
+                "commands/198.json",
+                "commands/199.json"
+              ]
+            }
+          ],
+          "exempt": [],
+          "remaining": [
+            "dist"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/201.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/fixture-partial-build-uncopied-asset/.preflight-logs/npm-test-1790153065105-55007-1.log",
+                "> fixture-single-package-partial-build-uncopied-asset@1.0.0 test",
+                "> node test.js",
+                "node:fs:539",
+                "return binding.readFileUtf8(path, stringToFlags(options.flag));",
+                "^",
+                "Error: ENOENT: no such file or directory, open '$CASE_ROOT/cases/base/fixture-partial-build-uncopied-asset/dist/templates/page.html'",
+                "at Object.readFileSync (node:fs:539:20)",
+                "at exports.render ($CASE_ROOT/cases/base/fixture-partial-build-uncopied-asset/dist/index.js:3:27)",
+                "at Object.<anonymous> ($CASE_ROOT/cases/base/fixture-partial-build-uncopied-asset/test.js:5:28)",
+                "at Module._compile (node:internal/modules/cjs/loader:1934:14)"
+              ],
+              "durationMs": 110,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 113,
+          "timestamp": "2026-09-23T08:44:25.106Z"
+        },
+        "test_output": "test-output/base/fixture-partial-build-uncopied-asset.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.d.ts"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: ENOENT: no such file or directory, open '$CASE_ROOT/cases/ba..."
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/202.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/fixture-partial-build-uncopied-asset/.preflight-logs/npm-test-1790153065270-55053-1.log",
+                "> fixture-single-package-partial-build-uncopied-asset@1.0.0 test",
+                "> node test.js",
+                "node:fs:539",
+                "return binding.readFileUtf8(path, stringToFlags(options.flag));",
+                "^",
+                "Error: ENOENT: no such file or directory, open '$CASE_ROOT/cases/candidate/fixture-partial-build-uncopied-asset/dist/templates/page.html'",
+                "at Object.readFileSync (node:fs:539:20)",
+                "at exports.render ($CASE_ROOT/cases/candidate/fixture-partial-build-uncopied-asset/dist/index.js:3:27)",
+                "at Object.<anonymous> ($CASE_ROOT/cases/candidate/fixture-partial-build-uncopied-asset/test.js:5:28)",
+                "at Module._compile (node:internal/modules/cjs/loader:1934:14)"
+              ],
+              "durationMs": 115,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 131,
+          "timestamp": "2026-09-23T08:44:25.286Z"
+        },
+        "test_output": "test-output/candidate/fixture-partial-build-uncopied-asset.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.d.ts"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: ENOENT: no such file or directory, open '$CASE_ROOT/cases/ca..."
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      }
+    },
+    {
+      "name": "fixture-monorepo-partial-build-uncopied-asset",
+      "recipe": {
+        "name": "fixture-monorepo-partial-build-uncopied-asset",
+        "fixture": "monorepo-partial-build-uncopied-asset",
+        "build": true,
+        "packages": [
+          "packages/renderer"
+        ]
+      },
+      "git_head": "d05de8d85365676da56db0525965256ba66dd380",
+      "initial_sha256": "ae3231e3d42829b46901f98fea0cd3c5c101768df02a3fa7e81bb1485c771cfa",
+      "build": "commands/206.json",
+      "snapshots": {
+        "canonical": "11b2303c89df0f4e1f783f487a033bab94412a0f68b50fce2a374846eabcc010",
+        "base": "11b2303c89df0f4e1f783f487a033bab94412a0f68b50fce2a374846eabcc010",
+        "candidate": "11b2303c89df0f4e1f783f487a033bab94412a0f68b50fce2a374846eabcc010"
+      },
+      "snapshot": {
+        "sha256": "11b2303c89df0f4e1f783f487a033bab94412a0f68b50fce2a374846eabcc010",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "74e375b627508be25190547ee53443301d0d127f850704e988f0f0eda9fcd9e5"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "00e92d5669938b2e24d8c491a9979c6153c43327ecb28d6a72f83ef736cb8e30"
+          },
+          {
+            "path": "packages",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "packages/renderer",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "packages/renderer/build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "5f105756cc4ee8cd2152212d8e31c7e6427c5a6499c4f0c19692e34b3237ea4a"
+          },
+          {
+            "path": "packages/renderer/dist",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "packages/renderer/dist/index.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "f1c0f5c390805cbd5207ca30e542e95f034568c7592cef96d79d0b09c5b01dca"
+          },
+          {
+            "path": "packages/renderer/package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "550b2943b7fb038c39217f401297c8966274d3367557bd100237f5d98db8b99d"
+          },
+          {
+            "path": "packages/renderer/test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "bf35449268c5d9d8db01d7103b6f483242cfcc4389c7dd286eae1ac00b9f58f4"
+          }
+        ]
+      },
+      "tracked": "100644 9292b272f4a661fcfe8edb2b87c67d0d66c4b6f3 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 c718c04fcdabe5a9080cb6cf13fd6ee475313dcc 0\tpackage.json\n100644 5826e5b51d77548e56933fa835a5ad28310bc0b2 0\tpackages/renderer/build.js\n100644 19f103bc8ed5d68b17e13cd9126e40b082fa1553 0\tpackages/renderer/package.json\n100644 56812dd69aa72c0203f44faf37f5a8e94777bb21 0\tpackages/renderer/test.js\n",
+      "ignore_classification": ".gitignore:2:dist/\tpackages/renderer/dist\n.gitignore:2:dist/\tpackages/renderer/dist/index.js\n",
+      "original_readings": [
+        {
+          "package": "packages/renderer",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                "index.js"
+              ],
+              "tracked": false,
+              "tracked_entries": [],
+              "ignored": true,
+              "ignore_classification": ".gitignore:2:dist/\tdist\n",
+              "commands": [
+                "commands/210.json",
+                "commands/211.json",
+                "commands/212.json"
+              ]
+            }
+          ],
+          "exempt": [],
+          "remaining": [
+            "dist"
+          ]
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (packages/renderer/dist) of workspace `fixture-renderer` exists and is not empty, but a declared build artifact (packages/renderer/dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/214.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (packages/renderer/dist) of workspace `fixture-renderer` exists and is not empty, but a declared build artifact (packages/renderer/dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/fixture-monorepo-partial-build-uncopied-asset/.preflight-logs/npm-test-1790153065843-55277-1.log",
+                "> fixture-monorepo-partial-build-uncopied-asset@1.0.0 test",
+                "> npm run test --workspaces --if-present",
+                "> fixture-renderer@1.0.0 test",
+                "> node test.js",
+                "node:fs:539",
+                "return binding.readFileUtf8(path, stringToFlags(options.flag));",
+                "^",
+                "Error: ENOENT: no such file or directory, open '$CASE_ROOT/cases/base/fixture-monorepo-partial-build-uncopied-asset/packages/renderer/dist/templates/page.html'",
+                "at Object.readFileSync (node:fs:539:20)",
+                "at exports.render ($CASE_ROOT/cases/base/fixture-monorepo-partial-build-uncopied-asset/packages/renderer/dist/index.js:3:27)"
+              ],
+              "durationMs": 199,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (packages/renderer/dist) of workspace `fixture-renderer` exists and is not empty, but a declared build artifact (packages/renderer/dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 201,
+          "timestamp": "2026-09-23T08:44:25.845Z"
+        },
+        "test_output": "test-output/base/fixture-monorepo-partial-build-uncopied-asset.log",
+        "conditions": [
+          {
+            "package": "packages/renderer",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.d.ts"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: ENOENT: no such file or directory, open '$CASE_ROOT/cases/ba..."
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (packages/renderer/dist) of workspace `fixture-renderer` exists and is not empty, but a declared build artifact (packages/renderer/dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (packages/renderer/dist) of workspace `fixture-renderer` exists and is not empty, but a declared build artifact (packages/renderer/dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/215.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (packages/renderer/dist) of workspace `fixture-renderer` exists and is not empty, but a declared build artifact (packages/renderer/dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/fixture-monorepo-partial-build-uncopied-asset/.preflight-logs/npm-test-1790153066090-55366-1.log",
+                "> fixture-monorepo-partial-build-uncopied-asset@1.0.0 test",
+                "> npm run test --workspaces --if-present",
+                "> fixture-renderer@1.0.0 test",
+                "> node test.js",
+                "node:fs:539",
+                "return binding.readFileUtf8(path, stringToFlags(options.flag));",
+                "^",
+                "Error: ENOENT: no such file or directory, open '$CASE_ROOT/cases/candidate/fixture-monorepo-partial-build-uncopied-asset/packages/renderer/dist/templates/page.html'",
+                "at Object.readFileSync (node:fs:539:20)",
+                "at exports.render ($CASE_ROOT/cases/candidate/fixture-monorepo-partial-build-uncopied-asset/packages/renderer/dist/index.js:3:27)"
+              ],
+              "durationMs": 194,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (packages/renderer/dist) of workspace `fixture-renderer` exists and is not empty, but a declared build artifact (packages/renderer/dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 212,
+          "timestamp": "2026-09-23T08:44:26.108Z"
+        },
+        "test_output": "test-output/candidate/fixture-monorepo-partial-build-uncopied-asset.log",
+        "conditions": [
+          {
+            "package": "packages/renderer",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.d.ts"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: ENOENT: no such file or directory, open '$CASE_ROOT/cases/ca..."
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (packages/renderer/dist) of workspace `fixture-renderer` exists and is not empty, but a declared build artifact (packages/renderer/dist/index.d.ts) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      }
+    },
+    {
+      "name": "mutual-exemption-control",
+      "recipe": {
+        "name": "mutual-exemption-control",
+        "shape": "mutual",
+        "build": false,
+        "committed": true,
+        "packages": [
+          "."
+        ]
+      },
+      "git_head": "e806fc8250cfca94d7a6b087059bc372630b306b",
+      "initial_sha256": "559b012de85b75783d044eca19754b62483fdfa0263436a24fe6881c9b86a29e",
+      "build": null,
+      "snapshots": {
+        "canonical": "559b012de85b75783d044eca19754b62483fdfa0263436a24fe6881c9b86a29e",
+        "base": "559b012de85b75783d044eca19754b62483fdfa0263436a24fe6881c9b86a29e",
+        "candidate": "559b012de85b75783d044eca19754b62483fdfa0263436a24fe6881c9b86a29e"
+      },
+      "snapshot": {
+        "sha256": "559b012de85b75783d044eca19754b62483fdfa0263436a24fe6881c9b86a29e",
+        "entries": [
+          {
+            "path": ".gitignore",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "30b6368af7cb541b9c8eb37fcc8e538949cfae04d9033818718cbb9fb240a103"
+          },
+          {
+            "path": ".preflight.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "87585d10524c4f7e517cf61a41ff9718ac1544adca0c1b70c7dcf0a5d900abaf"
+          },
+          {
+            "path": "build.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "9fcc75da4a14d7b386e74ae0d4387d702326e53112c83877218cae2bd82686de"
+          },
+          {
+            "path": "dist",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "dist/other.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "8222b8169ee86f25cdccd84d340340060ae3f0cff55e2ea9d344d7c332733b71"
+          },
+          {
+            "path": "lib",
+            "kind": "directory",
+            "mode": 493
+          },
+          {
+            "path": "lib/other.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "8222b8169ee86f25cdccd84d340340060ae3f0cff55e2ea9d344d7c332733b71"
+          },
+          {
+            "path": "package.json",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "c5d7a35aefc5b0e862a9595d2fb4d0dfa13ee691a9d64baac5c6d720766f2d84"
+          },
+          {
+            "path": "test.js",
+            "kind": "file",
+            "mode": 420,
+            "sha256": "c3d0f9a348c22c21a199b0fc3f3d3afbaf8a17d5d01d1191285d303cd1433a89"
+          }
+        ]
+      },
+      "tracked": "100644 ff3891cd2bf6a10031045e33e3a69ca7421d755c 0\t.gitignore\n100644 64f644cd215b3da251589b3d92a6a9a95d861098 0\t.preflight.json\n100644 bfab4d02055da81b96af5edf3db5ed780ddec14b 0\tbuild.js\n100644 f053ebf7976e3726d11f3c03fade2170903889a5 0\tdist/other.js\n100644 f053ebf7976e3726d11f3c03fade2170903889a5 0\tlib/other.js\n100644 db13ebaaae51ea6d6e29f13ba26832380c30ceb2 0\tpackage.json\n100644 15eeae2446cf9bf555641469b0619cf1050717a3 0\ttest.js\n",
+      "ignore_classification": ".gitignore:6:!dist/\tdist\n.gitignore:7:!dist/**\tdist/other.js\n.gitignore:8:!lib/\tlib\n.gitignore:9:!lib/**\tlib/other.js\n",
+      "original_readings": [
+        {
+          "package": ".",
+          "original": [
+            {
+              "dir": "dist",
+              "state": "entries",
+              "entries": [
+                "other.js"
+              ],
+              "tracked": true,
+              "tracked_entries": [
+                "dist/other.js"
+              ],
+              "ignored": false,
+              "ignore_classification": ".gitignore:6:!dist/\tdist\n",
+              "commands": [
+                "commands/222.json",
+                "commands/223.json",
+                "commands/224.json"
+              ]
+            },
+            {
+              "dir": "./lib",
+              "state": "entries",
+              "entries": [
+                "other.js"
+              ],
+              "tracked": true,
+              "tracked_entries": [
+                "lib/other.js"
+              ],
+              "ignored": false,
+              "ignore_classification": ".gitignore:8:!lib/\t./lib\n",
+              "commands": [
+                "commands/225.json",
+                "commands/226.json",
+                "commands/227.json"
+              ]
+            }
+          ],
+          "exempt": [
+            "dist",
+            "./lib"
+          ],
+          "remaining": []
+        }
+      ],
+      "base": {
+        "exitCode": 1,
+        "ready": false,
+        "status": "fail",
+        "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+        "raw": "commands/229.json",
+        "result": {
+          "ready": false,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "fail",
+              "message": "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale",
+              "details": [
+                "full output: $CASE_ROOT/cases/base/mutual-exemption-control/.preflight-logs/npm-test-1790153066418-55591-1.log",
+                "> mutual-exemption-control@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module './dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/base/mutual-exemption-control/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)",
+                "at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)"
+              ],
+              "durationMs": 115,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [
+            "npm test failed: the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+          ],
+          "warnings": [],
+          "limitations": [
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 119,
+          "timestamp": "2026-09-23T08:44:26.420Z"
+        },
+        "test_output": "test-output/base/mutual-exemption-control.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": true,
+              "evidence": {
+                "dir": "dist",
+                "state": "entries"
+              }
+            },
+            "corroboration": "Error: Cannot find module './dist/index.js'"
+          }
+        ],
+        "classification": {
+          "downgrade": false,
+          "note": "the build output directory (dist) of this repo exists and is not empty, but a declared build artifact (dist/index.js) is not on disk: the build output on disk does not contain it, so the failure is reported as a real failure; rerun the build and preflight if this output is stale"
+        }
+      },
+      "candidate": {
+        "exitCode": 0,
+        "ready": true,
+        "status": "skip",
+        "message": "npm test not evaluated: build required before test (a declared build artifact (dist/index.js) is missing; the test output reports: Error: Cannot find module './dist/index.js'); run `npm run build` first (or rerun preflight with `--setup`, which builds automatically when this repo's CI shows build-before-test)",
+        "raw": "commands/230.json",
+        "result": {
+          "ready": true,
+          "confidence": 0,
+          "checks": [
+            {
+              "name": "npm-test",
+              "kind": "test",
+              "status": "skip",
+              "message": "npm test not evaluated: build required before test (a declared build artifact (dist/index.js) is missing; the test output reports: Error: Cannot find module './dist/index.js'); run `npm run build` first (or rerun preflight with `--setup`, which builds automatically when this repo's CI shows build-before-test)",
+              "details": [
+                "full output: $CASE_ROOT/cases/candidate/mutual-exemption-control/.preflight-logs/npm-test-1790153066582-55637-1.log",
+                "> mutual-exemption-control@1.0.0 test",
+                "> node test.js",
+                "node:internal/modules/cjs/loader:1573",
+                "throw err;",
+                "^",
+                "Error: Cannot find module './dist/index.js'",
+                "Require stack:",
+                "- $CASE_ROOT/cases/candidate/mutual-exemption-control/test.js",
+                "at Module._resolveFilename (node:internal/modules/cjs/loader:1569:15)",
+                "at wrapResolveFilename (node:internal/modules/cjs/loader:1123:27)"
+              ],
+              "durationMs": 111,
+              "confidenceContribution": 0.2
+            }
+          ],
+          "blockers": [],
+          "warnings": [],
+          "limitations": [
+            "npm test not evaluated: build required before test (a declared build artifact (dist/index.js) is missing; the test output reports: Error: Cannot find module './dist/index.js'); run `npm run build` first (or rerun preflight with `--setup`, which builds automatically when this repo's CI shows build-before-test)",
+            "CI simulation skipped (enable with checks.ciSimulation: true, requires act)"
+          ],
+          "durationMs": 142,
+          "timestamp": "2026-09-23T08:44:26.611Z"
+        },
+        "test_output": "test-output/candidate/mutual-exemption-control.log",
+        "conditions": [
+          {
+            "package": ".",
+            "precondition": {
+              "met": true,
+              "hasBuildScript": true,
+              "missingArtifact": "dist/index.js"
+            },
+            "partial": {
+              "partiallyBuilt": false
+            },
+            "corroboration": "Error: Cannot find module './dist/index.js'"
+          }
+        ],
+        "classification": {
+          "downgrade": true,
+          "cause": "a declared build artifact (dist/index.js) is missing; the test output reports: Error: Cannot find module './dist/index.js'"
+        }
+      }
+    }
+  ],
+  "verdict_changes": [
+    "mutual-exemption-control"
+  ],
+  "message_changes": [
+    "mutual-exemption-control"
+  ],
+  "path_only_message_changes": [],
+  "missing_motivating_flips": [
+    "oclif-bin-dist-unbuilt",
+    "exports-src-dist-unbuilt"
+  ],
+  "unsafe_flips": [
+    "mutual-exemption-control"
+  ],
+  "decision": "reject",
+  "status": "complete",
+  "exitCode": 0
+}

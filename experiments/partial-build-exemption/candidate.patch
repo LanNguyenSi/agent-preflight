@@ -1,0 +1,36 @@
+diff --git a/src/checks/shared.ts b/src/checks/shared.ts
+index e5e77c8..4b65225 100644
+--- a/src/checks/shared.ts
++++ b/src/checks/shared.ts
+@@ -1,5 +1,6 @@
+ import { execa } from "execa";
+ import fs from "fs";
++import { spawnSync } from "child_process";
+ import os from "os";
+ import path from "path";
+ import { CheckResult, CheckKind, PreflightConfig } from "../types.js";
+@@ -870,10 +871,23 @@ export interface PartialBuildState {
+ // read as partially built. Nothing is snapshotted beforehand, because a
+ // snapshot would answer a question about a directory the failing run no longer
+ // had; the cost is documented in the README instead.
++function isTrackedAndNotIgnored(pkgDir: string, dir: string): boolean {
++  const tracked = spawnSync("git", ["ls-files", "-z", "--", dir], { cwd: pkgDir, encoding: "utf8" });
++  const ignored = spawnSync("git", ["check-ignore", "--no-index", "-q", "--", dir], { cwd: pkgDir });
++  if (tracked.error || tracked.status !== 0 || ignored.error || (ignored.status !== 0 && ignored.status !== 1)) {
++    throw new Error("Experimental git classification failed");
++  }
++  return tracked.stdout.length > 0 && ignored.status === 1;
++}
++
+ export function evaluatePartialBuild(pkgDir: string): PartialBuildState {
+   const pkg = readJsonFile<PackageJson>(path.join(pkgDir, "package.json"));
+   const readings = packageOutputDirs(pkgDir, pkg).map((dir) => readOutputDir(pkgDir, dir));
+-  const evidence = readings.find((reading) => reading.state === "entries" || reading.state === "unreadable");
++  const remaining = readings.filter((reading, index) => !(
++    isTrackedAndNotIgnored(pkgDir, reading.dir) &&
++    readings.some((other, otherIndex) => otherIndex !== index && other.state === "entries")
++  ));
++  const evidence = remaining.find((reading) => reading.state === "entries" || reading.state === "unreadable");
+   return { partiallyBuilt: evidence !== undefined, evidence };
+ }
+ 

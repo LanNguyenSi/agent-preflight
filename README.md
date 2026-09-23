@@ -313,9 +313,13 @@ Three things have to be true at once, and none of them is enough on its own.
    entry for this rule; this section carries the decision only. The
    oclif-style `bin/`
    false-block this rejection describes stays an open cost, no opt-out was
-   added for it; a narrower rule (tracked, AND not `.gitignore`d, AND
-   another declared output directory of the same package is populated) was
-   not measured and is not claimed to work.
+   added for it. A later measurement rejected the narrower rule (tracked,
+   AND not `.gitignore`d, AND another declared output directory of the same
+   package is populated): it leaves the motivating unbuilt cases blocked,
+   while two committed output directories can exempt each other and turn a
+   real failure into a build-required skip. The
+   portable corpus and raw verdicts are in
+   [`experiments/partial-build-exemption`](experiments/partial-build-exemption/).
 
    The remedy is the build, or, where a declaration names a directory that
    is not build output, the declaration; either way blocking is the safe
