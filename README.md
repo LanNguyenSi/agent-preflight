@@ -317,8 +317,8 @@ Three things have to be true at once, and none of them is enough on its own.
    AND not `.gitignore`d, AND another declared output directory of the same
    package is populated): it leaves the motivating unbuilt cases blocked,
    while two committed output directories can exempt each other and turn a
-   real failure into a build-required skip. The
-   portable corpus and raw verdicts are in
+   real failure into a build-required skip. The portable corpus, normalized
+   verdicts, and raw replay instructions are in
    [`experiments/partial-build-exemption`](experiments/partial-build-exemption/).
 
    The remedy is the build, or, where a declaration names a directory that
