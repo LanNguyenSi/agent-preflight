@@ -20,7 +20,7 @@ agent-preflight runs lint, typecheck, test, dependency audit, secret detection, 
 
 ## Quick start
 
-Requires Node.js 18+; [act](https://github.com/nektos/act) and Docker are only needed for the optional CI simulation and sandbox modes.
+Requires Node.js 18+; [act](https://github.com/nektos/act) and Docker are only needed for the optional CI simulation and sandbox modes. Host-mode checks need the target stack's own tools on `PATH` (`ruff`, `mypy`, `pytest`, `composer`, `mvn`, and so on); sandbox mode bundles those into the Docker image instead. `install.sh` puts `preflight` and `preflight-sandbox` in `~/.local/bin`.
 
 ```bash
 git clone https://github.com/LanNguyenSi/agent-preflight
@@ -57,10 +57,16 @@ preflight: READY (confidence: 89%)
 Warnings:
   4 recent commit(s) don't follow conventional format
 
+Limitations (not validated locally):
+  secret detection uses pattern matching; not exhaustive
+  CI simulation skipped (enable with checks.ciSimulation: true, requires act)
+
 Checks: 9 | Duration: 20544ms
 ```
 
-`--json` prints the same result as a structured object (`ready`, `confidence`, `blockers`, `warnings`, `limitations`, `durationMs`, `timestamp`) for an agent to parse. `run --json` and `batch --json` both write their full JSON envelope before exiting; a consumer piping either command's output must read stdout concurrently with the process, not wait for exit.
+`--json` prints the same result as a structured object (`ready`, `confidence`, `checks`, `blockers`, `warnings`, `limitations`, `durationMs`, `timestamp`) for an agent to parse. `run --json` and `batch --json` both write their full JSON envelope before exiting; a consumer piping either command's output must read stdout concurrently with the process, not wait for exit.
+
+Security: a target repo's `.preflight.json` can define shell commands that run on your machine, so only run `preflight batch` (or `run`/`sandbox`/the MCP server) against repositories you trust; see [docs/checks.md](docs/checks.md#custom-checks) for the full note.
 
 ## Documentation
 

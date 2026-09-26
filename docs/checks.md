@@ -27,7 +27,7 @@ Every check `agent-preflight` can run, what it verifies, and when it fires. Each
   `checks.<kind>.acknowledge` in `.preflight.json`: never blocks, but
   stays visible with its own status and the waiver's reason (see
   ["Waiving a permanently-failing
-  check"](#waiving-a-permanently-failing-check-checksacknowledge)
+  check"](#waiving-a-permanently-failing-check-checkskindacknowledge)
   below).
 
 `clean-worktree` is a blocker because local modifications make the result diverge from what will actually be pushed. `protected-branch` is a warning because direct-push workflows still exist. Under `--setup`, `clean-worktree` still blocks on any change that predates setup, and still blocks on a tracked file setup modifies or removes; only untracked output setup itself produced is excused (named in the check's `details`, shown by `--json` and MCP, and in a `limitations` entry shown by the CLI, instead of blocking) -- see "Setup phase" below.
@@ -95,7 +95,7 @@ Instead of `true`/`false`, any toggle except `ciSimulation` and
 `secretDetection` can also be `{ "acknowledge": "<reason>" }` to run the
 check but waive a `fail` result as a non-blocking `acknowledged` status
 with the reason attached: see ["Waiving a permanently-failing
-check"](#waiving-a-permanently-failing-check-checksacknowledge) below
+check"](#waiving-a-permanently-failing-check-checkskindacknowledge) below
 for the full contract (required non-empty reason, visibility guarantees,
 boundaries, and why `secretDetection` is excluded).
 
@@ -179,6 +179,13 @@ Custom checks let you wire in anything else as a shell command:
 ```
 
 `failOnError: false` downgrades a non-zero exit to a `warn` so optional checks still surface without blocking the run.
+
+**Security: the target repo is not just data.** Its `.preflight.json` can
+define shell commands (`customChecks[].command`, `commands.lint`/`typecheck`/
+`test`/`audit`) that run on the host, whether the run comes from the CLI
+(`preflight run`, `preflight batch`), `preflight sandbox`, or the MCP server:
+run preflight only on repositories you trust, since all of these share the
+same execution surface.
 
 ## Setup phase
 
@@ -574,7 +581,8 @@ a build the repo's real CI relies on.
 `.github/workflows/ci.yml` is what decides whether that repo's `build` script
 executes on your machine. Workflow text is repository content, so `--setup`
 belongs only on repositories you already trust to run, the same trust
-`customChecks[].command` and the `commands.*` overrides already require. Without `--setup`, no build script is
+`customChecks[].command` and the `commands.*` overrides already require (see
+the Security note under [architecture.md's "MCP server"](./architecture.md#mcp-server)). Without `--setup`, no build script is
 ever executed.
 
 The build step gets its own wall-clock budget, **300000 ms** by default (the
@@ -615,6 +623,49 @@ but not the numerator, and the accompanying `limitations` entry adds the usual
 a `pass`, and it is not scored more harshly than an `npm-audit` skip for the
 same reason (no report to judge).
 
+**`--setup`'s own UNTRACKED output never fails `clean-worktree`; a TRACKED
+file it modifies still does.** `npm ci` and the build step above write into
+the target worktree, and when the repo does not gitignore that output (a
+fresh `dist/`, a generated client) it would otherwise show up as untracked
+changes and fail the tool's own `clean-worktree` check on the run that just
+created them. `--setup` snapshots the worktree's `git status --porcelain`
+state before it runs `ensureProjectSetup`, and `clean-worktree` then judges
+the change against that snapshot instead of the raw current state: a path
+that was already dirty before `--setup` ran still fails the check exactly as
+it always has. Among the paths `--setup` produced, only UNTRACKED ones (not
+already known to git) are excused: `clean-worktree` stays a `pass`, and the
+produced paths (capped to 10, with the rest counted) are named in the
+check's own `details` (`--json` and MCP) and in a `limitations` entry
+(shown by the CLI) recommending they be added to `.gitignore`, never as a
+blocker. A TRACKED file `--setup` modifies or removes (a committed `dist/`
+file the build rewrote, `package-lock.json` rewritten by `npm ci`) is a real
+content change to something git already tracks, so it still fails
+`clean-worktree`, naming the paths and recommending they be committed or
+untracked (in the check's `details` and, so the CLI also shows them, a
+`limitations` entry), with no `.gitignore` suggestion since that would not
+fix a tracked file. If the pre-setup snapshot itself cannot be taken (a git
+error), `clean-worktree` falls back to its normal undifferentiated check and
+says so in a `limitations` entry, rather than silently treating every
+current change as either pre-existing or setup-produced. Without `--setup`,
+none of this applies: `clean-worktree` runs exactly as it did before this
+behavior existed.
+
+**This holds only for the first `--setup` run in a worktree.** Run 1
+excuses its own untracked output and recommends `.gitignore`, as above; if
+that output is left un-ignored, the very same paths are already present in
+the PRE-setup snapshot on run 2 (they predate that run), so `clean-worktree`
+treats them as pre-existing dirt and fails, exactly like any other
+uncommitted change -- the tool cannot tell "leftover from a run I already
+recommended ignoring" apart from a real user change. When every pre-existing
+path is untracked, the failure still names the paths and adds the same
+`.gitignore` remedy (in `details` and a `limitations` entry) rather than the
+plain "commit or stash" message, since that's the likely fix; a pre-existing
+change that includes a tracked path keeps the plain message, since
+`.gitignore` would not help there. A directory git reports as a single
+collapsed `?? dir/` entry (not yet tracked) is read the same conservative
+way: present in the snapshot means pre-existing, even if only some of its
+contents are new since the snapshot was taken.
+
 ## Waiving a permanently-failing check: `checks.<kind>.acknowledge`
 
 Some check failures are not a signal to fix before pushing: they are a
@@ -642,12 +693,12 @@ to a new `acknowledged` status instead of being dropped or hidden:
   own `status: "acknowledged"` entry in `checks[]`. A consumer that only
   quotes `blockers`/`warnings` and never scans `checks[]` will report a
   clean "READY" without ever surfacing that a failure was waived.
-- The check's `message` is rewritten to include the reason
-  (`"... (acknowledged: install-sh suite is linux-only, CI covers it)"`),
-  and a matching entry is added to `limitations`, so the waiver is visible
-  in `--json` output.
+- The check's `message` is rewritten to include the reason: the original
+  message gets an `acknowledged: <reason>` suffix appended, and a matching
+  entry is added to `limitations`, so the waiver is visible in `--json`
+  output.
 - The human-output CLI prints a dedicated `Acknowledged (failed, but
-  waived, not counted as a blocker):` section naming the check and reason.
+  waived ...)` section naming the check and reason.
   `preflight batch`'s one-line-per-repo summary has no room for that
   section, so it instead appends a compact `[n acknowledged]` marker to a
   repo's line when that repo has one or more acknowledged checks.
