@@ -182,10 +182,10 @@ Custom checks let you wire in anything else as a shell command:
 
 **Security: the target repo is not just data.** Its `.preflight.json` can
 define shell commands (`customChecks[].command`, `commands.lint`/`typecheck`/
-`test`/`audit`) that run on the host, whether the run comes from the CLI
-(`preflight run`, `preflight batch`), `preflight sandbox`, or the MCP server:
-run preflight only on repositories you trust, since all of these share the
-same execution surface.
+`test`/`audit`) that run on the host (CLI `preflight run` / `preflight batch`,
+and the MCP server) or inside the sandbox container with your workspace and
+package caches mounted, plus the Docker socket if enabled (`preflight
+sandbox`). Run preflight only on repositories you trust.
 
 ## Setup phase
 
@@ -582,7 +582,7 @@ a build the repo's real CI relies on.
 executes on your machine. Workflow text is repository content, so `--setup`
 belongs only on repositories you already trust to run, the same trust
 `customChecks[].command` and the `commands.*` overrides already require (see
-the Security note under [architecture.md's "MCP server"](./architecture.md#mcp-server)). Without `--setup`, no build script is
+the security note under [Custom checks](#custom-checks)). Without `--setup`, no build script is
 ever executed.
 
 The build step gets its own wall-clock budget, **300000 ms** by default (the

@@ -20,7 +20,7 @@ agent-preflight runs lint, typecheck, test, dependency audit, secret detection, 
 
 ## Quick start
 
-Requires Node.js 18+; [act](https://github.com/nektos/act) and Docker are only needed for the optional CI simulation and sandbox modes. Host-mode checks need the target stack's own tools on `PATH` (`ruff`, `mypy`, `pytest`, `composer`, `mvn`, and so on); sandbox mode bundles those into the Docker image instead. `install.sh` puts `preflight` and `preflight-sandbox` in `~/.local/bin`.
+Requires Node.js 18+; [act](https://github.com/nektos/act) and Docker are only needed for the optional CI simulation and sandbox modes. Host-mode checks need the target stack's own tools on `PATH` (`ruff`, `mypy`, `pytest`, `composer`, `mvn`, and so on); sandbox mode bundles those into the Docker image instead. `install.sh` puts `preflight`, `preflight-sandbox`, and `preflight-mcp` in `~/.local/bin` (override with `PREFLIGHT_BIN_DIR`).
 
 ```bash
 git clone https://github.com/LanNguyenSi/agent-preflight
