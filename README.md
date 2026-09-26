@@ -20,6 +20,8 @@ agent-preflight runs lint, typecheck, test, dependency audit, secret detection, 
 
 ## Quick start
 
+Requires Node.js 18+; [act](https://github.com/nektos/act) and Docker are only needed for the optional CI simulation and sandbox modes.
+
 ```bash
 git clone https://github.com/LanNguyenSi/agent-preflight
 cd agent-preflight
@@ -79,22 +81,7 @@ npm test
 npm run lint
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the PR workflow and dev setup.
-
-## Building a release bundle
-
-```bash
-make release-bundle
-```
-
-Produces `out/release/agent-preflight-v<version>-bundle.tar.gz` plus a `.sha256`. Bundle installs require `node` but not `npm`. After install, `preflight` and `preflight-sandbox` are on `~/.local/bin`.
-
-## Requirements
-
-- Node.js 18+
-- [act](https://github.com/nektos/act) for local CI simulation in host mode
-- Stack-specific tools (`ruff`, `mypy`, `pytest`, `composer`, `phpunit`, `mvn`, `gradle`) for host-mode checks against those stacks
-- Docker for sandbox mode
+`make release-bundle` produces `out/release/agent-preflight-v<version>-bundle.tar.gz` plus a `.sha256`; bundle installs require `node` but not `npm`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the PR workflow and dev setup.
 
 ## License
 
