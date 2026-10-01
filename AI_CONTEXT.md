@@ -24,11 +24,14 @@ The tool runs local checks and returns a structured result with:
 
 `checks[]` entries carry a `status` of `pass`, `fail`, `warn`, `skip`, or
 `acknowledged`. `acknowledged` is a `fail` the operator explicitly waived via
-`checks.<kind>.acknowledge` in `.preflight.json` (see README "Waiving a
-permanently-failing check") — it never appears in `blockers[]` (`fail`
-only) or `warnings[]` (`warn` only), so a consumer must scan `checks[]`
-itself to see it. `secret-detection` is excluded from this mechanism
-(Orchestrator decision D-013): its toggle stays a plain `boolean`.
+`checks.<kind>.acknowledge` in `.preflight.json` (see [waiving a failing
+check](docs/checks.md#waiving-a-permanently-failing-check-checkskindacknowledge)).
+It adds neither an ordinary failure blocker nor a warning. If its kind is in
+[`requiredChecks`](docs/checks.md#required-checks), a policy blocker names the
+acknowledged result because only passing results satisfy that requirement.
+Consumers must still scan `checks[]` to see every waived failure.
+`secret-detection` is excluded from acknowledgement: its toggle stays a plain
+`boolean`.
 
 ## Current Command Surface
 
