@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { defaultConfig, loadConfig, validateConfig } from "../src/config.js";
+import { defaultConfig, loadConfig, mergeConfig, validateConfig } from "../src/config.js";
+import { CHECK_KINDS } from "../src/types.js";
 import { runPreflight } from "../src/runner.js";
 
 const tempDirs: string[] = [];
@@ -27,6 +28,63 @@ afterEach(() => {
 });
 
 describe("validateConfig", () => {
+  it("retains all required check kind names without warnings", () => {
+    const { config, warnings } = validateConfig({ requiredChecks: [...CHECK_KINDS, "test"] });
+    expect(config.requiredChecks).toEqual([...CHECK_KINDS, "test"]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("keeps requiredChecks optional and inherits an omitted policy", () => {
+    expect(defaultConfig().requiredChecks).toBeUndefined();
+    expect(validateConfig({ requiredChecks: undefined })).toEqual({ config: {}, warnings: [] });
+    expect(mergeConfig({ requiredChecks: ["test"] }, {}).requiredChecks).toEqual(["test"]);
+  });
+
+  it("inherits requiredChecks when a programmatic override is undefined", () => {
+    expect(mergeConfig({ requiredChecks: ["test"] }, { requiredChecks: undefined }).requiredChecks).toEqual(["test"]);
+  });
+
+  it("lets an empty requiredChecks override explicitly clear an inherited policy", () => {
+    expect(mergeConfig({ requiredChecks: ["test"] }, { requiredChecks: [] }).requiredChecks).toEqual([]);
+  });
+
+  it("preserves an invalid null requiredChecks override instead of inheriting a valid policy", async () => {
+    const { config } = validateConfig({ requiredChecks: null });
+    const merged = mergeConfig({ requiredChecks: ["test"] }, config);
+    expect(merged.requiredChecks).toBeNull();
+    const repoPath = makeTempDir("preflight-required-null-merge-");
+    const result = await runPreflight(repoPath, {
+      ...merged,
+      checks: { gitState: false, lint: false, typecheck: false, test: false, audit: false, ciSimulation: false, commitConvention: false, secretDetection: false, tdd: false },
+      logDir: path.join(repoPath, "logs"),
+    });
+    expect(result.ready).toBe(false);
+    expect(result.blockers).toEqual(["requiredChecks: expected an array of check kinds"]);
+  });
+
+  it.each([null, false, "test", {}, ["unknown"], ["test", 1], ["gitState"]].map((requiredChecks) => ({ requiredChecks })))("preserves malformed requiredChecks $requiredChecks so loading cannot weaken the gate", async ({ requiredChecks }) => {
+    const { config, warnings } = validateConfig({ requiredChecks });
+    expect(config.requiredChecks).toEqual(requiredChecks);
+    expect(warnings).toEqual([expect.stringContaining("readiness will be blocked")]);
+    const repoPath = makeTempDir("preflight-required-config-");
+    writeConfig(repoPath, {
+      requiredChecks,
+      checks: { gitState: false, lint: false, typecheck: false, test: false, audit: false, ciSimulation: false, commitConvention: false, secretDetection: false, tdd: false },
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const loaded = loadConfig(repoPath);
+      expect(loaded.requiredChecks).toEqual(requiredChecks);
+      loaded.logDir = path.join(repoPath, "logs");
+      const result = await runPreflight(repoPath, loaded);
+      expect(result.ready).toBe(false);
+      expect(result.blockers).toEqual([expect.stringContaining("requiredChecks")]);
+      expect(result.checks).toEqual([]);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   // task 850903cb acceptance criterion 1: one malformed-field test per type
   // class actually present in PreflightConfig (string/boolean/array/object;
   // there is no plain `number` field in PreflightConfig, so no case for it).
@@ -190,11 +248,11 @@ describe("validateConfig", () => {
   // FIX 4 (task-slicer fix-round, review of task 850903cb): 5 previously
   // uncovered/mutation-survivable cases.
 
-  it("drops commands entirely when it is not an object", () => {
+  it("retains malformed commands so the check can fail instead of auto-detecting", () => {
     const { config, warnings } = validateConfig({ commands: "nope" });
-    expect(config.commands).toBeUndefined();
+    expect(config.commands).toBe("nope");
     expect(warnings).toEqual([
-      "commands: expected an object, got string; ignoring this field",
+      "commands: expected an object, got string; configured check will fail",
     ]);
   });
 

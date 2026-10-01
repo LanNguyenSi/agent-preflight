@@ -14,7 +14,7 @@ export interface CheckResult {
   kind: CheckKind;
   // "acknowledged": the check ran and failed, but the operator waived it in
   // .preflight.json with a required justification (checks.<kind>.acknowledge).
-  // Treated like "warn": visible, but never a `ready:false` blocker. See
+  // Visible and non-blocking unless its kind is in requiredChecks. See
   // resolveAcknowledge/applyAcknowledgements in src/runner.ts.
   status: "pass" | "fail" | "warn" | "skip" | "acknowledged";
   message?: string;
@@ -23,17 +23,12 @@ export interface CheckResult {
   confidenceContribution: number; // how much this check contributes to overall confidence
 }
 
-export type CheckKind =
-  | "git-state"
-  | "lint"
-  | "typecheck"
-  | "test"
-  | "audit"
-  | "ci-simulation"
-  | "commit-convention"
-  | "secret-detection"
-  | "tdd"
-  | "custom";
+export const CHECK_KINDS = [
+  "git-state", "lint", "typecheck", "test", "audit", "ci-simulation",
+  "commit-convention", "secret-detection", "tdd", "custom",
+] as const;
+
+export type CheckKind = typeof CHECK_KINDS[number];
 
 /**
  * A check's `.preflight.json` toggle. `true`/`false` enable/disable the
@@ -42,7 +37,8 @@ export type CheckKind =
  * `acknowledged` status (see CheckResult.status and
  * runner.ts#applyAcknowledgements) — the failure stays visible (its own
  * status, its message carries the reason) but no longer flips `ready` to
- * `false`. `acknowledge` is required to be a non-empty string; a missing or
+ * `false` unless the kind is required by `requiredChecks`. `acknowledge` is
+ * required to be a non-empty string; a missing or
  * non-string value is rejected (ignored, with the rejection reported in
  * `PreflightResult.limitations`), never silently treated as "acknowledged".
  * Deliberately NOT *honored* for `ciSimulation` or `secretDetection`
@@ -62,7 +58,22 @@ export type CheckKind =
  */
 export type CheckToggle = boolean | { acknowledge: string };
 
+export type ConfiguredCheckKind = "lint" | "typecheck" | "test" | "audit";
+
+export interface CommandOptions {
+  run: string;
+  name?: string;
+  /** Relative to the effective workingDir; absolute paths are also supported. */
+  cwd?: string;
+  /** Positive finite milliseconds, at most one day. */
+  timeoutMs?: number;
+}
+
+export type ConfiguredCommand = string | CommandOptions;
+
 export interface PreflightConfig {
+  /** Each listed kind must produce at least one result, and every result must pass. */
+  requiredChecks?: CheckKind[];
   checks?: {
     gitState?: CheckToggle;
     lint?: CheckToggle;
@@ -114,17 +125,12 @@ export interface PreflightConfig {
      * Defaults to 300000, the same budget the test check gets, instead of the
      * 120000 the dependency-install setup commands share. A build that
      * exhausts the budget makes the test check "not evaluated" (a named
-     * `skip` plus a limitation), never a blocker; a build that exits non-zero
-     * is a blocker. See the README's "Build-required test classification".
+     * `skip` plus a limitation), blocking only when tests are required; a build
+     * that exits non-zero is a blocker. See docs/checks.md's build classification.
      */
     buildTimeoutMs?: number;
   };
-  commands?: {
-    lint?: string[];
-    typecheck?: string[];
-    test?: string[];
-    audit?: string[];
-  };
+  commands?: Partial<Record<ConfiguredCheckKind, ConfiguredCommand[]>>;
   sandbox?: SandboxConfig;
   customChecks?: CustomCheck[];
 }

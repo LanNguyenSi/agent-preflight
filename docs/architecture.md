@@ -25,6 +25,7 @@ src/
     ci.ts             # act-based CI simulation
     custom.ts         # user-defined shell checks
     shared.ts         # project detection, runner helpers, setup phase
+    php.ts            # Composer binary paths and bounded PHP config discovery
 ```
 
 Tests live under `tests/` and mirror the `src/` layout. Build output goes to `dist/`.
@@ -34,9 +35,9 @@ Tests live under `tests/` and mirror the `src/` layout. Build output goes to `di
 `preflight run [repoPath]` flows through these steps:
 
 1. `cli.ts` parses flags, resolves the target path to an absolute path, calls `loadConfig`.
-2. `config.ts` reads `.preflight.json` if present and merges it with defaults from `types.ts`. Missing files are not an error; the tool works without config.
+2. `config.ts` reads `.preflight.json` if present and merges it with `defaultConfig()` from `config.ts`. Missing files are not an error; the tool works without config.
 3. `runner.ts` dynamically imports each enabled check module. Imports are dynamic so a missing optional dependency in one check never breaks the others.
-4. Each check returns a `CheckSetResult` of `{ checks, limitations }`. The runner pushes them into a flat list, picks blockers (`fail`) and warnings (`warn`), deduplicates limitations, and computes the confidence score.
+4. Each check returns a `CheckSetResult` of `{ checks, limitations }`. The runner aggregates results, applies acknowledgements, then collects failure blockers and warnings. It adds policy blockers for invalid `requiredChecks`, missing required kinds or any non-passing result of a required kind. Confidence is still calculated from actual check results and limitations; policy blockers add no synthetic check or weight.
 5. `cli.ts` formats the result. `--json` prints `JSON.stringify(result, null, 2)`. The default formatter renders the icon, the score, the blockers, the warnings, and the limitations.
 6. Exit code is `0` when `ready` is true, otherwise `1`.
 
@@ -54,6 +55,8 @@ interface PreflightResult {
   timestamp: string;
 }
 ```
+
+Command strings and objects share execution in `checks/shared.ts`. An object's `cwd` resolves against the effective target directory, with its own optional name and timeout. Invalid explicit overrides are retained by config loading and fail the enabled category before any of its commands execute. Recognized recursive test commands suppressed under Vitest produce named `skip` results. Required-check evaluation happens after acknowledgement so a waiver cannot satisfy the policy. See [checks.md](./checks.md#command-overrides) for the configuration contract.
 
 ### Run pipeline
 
@@ -102,7 +105,7 @@ The exit code is the machine-readable verdict; it is the contract `docs/integrat
 
 | Command | Exit `0` | Exit `1` |
 |---------|----------|----------|
-| `preflight run [repoPath]` | `ready` is true (no blocking `fail` checks) | `ready` is false |
+| `preflight run [repoPath]` | `ready` is true (no failure or required-check policy blockers) | `ready` is false |
 | `preflight batch [root]` | every repo is ready (`notReady` is 0) | one or more repos are not ready |
 | `preflight sandbox [repoPath]` | the in-container `preflight run` exited 0 | the in-container run exited non-zero (or the container failed to start) |
 

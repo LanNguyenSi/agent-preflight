@@ -18,10 +18,10 @@ If an agent is installing this skill from a repo template, it should fetch it fr
 ## Workflow
 
 1. Resolve the repo root and inspect `.preflight.json` when present.
-2. If the repo is a monorepo or the relevant code lives below the root, set or honor `workingDir`.
+2. If the repo is a monorepo or the relevant code lives below the root, set or honor `workingDir`. Honor configured command objects and `requiredChecks`; each required kind needs at least one result and every result passing.
 3. Run `preflight run <repo> --json`.
 4. If the result mainly contains missing-tool limitations, consider rerunning with `preflight sandbox <repo> --json`.
-5. Scan `checks[]` for any entry with `status: "acknowledged"` — a check that failed but was deliberately waived via `.preflight.json`. It never appears in `blockers[]` or `warnings[]` (those only carry `fail`/`warn` statuses), so `ready: true` alone can hide a waived failure from a caller who only reads `blockers`/`warnings`.
+5. Scan `checks[]` for `status: "acknowledged"`: a waived failure keeps its status and reason. It is non-blocking by default, but cannot satisfy `requiredChecks`; the unmet policy then appears in `blockers[]`. Report waived failures even when the run is ready.
 6. Report:
    - blockers
    - warnings
@@ -44,7 +44,7 @@ If an agent is installing this skill from a repo template, it should fetch it fr
 - Treat `confidence` as a secondary signal, not the gate.
 - Quote blockers and warnings from the structured result, not from intuition.
 - Quote acknowledged checks too: scan `checks[]` for `status: "acknowledged"` and name them alongside blockers/warnings — `ready: true` with a waived failure still deserves visibility, since the caller decided to accept it, not that nothing happened.
-- Mention when checks were skipped because tooling was absent.
+- Mention when checks were skipped because tooling was absent. Required checks evaluate returned results; continue reporting limitations and do not infer exhaustive stack coverage.
 - If you rerun in the sandbox, say so explicitly.
 
 ## When To Read More

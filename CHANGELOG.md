@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `commands.lint`, `commands.typecheck`, `commands.test` and `commands.audit` accept command objects with `run`, optional `name`, `cwd` relative to `workingDir`, and `timeoutMs` up to one day. Existing strings and empty-list auto-detection remain supported; invalid explicit overrides fail visibly.
+- Opt-in `requiredChecks` requires at least one actual result and all results passing for every named kind. Missing, disabled, skipped, warned, acknowledged or failed required checks block readiness; omitted or empty policies retain the existing gate and confidence calculation.
+
 ### Changed
+
+- PHP tool paths honor Composer `config.bin-dir`. Auto-detected PHPStan and PHPCS use the nearest supported config through the Git root, or report a limitation when no config is found. Bare PHPUnit is no longer auto-run: configure the intended command or a Composer `test` script. See [checks.md](docs/checks.md#php-configuration-and-test-scope) for migration details.
 
 - Measured and rejected the proposed narrow partial-build exemption (task
   ac5b94b3). The literal `tracked AND not ignored AND another populated

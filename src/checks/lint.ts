@@ -1,4 +1,6 @@
 import { CheckResult, PreflightConfig } from "../types.js";
+import fs from "fs";
+import { composerBinPath, findPhpConfig, quotePhpArgument } from "./php.js";
 import {
   CheckSetResult,
   commandExists,
@@ -48,7 +50,7 @@ export async function runLintChecks(
   config: PreflightConfig
 ): Promise<CheckSetResult> {
   const configuredCommands = getConfiguredCommands(config, "lint");
-  if (configuredCommands.length > 0) {
+  if (configuredCommands.error || configuredCommands.commands.length > 0) {
     return runConfiguredCommands(repoPath, "lint", configuredCommands, 0.15, config.logDir);
   }
 
@@ -142,6 +144,8 @@ export async function runLintChecks(
   }
 
   if (hasPhpProject(context)) {
+    const pint = composerBinPath(context, "pint");
+    const phpcs = composerBinPath(context, "phpcs");
     if (hasComposerScript(context, "lint")) {
       const result = await runShellCheck({
         repoPath,
@@ -157,12 +161,16 @@ export async function runLintChecks(
       if (result.check) {
         checks.push(result.check);
       }
-    } else if (fileExists(repoPath, "vendor/bin/pint") || hasComposerPackage(context, "laravel/pint")) {
+      if (result.limitation) {
+        limitations.push(result.limitation);
+      }
+    } else if (fs.existsSync(pint) || hasComposerPackage(context, "laravel/pint")) {
       const result = await runShellCheck({
         repoPath,
         name: "pint",
         kind: "lint",
-        command: "vendor/bin/pint --test",
+        command: `${quotePhpArgument(pint)} --test`,
+        primaryCommand: pint,
         weight: 0.15,
         failureMessage: "pint failed",
         missingLimitation: "pint not installed; PHP lint check skipped",
@@ -171,18 +179,26 @@ export async function runLintChecks(
       if (result.check) {
         checks.push(result.check);
       }
-    } else if (fileExists(repoPath, "vendor/bin/phpcs")) {
-      const result = await runShellCheck({
-        repoPath,
-        name: "phpcs",
-        kind: "lint",
-        command: "vendor/bin/phpcs",
-        weight: 0.15,
-        failureMessage: "phpcs failed",
-        logDir: config.logDir,
-      });
-      if (result.check) {
-        checks.push(result.check);
+      if (result.limitation) {
+        limitations.push(result.limitation);
+      }
+    } else if (fs.existsSync(phpcs)) {
+      const phpConfig = await findPhpConfig(repoPath, "phpcs");
+      if (!phpConfig) {
+        limitations.push("No PHPCS config found within the repository; configure commands.lint in .preflight.json");
+      } else {
+        const result = await runShellCheck({
+          repoPath,
+          name: "phpcs",
+          kind: "lint",
+          command: `${quotePhpArgument(phpcs)} --standard=${quotePhpArgument(phpConfig)}`,
+          weight: 0.15,
+          failureMessage: "phpcs failed",
+          logDir: config.logDir,
+        });
+        if (result.check) {
+          checks.push(result.check);
+        }
       }
     } else {
       limitations.push("No supported PHP lint command found (composer script, pint, phpcs)");

@@ -68,6 +68,10 @@ Checks: 9 | Duration: 20544ms
 
 Security: a target repo's `.preflight.json` can define shell commands that run on your machine, so only run `preflight batch` (or `run`/`sandbox`/the MCP server) against repositories you trust; see [docs/checks.md](docs/checks.md#custom-checks) for the full note.
 
+## Configuration
+
+Use `.preflight.json` for project-specific command strings or objects with `run`, `name`, `cwd` and `timeoutMs`. Opt in to `"requiredChecks": ["lint", "typecheck", "test"]` when missing or non-passing results must block readiness. Without that policy, the existing gate is unchanged. PHP test execution requires an explicit command or a Composer `test` script; bare PHPUnit is no longer auto-run. See the [checks and configuration reference](docs/checks.md) for examples, PHP discovery and migration details.
+
 ## Documentation
 
 - [docs/checks.md](docs/checks.md): what each check verifies, toggles, auto-detection, monorepo setup, and the build-required test classification, waiver, and secret-detection-fixture rules

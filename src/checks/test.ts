@@ -13,7 +13,6 @@ import {
   runConfiguredCommands,
   rootBuildScriptFansOutToWorkspaces,
   runShellCheck,
-  fileExists,
   shouldSkipRecursiveNodeTest,
   SetupBuildOutcome,
   ProjectContext,
@@ -54,17 +53,8 @@ export async function runTestChecks(
   setupBuildOutcome?: SetupBuildOutcome
 ): Promise<CheckSetResult> {
   const configuredCommands = getConfiguredCommands(config, "test");
-  if (configuredCommands.length > 0) {
-    const safeCommands = configuredCommands.filter((command) => !shouldSkipRecursiveNodeTest(repoPath, command));
-    const limitations = configuredCommands.length === safeCommands.length
-      ? []
-      : ["Skipping recursive Node test command while already running under Vitest"];
-
-    const result = await runConfiguredCommands(repoPath, "test", safeCommands, 0.2, config.logDir);
-    return {
-      checks: result.checks,
-      limitations: [...limitations, ...result.limitations],
-    };
+  if (configuredCommands.error || configuredCommands.commands.length > 0) {
+    return runConfiguredCommands(repoPath, "test", configuredCommands, 0.2, config.logDir);
   }
 
   const context = createProjectContext(repoPath);
@@ -179,22 +169,11 @@ export async function runTestChecks(
       if (result.check) {
         checks.push(result.check);
       }
-    } else if (fileExists(repoPath, "vendor/bin/phpunit")) {
-      const result = await runShellCheck({
-        repoPath,
-        name: "phpunit",
-        kind: "test",
-        command: "vendor/bin/phpunit",
-        weight: 0.2,
-        failureMessage: "phpunit failed",
-        timeoutMs: 300_000,
-        logDir: config.logDir,
-      });
-      if (result.check) {
-        checks.push(result.check);
+      if (result.limitation) {
+        limitations.push(result.limitation);
       }
     } else {
-      limitations.push("No supported PHP test command found (composer script or phpunit)");
+      limitations.push("PHP tests require an explicit command; configure commands.test in .preflight.json or a Composer test script (bare PHPUnit is not run automatically)");
     }
   }
 

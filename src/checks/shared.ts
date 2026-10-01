@@ -2,8 +2,9 @@ import { execa } from "execa";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { CheckResult, CheckKind, PreflightConfig } from "../types.js";
+import { CheckResult, CheckKind, ConfiguredCheckKind, ConfiguredCommand, PreflightConfig } from "../types.js";
 import { expandLeadingTilde } from "../pathUtils.js";
+import { commandConfigurationError } from "../config.js";
 
 export interface CheckSetResult {
   checks: CheckResult[];
@@ -28,6 +29,7 @@ interface PackageJson {
 }
 
 interface ComposerJson {
+  config?: { "bin-dir"?: unknown };
   scripts?: Record<string, unknown>;
   require?: Record<string, string>;
   "require-dev"?: Record<string, string>;
@@ -104,32 +106,62 @@ export function hasComposerPackage(context: ProjectContext, name: string): boole
   );
 }
 
+interface ConfiguredCommands {
+  commands: ConfiguredCommand[];
+  error?: string;
+}
+
 export function getConfiguredCommands(
   config: PreflightConfig,
-  kind: "lint" | "typecheck" | "test" | "audit"
-): string[] {
-  return config.commands?.[kind] ?? [];
+  kind: ConfiguredCheckKind
+): ConfiguredCommands {
+  const error = commandConfigurationError(config.commands, kind);
+  if (error) return { commands: [], error };
+  return { commands: config.commands?.[kind] ?? [] };
 }
 
 export async function runConfiguredCommands(
   repoPath: string,
   kind: CheckKind,
-  commands: string[],
+  configured: ConfiguredCommands,
   weight: number,
   logDir?: string
 ): Promise<CheckSetResult> {
   const checks: CheckResult[] = [];
   const limitations: string[] = [];
 
-  for (const [index, command] of commands.entries()) {
+  if (configured.error) {
+    return {
+      checks: [{
+        name: `${kind}:configuration`,
+        kind,
+        status: "fail",
+        message: configured.error,
+        durationMs: 0,
+        confidenceContribution: weight,
+      }],
+      limitations,
+    };
+  }
+
+  for (const [index, entry] of configured.commands.entries()) {
+    const command = typeof entry === "string" ? { run: entry } : entry;
+    const commandCwd = path.resolve(repoPath, command.cwd ?? ".");
+    const name = command.name ?? `${kind}:${index + 1}`;
+    if (kind === "test" && shouldSkipRecursiveNodeTest(commandCwd, command.run)) {
+      const message = "Skipping recursive Node test command while already running under Vitest";
+      checks.push({ name, kind, status: "skip", message, durationMs: 0, confidenceContribution: weight });
+      limitations.push(message);
+      continue;
+    }
     const result = await runShellCheck({
-      repoPath,
-      name: `${kind}:${index + 1}`,
+      repoPath: commandCwd,
+      name,
       kind,
-      command,
+      command: command.run,
       weight,
       failureMessage: `${kind} command failed`,
-      timeoutMs: kind === "test" ? 300_000 : undefined,
+      timeoutMs: command.timeoutMs ?? (kind === "test" ? 300_000 : undefined),
       logDir,
     });
 
@@ -141,7 +173,7 @@ export async function runConfiguredCommands(
     }
   }
 
-  return { checks, limitations };
+  return { checks, limitations: [...new Set(limitations)] };
 }
 
 interface ShellCheckOptions {
@@ -149,6 +181,8 @@ interface ShellCheckOptions {
   name: string;
   kind: CheckKind;
   command: string;
+  // Raw executable path for generated commands whose first argument needs quoting.
+  primaryCommand?: string;
   weight: number;
   failureMessage: string;
   failureStatus?: "fail" | "warn";
@@ -195,10 +229,10 @@ interface ShellCheckRunResult {
 // though the check actually failed.
 //
 // Caveats:
-// - The primary is extracted as the first whitespace-separated token. Callers
-//   MUST NOT use env-variable prefixes (`FOO=bar cmd`) or shell indirection
-//   (`bash -c "..."`) in `command`; the pre-check would look up the wrong
-//   token.
+// - Unless `primaryCommand` supplies the raw executable path, the primary is
+//   extracted as the first whitespace-separated token. Callers using that
+//   fallback MUST NOT use quoted paths, env-variable prefixes (`FOO=bar cmd`)
+//   or shell indirection (`bash -c "..."`); it would look up the wrong token.
 // - `command -v` treats tokens containing `/` (e.g. `./mvnw`,
 //   `vendor/bin/phpstan`) as filename tests rather than PATH lookups, so
 //   relative paths are resolved against `repoPath` (the execa cwd).
@@ -207,7 +241,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
   const env = buildCommandEnv(options.repoPath);
 
   if (options.missingLimitation) {
-    const primary = options.command.trim().split(/\s+/)[0];
+    const primary = options.primaryCommand ?? options.command.trim().split(/\s+/)[0];
     if (primary && !(await commandExists(primary, options.repoPath))) {
       return { limitation: options.missingLimitation };
     }
@@ -1587,7 +1621,15 @@ export function shouldSkipRecursiveNodeTest(repoPath: string, command: string): 
     return false;
   }
 
-  return path.resolve(repoPath) === path.resolve(process.cwd());
+  const canonicalDirectory = (directory: string): string => {
+    try {
+      return fs.realpathSync(directory);
+    } catch {
+      // Missing directories still reach command execution and fail there.
+      return path.resolve(directory);
+    }
+  };
+  return canonicalDirectory(repoPath) === canonicalDirectory(process.cwd());
 }
 
 function readJsonFile<T>(filePath: string): T | undefined {

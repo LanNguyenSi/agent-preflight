@@ -16,6 +16,8 @@ That single rule turns "wait for CI" into "validate locally first, then push and
 - A passing preflight is structured (`blockers`, `warnings`, `limitations`, `confidence`), so the agent can quote it back into the task notes or PR body.
 - The confidence score gives the merge step a deterministic gate, not just a green checkmark.
 
+For validation that must actually run, set `requiredChecks` in `.preflight.json`, for example `["lint", "typecheck", "test"]`. Readiness then requires at least one result and all results passing for each listed kind. Disabled checks and acknowledged failures cannot satisfy the policy. Continue reporting limitations and `checks[]` entries with `status: "acknowledged"`, even when a kind is optional and the run is ready. Explicit command lists define the intended scope; the policy itself does not guarantee exhaustive stack discovery.
+
 ## Suggested wiring inside an agent loop
 
 ```bash
@@ -59,7 +61,7 @@ agent-preflight stays harness-agnostic; the integration is one-way (harness depe
 
 `agent-preflight` is harness-agnostic. The CLI exit code (`0` for ready, `1` otherwise) is enough for any agent runtime that can read shell exit codes. The `--json` output is enough for any runtime that can parse JSON. There is no Claude-specific or harness-specific path through the tool.
 
-Two skill templates ship in `templates/skills/` for harnesses that prefer a structured starting point:
+Three skill templates ship in `templates/skills/` for harnesses that prefer a structured starting point:
 
 - [`agent-preflight`](../templates/skills/agent-preflight/SKILL.md), generic
 - [`agent-preflight-opencode`](../templates/skills/agent-preflight-opencode/SKILL.md), opencode flavour
