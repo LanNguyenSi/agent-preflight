@@ -450,7 +450,7 @@ export function commandConfigurationError(commands: unknown, kind: ConfiguredChe
       continue;
     }
     if (!isPlainObject(command)) return `${label}: expected a command string or object`;
-    const unknownFields = Object.keys(command).filter((key) => !["run", "name", "cwd", "timeoutMs"].includes(key));
+    const unknownFields = Object.keys(command).filter((key) => !["run", "name", "cwd", "timeoutMs", "passRegex", "failRegex"].includes(key));
     if (unknownFields.length > 0) return `${label}: unrecognized field(s): ${unknownFields.map((key) => JSON.stringify(key)).join(", ")}`;
     if (typeof command.run !== "string" || !command.run.trim()) return `${label}.run: expected a non-empty string`;
     for (const key of ["name", "cwd"] as const) {
@@ -465,6 +465,19 @@ export function commandConfigurationError(commands: unknown, kind: ConfiguredChe
       command.timeoutMs > MAX_TIMEOUT_MS
     )) {
       return `${label}.timeoutMs: expected positive finite milliseconds no greater than ${MAX_TIMEOUT_MS}`;
+    }
+    for (const key of ["passRegex", "failRegex"] as const) {
+      const pattern = command[key];
+      if (pattern === undefined) continue;
+      if (typeof pattern !== "string") return `${label}.${key}: expected a string`;
+      try {
+        new RegExp(pattern, "m");
+      } catch {
+        return `${label}.${key}: invalid regular expression`;
+      }
+    }
+    if (command.failRegex !== undefined && command.passRegex === undefined) {
+      return `${label}.failRegex: requires passRegex`;
     }
   }
   return undefined;

@@ -67,6 +67,10 @@ export interface CommandOptions {
   cwd?: string;
   /** Positive finite milliseconds, at most one day. */
   timeoutMs?: number;
+  /** Output pass predicate, matched against combined stdout and stderr with the m flag. */
+  passRegex?: string;
+  /** Optional veto predicate; requires passRegex. */
+  failRegex?: string;
 }
 
 export type ConfiguredCommand = string | CommandOptions;

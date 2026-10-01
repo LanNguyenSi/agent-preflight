@@ -162,6 +162,8 @@ export async function runConfiguredCommands(
       weight,
       failureMessage: `${kind} command failed`,
       timeoutMs: command.timeoutMs ?? (kind === "test" ? 300_000 : undefined),
+      passRegex: typeof entry === "string" ? undefined : entry.passRegex,
+      failRegex: typeof entry === "string" ? undefined : entry.failRegex,
       logDir,
     });
 
@@ -187,6 +189,8 @@ interface ShellCheckOptions {
   failureMessage: string;
   failureStatus?: "fail" | "warn";
   timeoutMs?: number;
+  passRegex?: string;
+  failRegex?: string;
   missingLimitation?: string;
   // When `command` is a thin wrapper that invokes another tool inside
   // (e.g. `npm run lint` -> `eslint src/`, `composer run test` -> `phpunit`),
@@ -248,7 +252,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
   }
 
   try {
-    const { exitCode, all } = await execa(
+    const { exitCode, all, timedOut, signal, isCanceled } = await execa(
       "bash",
       ["-c", options.command],
       {
@@ -269,13 +273,27 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
       return { limitation: options.missingLimitation };
     }
 
+    // Limit predicate work to the first 65536 UTF-16 code units of combined
+    // output. Text beyond that bound is available in failure details but is
+    // not searched for a pass or veto marker.
+    const predicateOutput = (all ?? "").slice(0, 65_536);
+    const completed = !timedOut && !signal && !isCanceled && typeof exitCode === "number" && exitCode !== 127;
+    const passMatched = options.passRegex === undefined || new RegExp(options.passRegex, "m").test(predicateOutput);
+    const failMatched = options.failRegex !== undefined && new RegExp(options.failRegex, "m").test(predicateOutput);
+    const passed = options.passRegex === undefined
+      ? exitCode === 0
+      : completed && passMatched && !failMatched;
+    const failureMessage = options.passRegex !== undefined && completed
+      ? `${options.failureMessage}: ${failMatched ? "failRegex matched" : "passRegex did not match"}`
+      : options.failureMessage;
+
     return {
       check: {
         name: options.name,
         kind: options.kind,
-        status: exitCode === 0 ? "pass" : options.failureStatus ?? "fail",
-        message: exitCode === 0 ? undefined : options.failureMessage,
-        details: exitCode === 0 ? undefined : computeFailureDetails(options.logDir, options.name, all),
+        status: passed ? "pass" : options.failureStatus ?? "fail",
+        message: passed ? undefined : failureMessage,
+        details: passed ? undefined : computeFailureDetails(options.logDir, options.name, all),
         durationMs: Date.now() - start,
         confidenceContribution: options.weight,
       },
