@@ -39,7 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   closing GHSA-82fw-gwwq-j7x9.
 - Bumped `ip-address` (transitive, via `express-rate-limit`) to 10.7.2,
   closing GHSA-2vr4-cq9g-pvrc and GHSA-rpw4-54j3-4h4q.
-- Bumped `brace-expansion` to 5.0.12 and `fast-uri` to 3.1.8, closing
+- Bumped `brace-expansion` (transitive, via `minimatch`) to 5.0.12 and
+  `fast-uri` (transitive, via `ajv`) to 3.1.8, closing
   GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p and
   GHSA-hrr3-gc8f-f4qj.
 
