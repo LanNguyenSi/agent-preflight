@@ -240,26 +240,26 @@ describe("shouldSkipRecursiveNodeTest", () => {
 describe("getConfiguredCommands", () => {
   it("returns the configured lint commands", () => {
     const config: PreflightConfig = { commands: { lint: ["eslint src", "npm run lint:style"] } };
-    expect(getConfiguredCommands(config, "lint")).toEqual(["eslint src", "npm run lint:style"]);
+    expect(getConfiguredCommands(config, "lint").commands).toEqual(["eslint src", "npm run lint:style"]);
   });
 
   it("returns the configured test commands", () => {
     const config: PreflightConfig = { commands: { test: ["vitest run"] } };
-    expect(getConfiguredCommands(config, "test")).toEqual(["vitest run"]);
+    expect(getConfiguredCommands(config, "test").commands).toEqual(["vitest run"]);
   });
 
   it("returns an empty array when the kind is not configured", () => {
     const config: PreflightConfig = { commands: { lint: ["eslint ."] } };
-    expect(getConfiguredCommands(config, "test")).toEqual([]);
+    expect(getConfiguredCommands(config, "test").commands).toEqual([]);
   });
 
   it("returns an empty array when commands is undefined", () => {
     const config: PreflightConfig = {};
-    expect(getConfiguredCommands(config, "lint")).toEqual([]);
+    expect(getConfiguredCommands(config, "lint").commands).toEqual([]);
   });
 
   it("returns configured audit commands", () => {
     const config: PreflightConfig = { commands: { audit: ["npm audit --audit-level=high"] } };
-    expect(getConfiguredCommands(config, "audit")).toEqual(["npm audit --audit-level=high"]);
+    expect(getConfiguredCommands(config, "audit").commands).toEqual(["npm audit --audit-level=high"]);
   });
 });

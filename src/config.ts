@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { CheckToggle, CustomCheck, PreflightConfig, SandboxConfig } from "./types.js";
+import { CheckToggle, ConfiguredCheckKind, CustomCheck, PreflightConfig, SandboxConfig } from "./types.js";
 
 const CONFIG_FILENAME = ".preflight.json";
 const DEFAULT_ACT_FLAGS = ["--platform", "ubuntu-latest=catthehacker/ubuntu:act-latest"];
@@ -74,8 +74,9 @@ export interface ConfigValidationResult {
  * against `PreflightConfig`'s shape, hand-rolled (no schema library — task
  * 850903cb). Every recognized field must match its declared type; a field
  * whose value has the wrong type is dropped (never merged over the default)
- * and reported in `warnings`, so a caller can `console.warn` it instead of
- * letting the malformed value crash a downstream consumer (e.g. `logDir: 123`
+ * and reported in `warnings`, except explicit commands, which are retained
+ * so the corresponding check can fail visibly instead of auto-detecting.
+ * This prevents a malformed value from crashing a downstream consumer (e.g. `logDir: 123`
  * previously reached `expandLeadingTilde`/`path.isAbsolute` in runner.ts and
  * threw a `TypeError`, crashing the CLI). A payload that isn't even a plain
  * object (e.g. an array, a string, `null`) invalidates the whole file and
@@ -205,10 +206,11 @@ export function mergeConfig(
       ...baseConfig.setup,
       ...overrideConfig.setup,
     },
-    commands: {
-      ...baseConfig.commands,
-      ...overrideConfig.commands,
-    },
+    commands: overrideConfig.commands === undefined
+      ? baseConfig.commands
+      : isPlainObject(overrideConfig.commands)
+        ? { ...(isPlainObject(baseConfig.commands) ? baseConfig.commands : {}), ...overrideConfig.commands }
+        : overrideConfig.commands,
     sandbox: {
       ...baseConfig.sandbox,
       ...overrideConfig.sandbox,
@@ -414,26 +416,58 @@ function pickSetup(
   return setup;
 }
 
+/** Returns an error without discarding the explicit override that caused it. */
+export function commandConfigurationError(commands: unknown, kind: ConfiguredCheckKind): string | undefined {
+  if (commands === undefined) return undefined;
+  if (!isPlainObject(commands)) return `commands: expected an object, got ${describeType(commands)}`;
+
+  const unknownKeys = Object.keys(commands).filter((key) => !(COMMAND_KEYS as readonly string[]).includes(key));
+  if (unknownKeys.length > 0) return `commands: unrecognized key(s): ${unknownKeys.map((key) => JSON.stringify(key)).join(", ")}`;
+  if (!(kind in commands)) return undefined;
+
+  const value = commands[kind];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return `commands.${kind}: expected an array, got ${describeType(value)}`;
+  for (const [index, command] of value.entries()) {
+    const label = `commands.${kind}[${index}]`;
+    if (typeof command === "string") {
+      if (!command.trim()) return `${label}: expected a non-empty command string`;
+      continue;
+    }
+    if (!isPlainObject(command)) return `${label}: expected a command string or object`;
+    const unknownFields = Object.keys(command).filter((key) => !["run", "name", "cwd", "timeoutMs"].includes(key));
+    if (unknownFields.length > 0) return `${label}: unrecognized field(s): ${unknownFields.map((key) => JSON.stringify(key)).join(", ")}`;
+    if (typeof command.run !== "string" || !command.run.trim()) return `${label}.run: expected a non-empty string`;
+    for (const key of ["name", "cwd"] as const) {
+      if (command[key] !== undefined && (typeof command[key] !== "string" || !command[key].trim())) {
+        return `${label}.${key}: expected a non-empty string`;
+      }
+    }
+    if (command.timeoutMs !== undefined && (
+      typeof command.timeoutMs !== "number" ||
+      !Number.isFinite(command.timeoutMs) ||
+      command.timeoutMs <= 0 ||
+      command.timeoutMs > MAX_TIMEOUT_MS
+    )) {
+      return `${label}.timeoutMs: expected positive finite milliseconds no greater than ${MAX_TIMEOUT_MS}`;
+    }
+  }
+  return undefined;
+}
+
 function pickCommands(
   source: Record<string, unknown>,
   warnings: string[]
 ): PreflightConfig["commands"] | undefined {
   if (!("commands" in source)) return undefined;
   const value = source.commands;
-  if (!isPlainObject(value)) {
-    warnings.push(`commands: expected an object, got ${describeType(value)}; ignoring this field`);
-    return undefined;
+  const errors = new Set(COMMAND_KEYS.map((kind) => commandConfigurationError(value, kind)));
+  for (const error of errors) {
+    if (error) warnings.push(`${error}; configured check will fail`);
   }
-
-  const commands: NonNullable<PreflightConfig["commands"]> = {};
-  for (const key of COMMAND_KEYS) {
-    const arr = pickStringArray(value, key, warnings, `commands.${key}`);
-    if (arr !== undefined) commands[key] = arr;
-  }
-
-  warnUnknownKeys(value, COMMAND_KEYS, "commands", warnings);
-
-  return commands;
+  // Keep malformed overrides visible to the check runners. Dropping them here
+  // would turn an explicit command into an unrelated auto-detected check.
+  return value as PreflightConfig["commands"];
 }
 
 function pickSandbox(

@@ -62,6 +62,19 @@ export type CheckKind =
  */
 export type CheckToggle = boolean | { acknowledge: string };
 
+export type ConfiguredCheckKind = "lint" | "typecheck" | "test" | "audit";
+
+export interface CommandOptions {
+  run: string;
+  name?: string;
+  /** Relative to the effective workingDir; absolute paths are also supported. */
+  cwd?: string;
+  /** Positive finite milliseconds, at most one day. */
+  timeoutMs?: number;
+}
+
+export type ConfiguredCommand = string | CommandOptions;
+
 export interface PreflightConfig {
   checks?: {
     gitState?: CheckToggle;
@@ -119,12 +132,7 @@ export interface PreflightConfig {
      */
     buildTimeoutMs?: number;
   };
-  commands?: {
-    lint?: string[];
-    typecheck?: string[];
-    test?: string[];
-    audit?: string[];
-  };
+  commands?: Partial<Record<ConfiguredCheckKind, ConfiguredCommand[]>>;
   sandbox?: SandboxConfig;
   customChecks?: CustomCheck[];
 }

@@ -190,11 +190,11 @@ describe("validateConfig", () => {
   // FIX 4 (task-slicer fix-round, review of task 850903cb): 5 previously
   // uncovered/mutation-survivable cases.
 
-  it("drops commands entirely when it is not an object", () => {
+  it("retains malformed commands so the check can fail instead of auto-detecting", () => {
     const { config, warnings } = validateConfig({ commands: "nope" });
-    expect(config.commands).toBeUndefined();
+    expect(config.commands).toBe("nope");
     expect(warnings).toEqual([
-      "commands: expected an object, got string; ignoring this field",
+      "commands: expected an object, got string; configured check will fail",
     ]);
   });
 

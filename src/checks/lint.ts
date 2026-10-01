@@ -50,7 +50,7 @@ export async function runLintChecks(
   config: PreflightConfig
 ): Promise<CheckSetResult> {
   const configuredCommands = getConfiguredCommands(config, "lint");
-  if (configuredCommands.length > 0) {
+  if (configuredCommands.error || configuredCommands.commands.length > 0) {
     return runConfiguredCommands(repoPath, "lint", configuredCommands, 0.15, config.logDir);
   }
 

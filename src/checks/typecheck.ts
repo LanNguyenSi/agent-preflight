@@ -20,7 +20,7 @@ export async function runTypecheckChecks(
   config: PreflightConfig
 ): Promise<CheckSetResult> {
   const configuredCommands = getConfiguredCommands(config, "typecheck");
-  if (configuredCommands.length > 0) {
+  if (configuredCommands.error || configuredCommands.commands.length > 0) {
     return runConfiguredCommands(repoPath, "typecheck", configuredCommands, 0.2, config.logDir);
   }
 

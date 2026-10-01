@@ -53,17 +53,8 @@ export async function runTestChecks(
   setupBuildOutcome?: SetupBuildOutcome
 ): Promise<CheckSetResult> {
   const configuredCommands = getConfiguredCommands(config, "test");
-  if (configuredCommands.length > 0) {
-    const safeCommands = configuredCommands.filter((command) => !shouldSkipRecursiveNodeTest(repoPath, command));
-    const limitations = configuredCommands.length === safeCommands.length
-      ? []
-      : ["Skipping recursive Node test command while already running under Vitest"];
-
-    const result = await runConfiguredCommands(repoPath, "test", safeCommands, 0.2, config.logDir);
-    return {
-      checks: result.checks,
-      limitations: [...limitations, ...result.limitations],
-    };
+  if (configuredCommands.error || configuredCommands.commands.length > 0) {
+    return runConfiguredCommands(repoPath, "test", configuredCommands, 0.2, config.logDir);
   }
 
   const context = createProjectContext(repoPath);

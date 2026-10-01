@@ -270,7 +270,7 @@ export async function runAuditChecks(
   config: PreflightConfig
 ): Promise<CheckSetResult> {
   const configuredCommands = getConfiguredCommands(config, "audit");
-  if (configuredCommands.length > 0) {
+  if (configuredCommands.error || configuredCommands.commands.length > 0) {
     return runConfiguredCommands(repoPath, "audit", configuredCommands, 0.15, config.logDir);
   }
 
