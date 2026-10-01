@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-01
+
 ### Added
 
 - `commands.lint`, `commands.typecheck`, `commands.test` and `commands.audit` accept command objects with `run`, optional `name`, `cwd` relative to `workingDir`, and `timeoutMs` up to one day. Existing strings and empty-list auto-detection remain supported; invalid explicit overrides fail visibly.
@@ -35,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   closing GHSA-gqvv-2mrq-wpjv, GHSA-g6gw-c38x-mqfc and GHSA-crvj-82cr-hjcx.
 - Bumped `vitest`, `@vitest/coverage-v8` and `@vitest/mocker` to 4.1.11,
   closing GHSA-82fw-gwwq-j7x9.
+- Bumped `ip-address` (transitive, via `express-rate-limit`) to 10.7.2,
+  closing GHSA-2vr4-cq9g-pvrc and GHSA-rpw4-54j3-4h4q.
+- Bumped `brace-expansion` (transitive, via `minimatch`) to 5.0.12 and
+  `fast-uri` (transitive, via `ajv`) to 3.1.8, closing
+  GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p and
+  GHSA-hrr3-gc8f-f4qj.
 
 ## [0.6.2] - 2026-09-10
 
