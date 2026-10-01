@@ -127,6 +127,25 @@ describe.each(kinds)("configured %s commands", (kind) => {
     expect(result.checks[0].message).toContain("passRegex");
   });
 
+  if (kind === "test") {
+    const boundaryCases = [
+      { name: "pass marker at the last included code unit", output: "x".repeat(65_535) + "P", expected: "pass" },
+      { name: "pass marker at the first excluded code unit", output: "x".repeat(65_536) + "P", expected: "fail" },
+      { name: "veto marker at the last included code unit", output: "P" + "x".repeat(65_534) + "F", expected: "fail" },
+      { name: "veto marker at the first excluded code unit", output: "P" + "x".repeat(65_535) + "F", expected: "pass" },
+      { name: "pass after a surrogate pair at the last included code unit", output: "😀" + "x".repeat(65_533) + "P", expected: "pass" },
+      { name: "pass after a surrogate pair at the first excluded code unit", output: "😀" + "x".repeat(65_534) + "P", expected: "fail" },
+    ] as const;
+
+    it.each(boundaryCases)("searches only the first 65536 UTF-16 code units: $name", async ({ output, expected }) => {
+      vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 1, all: output, timedOut: false, isCanceled: false } as never);
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "P", failRegex: "F" }] },
+      });
+      expect(result.checks[0].status).toBe(expected);
+    });
+  }
+
   it("never passes incomplete runs or exit 127 through the predicate", async () => {
     const result = await runners[kind](repoPath, {
       logDir, commands: { [kind]: [
