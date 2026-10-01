@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { CheckToggle, ConfiguredCheckKind, CustomCheck, PreflightConfig, SandboxConfig } from "./types.js";
+import { CHECK_KINDS, CheckKind, CheckToggle, ConfiguredCheckKind, CustomCheck, PreflightConfig, SandboxConfig } from "./types.js";
 
 const CONFIG_FILENAME = ".preflight.json";
 const DEFAULT_ACT_FLAGS = ["--platform", "ubuntu-latest=catthehacker/ubuntu:act-latest"];
@@ -49,6 +49,7 @@ const SETUP_KEYS = ["enabled", "buildTimeoutMs"] as const;
 const TOP_LEVEL_KEYS = [
   "logDir",
   "workingDir",
+  "requiredChecks",
   "tddExceptions",
   "secretAllowlist",
   "protectedBranches",
@@ -69,13 +70,24 @@ export interface ConfigValidationResult {
   warnings: string[];
 }
 
+export function requiredChecksConfigurationError(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return "requiredChecks: expected an array of check kinds";
+  for (const [index, kind] of value.entries()) {
+    if (typeof kind !== "string" || !(CHECK_KINDS as readonly string[]).includes(kind)) {
+      return `requiredChecks[${index}]: expected one of ${CHECK_KINDS.join(", ")}`;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Type-checks a JSON.parse()'d `.preflight.json` payload field-by-field
  * against `PreflightConfig`'s shape, hand-rolled (no schema library — task
  * 850903cb). Every recognized field must match its declared type; a field
  * whose value has the wrong type is dropped (never merged over the default)
- * and reported in `warnings`, except explicit commands, which are retained
- * so the corresponding check can fail visibly instead of auto-detecting.
+ * and reported in `warnings`, except explicit commands and requiredChecks,
+ * which are retained so invalid configuration blocks readiness.
  * This prevents a malformed value from crashing a downstream consumer (e.g. `logDir: 123`
  * previously reached `expandLeadingTilde`/`path.isAbsolute` in runner.ts and
  * threw a `TypeError`, crashing the CLI). A payload that isn't even a plain
@@ -103,6 +115,14 @@ export function validateConfig(parsed: unknown): ConfigValidationResult {
 
   const workingDir = pickString(source, "workingDir", warnings);
   if (workingDir !== undefined) result.workingDir = workingDir;
+
+  if (source.requiredChecks !== undefined) {
+    const error = requiredChecksConfigurationError(source.requiredChecks);
+    if (error) warnings.push(`${error}; readiness will be blocked`);
+    // Preserve an invalid explicit policy so the runner cannot fall back to
+    // the permissive default. The runner also validates programmatic config.
+    result.requiredChecks = source.requiredChecks as CheckKind[];
+  }
 
   const tddExceptions = pickStringArray(source, "tddExceptions", warnings);
   if (tddExceptions !== undefined) result.tddExceptions = tddExceptions;
@@ -198,6 +218,8 @@ export function mergeConfig(
   return {
     ...baseConfig,
     ...overrideConfig,
+    requiredChecks: overrideConfig.requiredChecks === undefined
+      ? baseConfig.requiredChecks : overrideConfig.requiredChecks,
     checks: {
       ...baseConfig.checks,
       ...overrideConfig.checks,
@@ -268,20 +290,13 @@ function pickBoolean(
   return undefined;
 }
 
-// Upper bound for every `*TimeoutMs` field the config exposes (currently only
-// `setup.buildTimeoutMs`). Node's timer APIs silently clamp an out-of-range
-// delay (e.g. 1e21 becomes ~24.8 days, per Node's 32-bit signed int32 clamp)
-// instead of throwing, so an absurdly large value would otherwise pass a
-// plain "is it a positive integer" check and take effect as something the
-// config never asked for. One day is far above any realistic build budget
-// while still catching that failure mode.
+// Shared upper bound for setup.buildTimeoutMs and command timeoutMs. Keep
+// configured delays within Node's timer range instead of accepting a value
+// that the timer would replace with a different delay.
 const MAX_TIMEOUT_MS = 86_400_000; // one day, in milliseconds
 
-// Shared validator for every `*TimeoutMs` config field: finite, integer,
-// greater than zero, and no greater than `MAX_TIMEOUT_MS`. A value outside
-// this range is dropped (warn-and-drop convention) rather than merged, so a
-// typo or an absurd value can neither disable the timeout nor let it be
-// silently clamped by Node's timer implementation.
+// Setup requires integer milliseconds and drops invalid values with a warning.
+// Commands accept positive finite milliseconds and reject invalid overrides.
 function pickTimeoutMs(
   source: Record<string, unknown>,
   key: string,

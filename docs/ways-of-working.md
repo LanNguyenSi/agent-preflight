@@ -22,7 +22,7 @@ These rules govern how the tool behaves from a user perspective. All contributor
 
 Use the canonical exit codes documented in [docs/architecture.md](architecture.md#exit-codes).
 
-- Exit `0` when the run is ready (no blocking failures), even if every check was skipped
+- Exit `0` when the run is ready (no failure or required-check policy blockers). With no `requiredChecks`, this can include a run where every check was skipped; required kinds each need at least one result and all their results passing.
 - Exit `1` when the run is not ready (`run`), or when any repo is not ready (`batch`)
 - Usage errors (unknown flags or commands) are handled by `commander`, which prints to stderr and exits non-zero; the tool does not define a separate usage-error code
 - Drive the exit from the top-level handler in `cli.ts` (`process.exit(result.ready ? 0 : 1)`); do not scatter `process.exit()` calls through the check modules

@@ -3,6 +3,7 @@ import path from "path";
 import { CheckKind, CheckResult, CheckToggle, PreflightConfig, PreflightResult } from "./types.js";
 import { defaultLogDir, ensureProjectSetup, getWorkingDirHint, SetupBuildOutcome } from "./checks/shared.js";
 import { expandLeadingTilde } from "./pathUtils.js";
+import { requiredChecksConfigurationError } from "./config.js";
 import type { WorktreeSnapshot } from "./checks/git.js";
 
 // Maps a CheckResult's `kind` back to the `.preflight.json` `checks.<key>`
@@ -74,11 +75,11 @@ function resolveAcknowledge(toggle: CheckToggle | undefined): AcknowledgeResolut
 }
 
 /**
- * Downgrades a `fail` CheckResult to a non-blocking `acknowledged` status
+ * Downgrades a `fail` CheckResult to an `acknowledged` status
  * when its check kind's `.preflight.json` toggle carries a valid
  * `acknowledge` justification (agent-tasks b31065cc). Scoped to `fail`
- * only — `pass`/`warn`/`skip` are already non-blocking, so there is nothing
- * to acknowledge. Never silent: every application appends a
+ * only — `pass`/`warn`/`skip` are left untouched. Required kinds still need
+ * every result to pass. Never silent: every application appends a
  * `PreflightResult.limitations` entry naming the check and the reason, and
  * the check's own `message` is rewritten to carry the reason too (visible
  * in both `--json` and the human CLI output). A malformed `acknowledge`
@@ -291,12 +292,8 @@ export async function runPreflight(
     limitations.push(...result.limitations);
   }
 
-  // Acknowledge pass: downgrades a `fail` to non-blocking `acknowledged`
-  // when the operator waived that check kind in .preflight.json with a
-  // justification. Runs after every check kind above has reported in, and
-  // before blockers/confidence are computed, so an acknowledged check never
-  // reaches `blockers` and its status/message reflect the waiver in both
-  // `checks` and the `--json` output.
+  // Apply waivers before requiredChecks: an acknowledged result retains its
+  // status and reason, but cannot satisfy a requirement for a passing check.
   const acknowledgeResult = applyAcknowledgements(checks, config);
   const finalChecks = acknowledgeResult.checks;
   limitations.push(...acknowledgeResult.limitations);
@@ -304,13 +301,14 @@ export async function runPreflight(
   const blockers = finalChecks
     .filter((c) => c.status === "fail")
     .map((c) => c.message ?? c.name);
+  blockers.push(...requiredCheckBlockers(finalChecks, config));
 
   const warnings = finalChecks
     .filter((c) => c.status === "warn")
     .map((c) => c.message ?? c.name);
 
   const confidence = computeConfidence(finalChecks, limitations);
-  // ready = no blockers (warnings are ok); confidence is separate signal for agents
+  // Confidence describes actual results; requiredChecks only adds gate blockers.
   const ready = blockers.length === 0;
 
   return {
@@ -323,6 +321,32 @@ export async function runPreflight(
     durationMs: Date.now() - start,
     timestamp: new Date().toISOString(),
   };
+}
+
+function requiredCheckBlockers(checks: CheckResult[], config: PreflightConfig): string[] {
+  const error = requiredChecksConfigurationError(config.requiredChecks);
+  if (error) return [error];
+
+  const blockers: string[] = [];
+  for (const kind of new Set(config.requiredChecks ?? [])) {
+    const results = checks.filter((check) => check.kind === kind);
+    if (results.length === 0) {
+      const configKey = kind === "ci-simulation" ? "ciSimulation"
+        : kind === "secret-detection" ? "secretDetection" : CHECK_KIND_TO_CONFIG_KEY[kind];
+      const disabled = configKey && config.checks?.[configKey] === false
+        ? ` (checks.${configKey} is disabled)`
+        : kind === "ci-simulation" && config.checks?.ciSimulation !== true
+          ? " (checks.ciSimulation is not enabled)" : "";
+      blockers.push(`Required check kind "${kind}" produced no results${disabled}; enable and configure this check`);
+      continue;
+    }
+    const unmet = results.filter((check) => check.status !== "pass");
+    if (unmet.length > 0) {
+      const details = unmet.map((check) => `"${check.name}" (${check.status})`).join(", ");
+      blockers.push(`Required check kind "${kind}" must pass every result: ${details}`);
+    }
+  }
+  return blockers;
 }
 
 function computeConfidence(checks: CheckResult[], limitations: string[]): number {

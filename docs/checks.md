@@ -1,6 +1,8 @@
 # Checks reference
 
-Every check `agent-preflight` can run, what it verifies, and when it fires. Each check returns a `pass`, `fail`, `warn`, or `skip` and contributes to the overall confidence score (see [confidence-scoring.md](./confidence-scoring.md)).
+Every check `agent-preflight` can run, what it verifies, and when it fires. Each check returns a `pass`, `fail`, `warn`, `skip`, or `acknowledged` and contributes to the overall confidence score (see [confidence-scoring.md](./confidence-scoring.md)).
+
+Check-specific descriptions below use the default gate unless stated otherwise. A `requiredChecks` policy adds a blocker for any non-passing result of a required kind, including warnings and skips described later in this reference.
 
 ## Default checks
 
@@ -10,15 +12,17 @@ Every check `agent-preflight` can run, what it verifies, and when it fires. Each
 | Git state, protected branch | `git-state` | Pushing directly to `main`, `master`, or other configured branches | `git rev-parse --abbrev-ref HEAD` | `warn`, since some workflows allow direct push |
 | Lint | `lint` | Code-quality issues | `eslint`, `ruff`, `pint`, `phpcs`, plus `package.json` `scripts.lint` and other repo-native scripts (Java has no default linter; set `commands.lint`) | `fail` on lint errors |
 | Typecheck | `typecheck` | Type errors and broken builds | `tsc --noEmit`, `mypy`, `phpstan`, `psalm`, `mvn compile`, `gradle classes` | `fail` on type errors |
-| Test | `test` | Broken test suites | `npm test`, `pytest`, `phpunit`, `mvn test`, `gradle test` | `fail` when tests fail; `skip` for the auto-detected `npm test` when every failing package is unbuilt on disk (it has a `build` script of its own, a declared artifact is missing), holds no build output at all, and its own output names a path that resolves either to that missing artifact itself or to something in the missing artifact's directory that is likewise NOT on disk. "Holds no build output" is a PACKAGE property: every output directory the package identifies (the directory of each declared artifact, plus `dist` when it identifies none) is absent or empty. Any entry in any of them means a build ran and did not produce the artifact, so a partially built package (one declared artifact its build never emits, the rest built -- including one emitted into a different or nested directory) stays a blocking `fail` whose message names the directory that decided it, the artifact, and the rebuild remedy; a stale partial output directory is included. See ["Build-required test classification"](#build-required-test-classification-an-unbuilt-package-is-not-a-broken-one) below |
+| Test | `test` | Broken test suites | `npm test`, `pytest`, `composer run test`, `mvn test`, `gradle test` | `fail` when tests fail; `skip` for the auto-detected `npm test` when every failing package is unbuilt on disk (it has a `build` script of its own, a declared artifact is missing), holds no build output at all, and its own output names a path that resolves either to that missing artifact itself or to something in the missing artifact's directory that is likewise NOT on disk. "Holds no build output" is a PACKAGE property: every output directory the package identifies (the directory of each declared artifact, plus `dist` when it identifies none) is absent or empty. Any entry in any of them means a build ran and did not produce the artifact, so a partially built package (one declared artifact its build never emits, the rest built -- including one emitted into a different or nested directory) stays a blocking `fail` whose message names the directory that decided it, the artifact, and the rebuild remedy; a stale partial output directory is included. See ["Build-required test classification"](#build-required-test-classification-an-unbuilt-package-is-not-a-broken-one) below |
 | Dependency audit | `audit` | Known CVEs in dependencies | `npm audit --json`, `pip-audit`, `composer audit` | `fail` on high-severity findings; `skip` with a limitation when npm returned no report (including a timeout) |
 | Secret detection | `secret-detection` | API keys, tokens, private keys in source files | regex scan, git-aware + diff-scoped severity | `fail` only when the current change introduced the secret; `warn` for pre-existing, gitignored, docs, or non-git |
 | Commit convention | `commit-convention` | Recent commit messages that do not follow conventional commits | `git log` | `warn` only |
-| TDD signal | `tdd` | Source files changed in the last commit without a paired test file | `git diff HEAD~1..HEAD`, filesystem scan | `warn` to nudge, never blocks; associates filenames only, it does not establish coverage or prove a TDD workflow |
+| TDD signal | `tdd` | Source files changed in the last commit without a paired test file | `git diff HEAD~1..HEAD`, filesystem scan | `warn` to nudge; blocks only when `tdd` is required; associates filenames only, it does not establish coverage or prove a TDD workflow |
 | CI simulation (opt-in) | `ci-simulation` | Workflow failures before push | `act` against `.github/workflows/` | `fail` when act exits non-zero |
 | Custom checks | `custom` | Anything you can express as a shell command | user-provided `command` | `fail` or `warn` per `failOnError` |
 
 ## Status semantics
+
+Without `requiredChecks`, the default gate is:
 
 - `pass` and `skip` never block.
 - `warn` shows in output but does not move `ready` to `false`.
@@ -30,11 +34,13 @@ Every check `agent-preflight` can run, what it verifies, and when it fires. Each
   check"](#waiving-a-permanently-failing-check-checkskindacknowledge)
   below).
 
+With [`requiredChecks`](#required-checks), any non-`pass` result of a required kind adds a policy blocker. The result retains its actual status.
+
 `clean-worktree` is a blocker because local modifications make the result diverge from what will actually be pushed. `protected-branch` is a warning because direct-push workflows still exist. Under `--setup`, `clean-worktree` still blocks on any change that predates setup, and still blocks on a tracked file setup modifies or removes; only untracked output setup itself produced is excused (named in the check's `details`, shown by `--json` and MCP, and in a `limitations` entry shown by the CLI, instead of blocking) -- see "Setup phase" below.
 
 ## Auto-detection
 
-If no `commands.*` entries are configured, the runner walks the repo root for known manifests and picks defaults:
+For each category without a non-empty `commands.*` list, the runner checks the effective target directory (`workingDir`, or the repo root) for known manifests and picks defaults:
 
 - Node, TypeScript: `package.json`, `tsconfig.json`
 - Python: `pyproject.toml`, `setup.py`, `requirements.txt`
@@ -48,6 +54,21 @@ For Node projects, `package.json` `scripts.lint` takes precedence over dependenc
 The `npm-audit` check runs with a bounded timeout, and an audit that did not answer is reported as `skip` (not `warn`) with a `limitations` entry naming the cause: a timeout with no parsable report, or npm exiting non-zero without producing a report, which is what an unreachable or failing registry produces. That is the default direction rather than a list of recognized registry errors, so an outage never hangs the run, and an unfamiliar failure degrades to "not evaluated" instead of being misread as a real finding. npm's own usage errors, such as a missing lockfile, name themselves in `error.code` and stay a `warn` naming that failure.
 
 For a direct nested target or `workingDir`, the TDD signal check evaluates changed sources and their test counterparts relative to that directory; sources in sibling packages (including similarly prefixed paths) are outside that target.
+
+### PHP configuration and test scope
+
+PHP detection reads `composer.json` in the effective target directory. Generated Pint, PHPCS, PHPStan and Psalm commands use Composer's `config.bin-dir`, resolved relative to that directory; absent, empty or invalid values use `vendor/bin`. Explicit commands are run as written, so update their binary paths yourself if Composer uses another directory.
+
+For auto-detected PHPStan and PHPCS, preflight searches the target directory, then its parents through the Git root, inclusive. The nearest directory with a supported config wins. Without a Git root, only the target directory is searched. Within one directory, filename priority is:
+
+| Tool | Priority, highest first | Argument passed to the tool |
+|------|-------------------------|-----------------------------|
+| PHPStan | `phpstan.neon`, `phpstan.neon.dist`, `phpstan.dist.neon` | `--configuration=<path>` |
+| PHPCS | `.phpcs.xml`, `phpcs.xml`, `.phpcs.xml.dist`, `phpcs.xml.dist` | `--standard=<path>` |
+
+A discovered PHPStan or PHPCS tool without a config inside that boundary is not invoked; the limitation directs you to `commands.typecheck` or `commands.lint`. A Composer `lint` script still takes precedence over Pint and PHPCS. PHPStan is preferred over Psalm. This config search does not change Pint or Psalm's own config handling.
+
+PHP tests run through a Composer `test` script or an explicit `commands.test` list. Preflight no longer automatically invokes a bare PHPUnit binary. To migrate a repo that relied on that fallback, provide the intended suite and config, for example `vendor/bin/phpunit --configuration phpunit.xml --testsuite Unit`, or define a Composer `test` script with that command. These commands can have side effects; preflight does not determine whether a suite needs a database, infrastructure or another service. Auto-detection reports missing tools as limitations; an explicit command with a missing executable fails. Configure required checks below when an unevaluated kind must block readiness.
 
 ## Monorepos and workspaces
 
@@ -94,7 +115,7 @@ CLI flags `--no-audit`, `--no-secrets`, and `--ci-simulation` override the file 
 Instead of `true`/`false`, any toggle except `ciSimulation` and
 `secretDetection` can also be `{ "acknowledge": "<reason>" }` to run the
 check but waive a `fail` result as a non-blocking `acknowledged` status
-with the reason attached: see ["Waiving a permanently-failing
+with the reason attached. A kind in `requiredChecks` still needs every result to pass, so acknowledging its failure does not unblock readiness. See ["Waiving a permanently-failing
 check"](#waiving-a-permanently-failing-check-checkskindacknowledge) below
 for the full contract (required non-empty reason, visibility guarantees,
 boundaries, and why `secretDetection` is excluded).
@@ -163,7 +184,55 @@ Since the log directory can be set from the process environment as well as from 
 }
 ```
 
-`workingDir` (default `.`) is the directory checks run against, relative to the repo root; it does not change where `logDir` resolves (see above). `tddExceptions` is a list of glob patterns excluded from the TDD signal check's changed-source scan. `actFlags` and `sandbox.aptPackages`/`sandbox.pipPackages` are covered in [architecture.md](./architecture.md#act-integration) and [architecture.md#sandbox](./architecture.md#sandbox). `setup` and `commands.*` are covered in "Setup phase" and the check rows above.
+`workingDir` (default `.`) is the directory checks run against, relative to the repo root; it does not change where `logDir` resolves (see above). `tddExceptions` is a list of glob patterns excluded from the TDD signal check's changed-source scan. `actFlags` and `sandbox.aptPackages`/`sandbox.pipPackages` are covered in [architecture.md](./architecture.md#act-integration) and [architecture.md#sandbox](./architecture.md#sandbox). `setup` is covered in "Setup phase"; command overrides and required checks are described below.
+
+## Command overrides
+
+`commands.lint`, `commands.typecheck`, `commands.test` and `commands.audit` accept arrays mixing command strings and objects:
+
+```json
+{
+  "workingDir": "apps/api",
+  "commands": {
+    "lint": ["npm run lint"],
+    "test": [
+      { "run": "npm run test:unit", "name": "unit", "timeoutMs": 60000 },
+      { "run": "npm run test:contract", "name": "contracts", "cwd": "../contracts", "timeoutMs": 120000 }
+    ]
+  }
+}
+```
+
+| Field | Contract |
+|-------|----------|
+| `run` | Required non-empty shell command string |
+| `name` | Optional non-empty result name; defaults to `<kind>:<position>`, counting from 1 |
+| `cwd` | Optional non-empty directory path, relative to the effective `workingDir`; absolute paths also work; defaults to that working directory |
+| `timeoutMs` | Optional positive finite number of milliseconds, at most `86400000` (one day); fractions are accepted; defaults to `300000` for tests and `120000` for the other configured categories |
+
+Commands run sequentially in list order. Relative paths inside a command resolve against its `cwd`. The failure-log directory still resolves against the repo root. Exit status determines success; there is no output-pattern success predicate. A command that exits non-zero or times out fails, including a test that prints a success message first. A missing executable in an explicit command fails through its non-zero exit status. Auto-detected commands can instead report missing tools as limitations.
+
+Existing string arrays keep their behavior. An omitted category or `[]` keeps auto-detection for that category. Malformed explicit overrides do not fall back to auto-detection: an enabled category reports a configuration failure before executing any entry in that category. Invalid entries include empty commands, wrong field types, unsupported category keys or object fields, and out-of-range timeouts. Optional object fields set to `undefined` in programmatic config are treated as omitted; JSON `null` is invalid. These objects are for `commands.*`; `customChecks` retains its separate `command`/`failOnError` format.
+
+Under Vitest, the existing recursion guard suppresses recognized Node test commands that would re-enter the running preflight test suite. Each suppressed explicit entry remains a `skip` result with its configured name or original position. A required test kind therefore cannot pass just because another entry ran successfully.
+
+## Required checks
+
+`requiredChecks` is an optional list of result kind names:
+
+```json
+{
+  "requiredChecks": ["lint", "typecheck", "test"]
+}
+```
+
+Supported names are `git-state`, `lint`, `typecheck`, `test`, `audit`, `ci-simulation`, `commit-convention`, `secret-detection`, `tdd` and `custom`. These are the `checks[].kind` values, not the camelCase toggle keys such as `gitState` or `ciSimulation`.
+
+Each required kind must produce at least one actual result, and **every returned result of that kind must have status `pass`**. An absent or disabled kind, or a result with `skip`, `warn`, `acknowledged` or `fail`, adds a visible blocker and makes `ready: false`. The policy does not enable checks: enable `checks.ciSimulation` explicitly when requiring `ci-simulation`, for example. CLI flags such as `--no-audit` do not waive a requirement for `audit`.
+
+The gate runs after acknowledgements. Waived failures remain `acknowledged` with their reasons, but do not satisfy required checks. Policy blockers do not fabricate check executions, change statuses or alter confidence scoring. Duplicate kind names have no extra effect. With no inherited policy, an omitted list, programmatic `undefined`, or `[]` keeps the previous gate. In `mergeConfig`, omitted or `undefined` overrides preserve an inherited policy; `[]` explicitly clears it. A malformed list, including `null` or an unknown kind, blocks readiness instead of silently selecting permissive defaults.
+
+This policy checks the returned results; it does not prove exhaustive discovery of every tool or stack in a repository. Limitations have no kind and can coexist with passing results, so continue reading them. Use explicit command lists to define the intended verification scope. Requiring `git-state` includes both the clean-worktree result and any protected-branch warning; requiring `custom` includes every custom result, including a `warn` from `failOnError: false`.
 
 ## Custom checks
 
@@ -178,7 +247,7 @@ Custom checks let you wire in anything else as a shell command:
 }
 ```
 
-`failOnError: false` downgrades a non-zero exit to a `warn` so optional checks still surface without blocking the run.
+`failOnError: false` downgrades a non-zero exit to a `warn`. It blocks readiness only when `custom` is in `requiredChecks`.
 
 **Security: the target repo is not just data.** Its `.preflight.json` can
 define shell commands (`customChecks[].command`, `commands.lint`/`typecheck`/
@@ -600,7 +669,7 @@ three outcomes are deliberately different:
   repo. The test check stays "not evaluated" (the named `skip`, with the
   timeout named in the message and a `limitations` entry), which is the same
   direction every other did-not-answer path in this tool takes (see the
-  `npm-audit` skip). A timeout is never a blocker.
+  `npm-audit` skip). Without a policy requiring `test`, this setup timeout does not block readiness; requiring `test` makes the returned skip a policy blocker.
 - **Success**: the build ran to completion, so whatever the tests report now
   is genuine, and the check stays a blocking `fail`. Normally the precondition
   already says so, because the artifacts now exist; the explicit rule also
@@ -684,15 +753,8 @@ CI runner's OS, for example). For those, give the check's toggle in
 The check still runs. If it fails, that failure is downgraded from `fail`
 to a new `acknowledged` status instead of being dropped or hidden:
 
-- `ready` becomes `true` (an acknowledged check is not a blocker), but the
-  check keeps its own `acknowledged` status in `checks[]`: a caller reading
-  only `ready`/`blockers` still sees `ready: true`, but anything reading
-  `checks[]` sees the check did not actually pass.
-- An acknowledged check never appears in `blockers[]` (only `fail` does) or
-  `warnings[]` (only `warn` does): it is visible *exclusively* through its
-  own `status: "acknowledged"` entry in `checks[]`. A consumer that only
-  quotes `blockers`/`warnings` and never scans `checks[]` will report a
-  clean "READY" without ever surfacing that a failure was waived.
+- Acknowledgement removes the ordinary failure blocker. `ready` becomes `true` only when no other blocker remains and the kind is not required. A required kind still adds a policy blocker naming the `acknowledged` result.
+- The check keeps `status: "acknowledged"` in `checks[]` and does not become a warning. Always scan `checks[]` for waived failures, even when `ready` is true; `blockers[]` and `warnings[]` alone do not list every waiver.
 - The check's `message` is rewritten to include the reason: the original
   message gets an `acknowledged: <reason>` suffix appended, and a matching
   entry is added to `limitations`, so the waiver is visible in `--json`
@@ -714,8 +776,7 @@ reject, so it is not reported anywhere: the check simply runs enabled,
 identical to `true`, with no acknowledge behavior in play.
 
 **Deliberate boundaries:**
-- Scoped to checks that failed (`fail`); a `pass`/`warn`/`skip` result is
-  already non-blocking and is left untouched.
+- Scoped to checks that failed (`fail`); `pass`/`warn`/`skip` results are left untouched. Only `pass` satisfies a required kind.
 - Applies to the `checks.*` boolean toggles (`gitState`, `lint`,
   `typecheck`, `test`, `audit`, `commitConvention`, `tdd`): one reason
   acknowledges every check of that kind for the whole run (e.g. every

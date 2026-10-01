@@ -17,7 +17,7 @@ If an agent is installing this skill from a repo template, it should fetch it fr
 
 ## OpenCode Workflow
 
-1. Inspect `.preflight.json` if present.
+1. Inspect `.preflight.json` if present. Honor `workingDir`, command objects and `requiredChecks`; each required kind needs at least one result and every result passing.
 2. Run `preflight run <repo> --json`.
 3. If output shows missing tooling, rerun with `preflight sandbox <repo> --json`.
 4. Summarize the result in the final answer with:
@@ -25,7 +25,7 @@ If an agent is installing this skill from a repo template, it should fetch it fr
    - blockers
    - warnings
    - acknowledged checks (scan `checks[]` for `status: "acknowledged"` —
-     waived failures never appear in blockers/warnings)
+     waived failures keep their status and reason; they are non-blocking by default but cannot satisfy `requiredChecks`, which adds a policy blocker)
    - limitations
    - confidence
 
@@ -40,7 +40,7 @@ If an agent is installing this skill from a repo template, it should fetch it fr
 ## OpenCode-Specific Guidance
 
 - Prefer short, factual summaries.
-- Mention exact commands you ran.
+- Mention exact commands you ran. Required checks evaluate returned results; continue reporting limitations and do not infer exhaustive stack coverage.
 - If sandbox mode was required, say which limitation triggered the fallback.
 - If `ciSimulation` was requested, mention whether the run used `--docker-socket`.
 

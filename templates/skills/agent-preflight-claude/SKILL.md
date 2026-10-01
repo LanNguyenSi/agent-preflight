@@ -22,6 +22,8 @@ If an agent is installing this skill from a repo template, it should fetch it fr
 3. If important checks are skipped because tooling is absent, rerun with `preflight sandbox <repo> --json`.
 4. Present the result as a short readiness report.
 
+Honor `workingDir`, command objects and `requiredChecks`; each required kind needs at least one result and every result passing. Required checks evaluate returned results; continue reporting limitations and do not infer exhaustive stack coverage.
+
 ## Tool Discovery
 
 - Prefer `preflight` if it is already available in `PATH`.
@@ -38,8 +40,8 @@ Claude should summarize:
 - primary blockers
 - notable warnings
 - acknowledged checks (scan `checks[]` for `status: "acknowledged"` — waived
-  failures never appear in `blockers`/`warnings`, so `ready: true` alone can
-  hide one)
+  failures keep their status and reason; they are non-blocking by default but
+  cannot satisfy `requiredChecks`, which adds a policy blocker)
 - explicit limitations
 - confidence
 

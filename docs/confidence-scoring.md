@@ -6,7 +6,7 @@
 
 A green "no blockers" result is misleading when half the checks were skipped because tools were missing or the stack was unknown. The score makes that gap explicit:
 
-- `ready: true` means there are no blocking failures.
+- `ready: true` means there are no failure blockers or unmet required-check policies.
 - `confidence: 0.49` means only half the validation surface was exercised.
 
 An agent can read both signals and decide whether to push, ask a human, or run more checks (for example with `--ci-simulation`).
@@ -22,6 +22,8 @@ confidence = max(0, min(1, base - penalty))
 ```
 
 If no checks run, the score is 0.
+
+`requiredChecks` changes readiness only. Each listed kind needs at least one actual result and all its results must pass; missing, disabled, skipped, warned, acknowledged or failed required checks block readiness. Their original statuses remain visible, and no policy result or weight is added to the score. An acknowledged failure never counts as a pass. Omitting `requiredChecks` or setting it to `[]` retains the previous gate. The policy does not establish exhaustive tool discovery; continue reading limitations. See [required checks](./checks.md#required-checks).
 
 ## Default weights
 

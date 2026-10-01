@@ -81,6 +81,62 @@ describe("confidence scoring", () => {
   });
 });
 
+describe("requiredChecks with configured test commands", () => {
+  it("keeps a waived failure acknowledged but blocks a required test kind", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-required-ack-"));
+    try {
+      const result = await runPreflight(repoPath, {
+        checks: { ...allChecksDisabled(), test: { acknowledge: "runs in CI" } },
+        requiredChecks: ["test"],
+        commands: { test: [{ run: "exit 1", name: "integration" }] },
+        logDir: path.join(repoPath, "logs"),
+      });
+      expect(result.checks).toEqual([expect.objectContaining({ name: "integration", status: "acknowledged" })]);
+      expect(result.ready).toBe(false);
+      expect(result.blockers).toEqual(['Required check kind "test" must pass every result: "integration" (acknowledged)']);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks a recursive test skip even when another explicit command passes", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-required-recursive-"));
+    try {
+      const result = await runPreflight(repoPath, {
+        checks: { ...allChecksDisabled(), test: true },
+        requiredChecks: ["test"],
+        commands: { test: ["exit 0", { run: "npm test", name: "recursive", cwd: process.cwd() }] },
+        logDir: path.join(repoPath, "logs"),
+      });
+      expect(result.checks).toEqual([
+        expect.objectContaining({ name: "test:1", status: "pass" }),
+        expect.objectContaining({ name: "recursive", status: "skip" }),
+      ]);
+      expect(result.ready).toBe(false);
+      expect(result.blockers).toEqual(['Required check kind "test" must pass every result: "recursive" (skip)']);
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks when auto-detection produces only limitations and no test result", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-required-absent-"));
+    try {
+      const result = await runPreflight(repoPath, {
+        checks: { ...allChecksDisabled(), test: true },
+        requiredChecks: ["test"],
+        logDir: path.join(repoPath, "logs"),
+      });
+      expect(result.checks).toEqual([]);
+      expect(result.ready).toBe(false);
+      expect(result.blockers).toEqual([expect.stringContaining('"test" produced no results')]);
+      expect(result.limitations).toContain("No supported test command found; test check skipped");
+    } finally {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("PreflightConfig.logDir end-user override", () => {
   // Uses a customChecks entry (rather than lint/typecheck/test/audit) as the
   // vehicle: it is the one check kind that doesn't depend on the target
