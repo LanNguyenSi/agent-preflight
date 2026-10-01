@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Command objects can use `passRegex` and optional `failRegex` to judge
+  completed runs by combined output, including tools whose exit code is noisy.
+  Timeouts, signals, spawn errors and exit 127 cannot pass this predicate.
+
 ## [0.7.0] - 2026-10-01
 
 ### Added

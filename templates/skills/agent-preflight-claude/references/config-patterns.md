@@ -19,7 +19,7 @@ Use the repository's `.preflight.json` and intended verification scope when choo
 }
 ```
 
-`commands.lint`, `typecheck`, `test` and `audit` accept strings and objects in the same list. `run` is required; `name`, `cwd` and `timeoutMs` are optional. Relative `cwd` resolves against the effective `workingDir`; absolute paths also work. Timeouts are positive finite milliseconds, at most `86400000` (one day), with defaults of `300000` for tests and `120000` for the other configured categories. An omitted category or `[]` keeps auto-detection. Malformed explicit overrides fail that enabled category before any of its commands execute; they do not select defaults. Non-zero exit codes and timeouts fail even if output looks successful.
+`commands.lint`, `typecheck`, `test` and `audit` accept strings and objects in the same list. `run` is required; `name`, `cwd`, `timeoutMs`, `passRegex` and `failRegex` are optional. `failRegex` requires `passRegex`; both patterns use the multiline (`m`) flag against at most the first 65536 UTF-16 code units of combined stdout and stderr. Relative `cwd` resolves against the effective `workingDir`; absolute paths also work. Timeouts are positive finite milliseconds, at most `86400000` (one day), with defaults of `300000` for tests and `120000` for the other configured categories. An omitted category or `[]` keeps auto-detection. Malformed explicit overrides fail that enabled category before any of its commands execute; they do not select defaults. String commands use exit codes. An object with `passRegex` passes when it matches and `failRegex` does not, regardless of exit code; timeouts, signals, spawn errors and exit 127 never pass.
 
 ## PHP project
 

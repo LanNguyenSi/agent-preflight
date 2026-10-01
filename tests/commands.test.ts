@@ -102,6 +102,88 @@ describe.each(kinds)("configured %s commands", (kind) => {
     expect(result.checks).toMatchObject([{ name: "failed command", status: "fail" }]);
   });
 
+  it("uses a multiline output predicate for an explicit object, including required checks", async () => {
+    const result = await runPreflight(repoPath, {
+      ...onlyCheck(kind), logDir, requiredChecks: [kind],
+      commands: { [kind]: [{ run: "printf 'notice\\nOK (12 tests, 30 assertions)\\n'; exit 1", passRegex: "^OK \\(" }] },
+    });
+    expect(result.checks).toMatchObject([{ status: "pass" }]);
+    expect(result.ready).toBe(true);
+  });
+
+  it("lets failRegex veto a passRegex match and reports the predicate", async () => {
+    const result = await runners[kind](repoPath, {
+      logDir, commands: { [kind]: [{ run: "printf 'OK (12 tests)\\nFAILURES!\\n'; exit 0", passRegex: "^OK \\(", failRegex: "^FAILURES!" }] },
+    });
+    expect(result.checks[0]).toMatchObject({ status: "fail" });
+    expect(result.checks[0].message).toContain("failRegex");
+  });
+
+  it("fails when passRegex does not match even if exit is zero", async () => {
+    const result = await runners[kind](repoPath, {
+      logDir, commands: { [kind]: [{ run: "echo incomplete; exit 0", passRegex: "^OK \\(" }] },
+    });
+    expect(result.checks[0]).toMatchObject({ status: "fail" });
+    expect(result.checks[0].message).toContain("passRegex");
+  });
+
+  if (kind === "test") {
+    const boundaryCases = [
+      { name: "pass marker at the last included code unit", output: "x".repeat(65_535) + "P", expected: "pass" },
+      { name: "pass marker at the first excluded code unit", output: "x".repeat(65_536) + "P", expected: "fail" },
+      { name: "veto marker at the last included code unit", output: "P" + "x".repeat(65_534) + "F", expected: "fail" },
+      { name: "veto marker at the first excluded code unit", output: "P" + "x".repeat(65_535) + "F", expected: "pass" },
+      { name: "pass after a surrogate pair at the last included code unit", output: "😀" + "x".repeat(65_533) + "P", expected: "pass" },
+      { name: "pass after a surrogate pair at the first excluded code unit", output: "😀" + "x".repeat(65_534) + "P", expected: "fail" },
+    ] as const;
+
+    it.each(boundaryCases)("searches only the first 65536 UTF-16 code units: $name", async ({ output, expected }) => {
+      vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 1, all: output, timedOut: false, isCanceled: false } as never);
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "P", failRegex: "F" }] },
+      });
+      expect(result.checks[0].status).toBe(expected);
+    });
+  }
+
+  it("never passes incomplete runs or exit 127 through the predicate", async () => {
+    const result = await runners[kind](repoPath, {
+      logDir, commands: { [kind]: [
+        { run: "echo OK; exec sleep 1", passRegex: "OK", timeoutMs: 20 },
+        { run: "echo OK; exit 127", passRegex: "OK" },
+        { run: "echo OK", passRegex: "OK", cwd: "missing" },
+      ] },
+    });
+    expect(result.checks.map((check) => check.status)).toEqual(["fail", "fail", "fail"]);
+  });
+
+  it("does not predicate-pass a timed-out, signaled or exitless execa result", async () => {
+    const execa = vi.mocked(execaModule.execa);
+    execa.mockResolvedValueOnce({ exitCode: 0, all: "OK", timedOut: true, isCanceled: false } as never);
+    execa.mockResolvedValueOnce({ exitCode: 0, all: "OK", timedOut: false, signal: "SIGTERM", isCanceled: false } as never);
+    execa.mockResolvedValueOnce({ exitCode: undefined, all: "OK", timedOut: false, isCanceled: false } as never);
+    const result = await runners[kind](repoPath, {
+      logDir, commands: { [kind]: [
+        { run: "echo OK", passRegex: "OK" },
+        { run: "echo OK", passRegex: "OK" },
+        { run: "echo OK", passRegex: "OK" },
+      ] },
+    });
+    expect(result.checks.map((check) => check.status)).toEqual(["fail", "fail", "fail"]);
+  });
+
+  it("keeps the existing status and message for commands without predicates", async () => {
+    const execa = vi.mocked(execaModule.execa);
+    execa.mockResolvedValueOnce({ exitCode: 0, all: "OK", timedOut: true, isCanceled: false } as never);
+    execa.mockResolvedValueOnce({ exitCode: 0, all: "OK", timedOut: false, signal: "SIGTERM", isCanceled: false } as never);
+    const result = await runners[kind](repoPath, {
+      logDir, commands: { [kind]: ["echo OK", { run: "echo OK" }] },
+    });
+    expect(result.checks.map((check) => [check.status, check.message])).toEqual([
+      ["pass", undefined], ["pass", undefined],
+    ]);
+  });
+
   it("reports an unusable cwd as a failed command", async () => {
     const result = await runners[kind](repoPath, {
       logDir, commands: { [kind]: [{ run: "true", cwd: "missing", name: "bad directory" }] },
@@ -116,7 +198,10 @@ describe.each(kinds)("configured %s commands", (kind) => {
     [{ run: "true", timeoutMs: 0 }], [{ run: "true", timeoutMs: -1 }],
     [{ run: "true", timeoutMs: Infinity }], [{ run: "true", timeoutMs: NaN }],
     [{ run: "true", timeoutMs: 86_400_001 }], [{ run: "true", timeoutMs: "100" }],
-    [{ run: "true", timeout: 100 }], [{ run: "true", passRegex: "success" }],
+    [{ run: "true", timeout: 100 }],
+    [{ run: "true", passRegex: 1 }], [{ run: "true", failRegex: 1 }],
+    [{ run: "true", failRegex: "FAILURES!" }],
+    [{ run: "true", passRegex: "[" }], [{ run: "true", passRegex: "OK", failRegex: "[" }],
     ["touch should-not-run", { run: "true", cwd: null }],
   ].map((value) => ({ value })))("fails a malformed explicit override without executing a partial list: $value", async ({ value }) => {
     const result = await runners[kind](repoPath, rawCommands({ [kind]: value }));
