@@ -13,7 +13,6 @@ import {
   runConfiguredCommands,
   rootBuildScriptFansOutToWorkspaces,
   runShellCheck,
-  fileExists,
   shouldSkipRecursiveNodeTest,
   SetupBuildOutcome,
   ProjectContext,
@@ -179,22 +178,11 @@ export async function runTestChecks(
       if (result.check) {
         checks.push(result.check);
       }
-    } else if (fileExists(repoPath, "vendor/bin/phpunit")) {
-      const result = await runShellCheck({
-        repoPath,
-        name: "phpunit",
-        kind: "test",
-        command: "vendor/bin/phpunit",
-        weight: 0.2,
-        failureMessage: "phpunit failed",
-        timeoutMs: 300_000,
-        logDir: config.logDir,
-      });
-      if (result.check) {
-        checks.push(result.check);
+      if (result.limitation) {
+        limitations.push(result.limitation);
       }
     } else {
-      limitations.push("No supported PHP test command found (composer script or phpunit)");
+      limitations.push("PHP tests require an explicit command; configure commands.test in .preflight.json or a Composer test script (bare PHPUnit is not run automatically)");
     }
   }
 

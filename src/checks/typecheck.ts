@@ -1,9 +1,10 @@
 import { CheckResult, PreflightConfig } from "../types.js";
+import fs from "fs";
+import { composerBinPath, findPhpConfig, quotePhpArgument } from "./php.js";
 import {
   CheckSetResult,
   commandExists,
   createProjectContext,
-  fileExists,
   getConfiguredCommands,
   hasComposerPackage,
   hasJavaProject,
@@ -87,26 +88,38 @@ export async function runTypecheckChecks(
   }
 
   if (hasPhpProject(context)) {
-    if (fileExists(repoPath, "vendor/bin/phpstan") || hasComposerPackage(context, "phpstan/phpstan")) {
-      const result = await runShellCheck({
-        repoPath,
-        name: "phpstan",
-        kind: "typecheck",
-        command: "vendor/bin/phpstan analyse",
-        weight: 0.2,
-        failureMessage: "phpstan found type issues",
-        missingLimitation: "phpstan not installed; PHP typecheck skipped",
-        logDir: config.logDir,
-      });
-      if (result.check) {
-        checks.push(result.check);
+    const phpstan = composerBinPath(context, "phpstan");
+    const psalm = composerBinPath(context, "psalm");
+    if (fs.existsSync(phpstan) || hasComposerPackage(context, "phpstan/phpstan")) {
+      const phpConfig = await findPhpConfig(repoPath, "phpstan");
+      if (!phpConfig) {
+        limitations.push("No PHPStan config found within the repository; configure commands.typecheck in .preflight.json");
+      } else {
+        const result = await runShellCheck({
+          repoPath,
+          name: "phpstan",
+          kind: "typecheck",
+          command: `${quotePhpArgument(phpstan)} analyse --configuration=${quotePhpArgument(phpConfig)}`,
+          primaryCommand: phpstan,
+          weight: 0.2,
+          failureMessage: "phpstan found type issues",
+          missingLimitation: "phpstan not installed; PHP typecheck skipped",
+          logDir: config.logDir,
+        });
+        if (result.check) {
+          checks.push(result.check);
+        }
+        if (result.limitation) {
+          limitations.push(result.limitation);
+        }
       }
-    } else if (fileExists(repoPath, "vendor/bin/psalm") || hasComposerPackage(context, "vimeo/psalm")) {
+    } else if (fs.existsSync(psalm) || hasComposerPackage(context, "vimeo/psalm")) {
       const result = await runShellCheck({
         repoPath,
         name: "psalm",
         kind: "typecheck",
-        command: "vendor/bin/psalm --no-progress",
+        command: `${quotePhpArgument(psalm)} --no-progress`,
+        primaryCommand: psalm,
         weight: 0.2,
         failureMessage: "psalm found type issues",
         missingLimitation: "psalm not installed; PHP typecheck skipped",
@@ -114,6 +127,9 @@ export async function runTypecheckChecks(
       });
       if (result.check) {
         checks.push(result.check);
+      }
+      if (result.limitation) {
+        limitations.push(result.limitation);
       }
     } else {
       limitations.push("No supported PHP typecheck command found (phpstan, psalm)");

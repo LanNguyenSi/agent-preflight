@@ -28,6 +28,7 @@ interface PackageJson {
 }
 
 interface ComposerJson {
+  config?: { "bin-dir"?: unknown };
   scripts?: Record<string, unknown>;
   require?: Record<string, string>;
   "require-dev"?: Record<string, string>;
@@ -149,6 +150,8 @@ interface ShellCheckOptions {
   name: string;
   kind: CheckKind;
   command: string;
+  // Raw executable path for generated commands whose first argument needs quoting.
+  primaryCommand?: string;
   weight: number;
   failureMessage: string;
   failureStatus?: "fail" | "warn";
@@ -195,10 +198,10 @@ interface ShellCheckRunResult {
 // though the check actually failed.
 //
 // Caveats:
-// - The primary is extracted as the first whitespace-separated token. Callers
-//   MUST NOT use env-variable prefixes (`FOO=bar cmd`) or shell indirection
-//   (`bash -c "..."`) in `command`; the pre-check would look up the wrong
-//   token.
+// - Unless `primaryCommand` supplies the raw executable path, the primary is
+//   extracted as the first whitespace-separated token. Callers using that
+//   fallback MUST NOT use quoted paths, env-variable prefixes (`FOO=bar cmd`)
+//   or shell indirection (`bash -c "..."`); it would look up the wrong token.
 // - `command -v` treats tokens containing `/` (e.g. `./mvnw`,
 //   `vendor/bin/phpstan`) as filename tests rather than PATH lookups, so
 //   relative paths are resolved against `repoPath` (the execa cwd).
@@ -207,7 +210,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
   const env = buildCommandEnv(options.repoPath);
 
   if (options.missingLimitation) {
-    const primary = options.command.trim().split(/\s+/)[0];
+    const primary = options.primaryCommand ?? options.command.trim().split(/\s+/)[0];
     if (primary && !(await commandExists(primary, options.repoPath))) {
       return { limitation: options.missingLimitation };
     }
