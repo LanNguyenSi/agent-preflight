@@ -2076,7 +2076,7 @@ function predicateWindows(output: string): { pass: string[]; fail: string[] } {
   const tailStart = LINE_TERMINATOR.exec(tail);
   const completeTail = tailStart ? tail.slice(tailStart.index + tailStart[0].length) : "";
   let headEnd = -1;
-  for (const m of head.matchAll(new RegExp(LINE_TERMINATOR, "g"))) headEnd = m.index;
+  for (const m of head.matchAll(new RegExp(LINE_TERMINATOR, "g"))) headEnd = m.index + m[0].length;
   const completeHead = headEnd >= 0 ? head.slice(0, headEnd) : "";
   return { pass: [completeHead, completeTail], fail: [head, tail] };
 }

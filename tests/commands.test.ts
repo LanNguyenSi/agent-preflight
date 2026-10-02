@@ -137,6 +137,7 @@ describe.each(kinds)("configured %s commands", (kind) => {
       { name: "pass line complete inside the tail", output: "x".repeat(200_000) + "\nP\n" + "x".repeat(10), expected: "pass" },
       { name: "pass line as the very last line of a long output", output: "x".repeat(200_000) + "\nP", expected: "pass" },
       { name: "veto line at the very end of a long output", output: "P\n" + "x".repeat(200_000) + "\nF", expected: "fail" },
+      { name: "veto line inside the head of a long output", output: "F\n" + "x".repeat(200_000) + "\nP", expected: "fail" },
       { name: "veto marker in the partial first tail line", output: "P\n" + "x".repeat(100_000) + "F" + "x".repeat(half - 2), expected: "fail" },
       { name: "veto marker only in the omitted middle", output: "P\n" + "x".repeat(70_000) + "F" + "x".repeat(70_000) + "\n" + "y".repeat(half), expected: "pass" },
       { name: "pass line behind a short lead-in", output: "x".repeat(70_000) + "\nP", expected: "pass" },
@@ -202,6 +203,15 @@ describe.each(kinds)("configured %s commands", (kind) => {
       expect(result.checks[0].status).toBe("pass");
     });
 
+    it("keeps the terminator of the last complete head line for passRegex", async () => {
+      const output = "z".repeat(half - 10) + "\nOK (3)\nqq" + "q".repeat(70_000) + "y".repeat(half);
+      vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 1, all: output, timedOut: false, isCanceled: false } as never);
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "^OK \\(3\\)\n" }] },
+      });
+      expect(result.checks[0].status).toBe("pass");
+    });
+
     it("drops a head without any line terminator for passRegex", async () => {
       const output = "x".repeat(half - 1) + "P" + "x".repeat(10_000) + "y".repeat(half);
       vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0, all: output, timedOut: false, isCanceled: false } as never);
@@ -215,6 +225,7 @@ describe.each(kinds)("configured %s commands", (kind) => {
       { name: "a CR-terminated cut line", output: "x".repeat(200_000) + "\rP" },
       { name: "a CRLF-terminated cut line", output: "x".repeat(200_000) + "\r\nP" },
       { name: "a U+2028-terminated cut line", output: "x".repeat(200_000) + "\u2028P" },
+      { name: "a U+2029-terminated cut line", output: "x".repeat(200_000) + "\u2029P" },
     ])("treats $name as complete for the tail verdict", async ({ output }) => {
       vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 1, all: output, timedOut: false, isCanceled: false } as never);
       const result = await runTestChecks(repoPath, {
