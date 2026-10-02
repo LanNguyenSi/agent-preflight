@@ -24,6 +24,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   there, which can only turn a pass into a fail. Lookarounds cannot see past a
   cut, so exclusions belong in `failRegex`. A `failRegex` searches both parts
   untrimmed and can still match a line partly cut at a window edge and veto.
+- The `tdd-test-counterpart` check (#99) reported `pass` ("No checkable source
+  files changed") for PHP- or Python-only changes, uncommitted work and
+  multi-commit branches, which raised the confidence score. The changed-file
+  set is now the diff against one base, the nearest trustworthy merge base of
+  HEAD, so a branch pushed with `-u` still shows all of its commits. The
+  candidates are local refs only: the base resolved by diff-scoped secret
+  detection, `<remote>/HEAD`, `<remote>/main` and `<remote>/master` of every
+  remote, and local `main` and `master` only when all of their commits are
+  already on a remote. The current branch, its upstream and symbolic refs to
+  them are never candidates. The branch's pushed copies `<remote>/<branch>`
+  do not vouch for local `main`/`master`, and a secret-detection base that
+  comes from the upstream copy is used only when no other merge base remains,
+  so every unpushed commit is still checked. A merge base equal to HEAD is
+  ignored, and the merge base with the fewest commits up to HEAD wins, so a
+  fork branch is compared with `upstream/main` when that ref or a local `main`
+  pulled from it exists. When the only candidates are stale the check can
+  over-report; a default branch other than `main` or `master` is found only
+  through `<remote>/HEAD`. A stacked branch is compared with its parent only
+  while the parent is its upstream, otherwise with the nearest default
+  branch, so an untested file from a pushed parent feature branch is
+  reported. Working-tree and untracked changes are included. Files deleted
+  within the compared range are ignored. When no merge base remains,
+  `HEAD~1..HEAD` is used instead; when HEAD is a root commit or sits on a
+  shallow boundary that range cannot be computed, and the limitation "diff
+  range could not be determined (shallow clone or root commit)" is added,
+  also when other changed files are visible; if no other changed file was
+  found the check reports `skip` instead of `pass`. CI checkouts with
+  `actions/checkout` default to depth 1, so set `fetch-depth: 0` when `tdd` is
+  required. When the last
+  commit is examined through `HEAD~1..HEAD`, a file committed in HEAD and
+  deleted only in the working tree is still flagged. Only `.ts`/`.js` sources
+  are checked; `.tsx`, `.jsx`, `.mts`, `.cts`, `.mjs` and `.cjs` are other file
+  types. When files changed but none is a `.ts`/`.js` file (a PHP-only,
+  `.tsx`-only, docs-only or config-only change) the check reports `skip` with
+  the limitation "other file types not checked"; when source files of other
+  types change alongside `.ts`/`.js` files the verdict stays as computed for
+  the `.ts`/`.js` files and the same limitation is added. With no changed files
+  at all the result stays `pass`. With `tdd` in `requiredChecks`, a change
+  containing only non-`.ts`/`.js` files, or one whose diff range could not be
+  determined and shows no other change, now blocks readiness because `skip` is
+  not `pass`.
 
 ## [0.8.0] - 2026-10-01
 

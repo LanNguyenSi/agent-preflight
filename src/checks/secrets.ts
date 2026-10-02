@@ -597,7 +597,7 @@ async function classifyIgnored(
 }
 
 /** Where and with which environment every git call of one secret-detection run executes. */
-interface GitContext {
+export interface GitContext {
   repoPath: string;
   env: NodeJS.ProcessEnv;
 }
@@ -883,7 +883,7 @@ interface DiffBaseCandidate {
  * If every candidate is either unresolvable or an untrusted non-diverged
  * guess, `null` is returned so the caller fails safe.
  */
-async function resolveDiffBase(git: GitContext): Promise<string | null> {
+export async function resolveDiffBase(git: GitContext): Promise<string | null> {
   const headSha = (await runGit(git, ["rev-parse", "HEAD"]))?.trim() ?? null;
   const candidates: DiffBaseCandidate[] = [];
   const upstream = await runGit(git, [
