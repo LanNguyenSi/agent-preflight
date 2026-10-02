@@ -12,24 +12,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The `tdd-test-counterpart` check (#99) reported `pass` ("No checkable source
   files changed") for PHP- or Python-only changes, uncommitted work and
   multi-commit branches, which raised the confidence score. The changed-file
-  set is now the diff against the merge-base with the upstream or default
-  branch (the base resolution used by diff-scoped secret detection), unioned
-  with the diff against the nearest default-branch merge-base, so a branch
-  pushed with `-u` still shows all of its commits. That nearest base is chosen
-  from local refs only (`<remote>/HEAD`, `<remote>/main` and `<remote>/master`
-  of every remote, plus local `main` and `master`), skipping the current
-  branch, its upstream and any candidate whose merge base is HEAD itself, and
-  taking the merge base with the fewest commits up to HEAD; a stale fork
-  `origin/main` or a leftover `origin/master` therefore loses to a nearer
-  base, while a stale ref that is the only candidate can still over-report. A
-  stacked branch is compared with the nearest default branch, so an untested
-  file from a pushed parent feature branch is reported. Working-tree and
-  untracked changes are included. Files deleted within the compared range are
-  ignored. When the base equals HEAD, or no base resolves, `HEAD~1..HEAD` is
-  included as well; when HEAD is a root commit or sits on a shallow boundary
-  that range cannot be computed, and the limitation "diff range could not be
-  determined (shallow clone or root commit)" is added, also when other changed
-  files are visible; if no other changed file was found the check reports
+  set is now the diff against one base, the nearest trustworthy merge base of
+  HEAD, so a branch pushed with `-u` still shows all of its commits. The
+  candidates are local refs only: the base resolved by diff-scoped secret
+  detection, `<remote>/HEAD`, `<remote>/main` and `<remote>/master` of every
+  remote, and local `main` and `master` only when all of their commits are
+  already on a remote. The current branch, its upstream, its pushed copies
+  `<remote>/<branch>` (unless the branch is `main` or `master`) and symbolic
+  refs to them are never candidates; a pushed copy does not vouch for local
+  `main`/`master`, and a secret-detection base that comes from such a copy is
+  used only when no other merge base remains. A merge base equal to HEAD is
+  ignored, and the merge base with the fewest commits up to HEAD wins, so a
+  fork branch is compared with `upstream/main` when that ref or a local `main`
+  pulled from it exists. When
+  the only candidates are stale the check can over-report; a default branch
+  other than `main` or `master` is found only through `<remote>/HEAD`. A
+  stacked branch is compared with its parent only while the parent is its
+  upstream, otherwise with the nearest default branch, so an untested file
+  from a pushed parent feature branch is reported. Working-tree and untracked
+  changes are included. Files deleted within the compared range are ignored.
+  When no merge base remains, `HEAD~1..HEAD` is used instead; when HEAD is a
+  root commit or sits on a shallow boundary that range cannot be computed, and
+  the limitation "diff range could not be determined (shallow clone or root
+  commit)" is added, also when other changed files are visible; if no other
+  changed file was found the check reports
   `skip` instead of `pass`. CI checkouts with `actions/checkout` default to
   depth 1, so set `fetch-depth: 0` when `tdd` is required. When the last
   commit is examined through `HEAD~1..HEAD`, a file committed in HEAD and
