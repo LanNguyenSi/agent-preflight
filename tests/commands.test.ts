@@ -182,6 +182,47 @@ describe.each(kinds)("configured %s commands", (kind) => {
       expect(result.checks[0].status).toBe("fail");
     });
 
+    it("does not match passRegex across the omitted middle even over a line break", async () => {
+      const head = "a".repeat(half - 11) + "\nSuite A\nxx";
+      const tail = "yy\nfailed 0\n" + "z".repeat(half - 12);
+      const output = head + "m".repeat(1000) + tail;
+      vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0, all: output, timedOut: false, isCanceled: false } as never);
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "^Suite A\nfailed 0$" }] },
+      });
+      expect(result.checks[0].status).toBe("fail");
+    });
+
+    it("does not let failRegex match across the omitted middle", async () => {
+      const output = "P\n" + "x".repeat(half - 9) + "Suite A" + "m".repeat(1000) + "failed 0\n" + "z".repeat(half - 9);
+      vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0, all: output, timedOut: false, isCanceled: false } as never);
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "^P$", failRegex: "Suite A\nfailed 0" }] },
+      });
+      expect(result.checks[0].status).toBe("pass");
+    });
+
+    it("drops a head without any line terminator for passRegex", async () => {
+      const output = "x".repeat(half - 1) + "P" + "x".repeat(10_000) + "y".repeat(half);
+      vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0, all: output, timedOut: false, isCanceled: false } as never);
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "P$" }] },
+      });
+      expect(result.checks[0].status).toBe("fail");
+    });
+
+    it.each([
+      { name: "a CR-terminated cut line", output: "x".repeat(200_000) + "\rP" },
+      { name: "a CRLF-terminated cut line", output: "x".repeat(200_000) + "\r\nP" },
+      { name: "a U+2028-terminated cut line", output: "x".repeat(200_000) + "\u2028P" },
+    ])("treats $name as complete for the tail verdict", async ({ output }) => {
+      vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 1, all: output, timedOut: false, isCanceled: false } as never);
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "^P$" }] },
+      });
+      expect(result.checks[0].status).toBe("pass");
+    });
+
     it("finds a real verdict line behind more than 128 KiB of output", async () => {
       const result = await runTestChecks(repoPath, {
         logDir, commands: { test: [{ run: "head -c 150000 /dev/zero | tr '\\0' x; printf '\\nOK (3 tests)\\n'; exit 1", passRegex: "^OK \\(" }] },
