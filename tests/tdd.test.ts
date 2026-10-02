@@ -463,6 +463,20 @@ describe("runTddCheck", () => {
       }
     });
 
+    it("skips an origin/HEAD that points at the upstream when a further local commit follows it", async () => {
+      const bare = await cloneOfBare();
+      try {
+        await twoCommitFeature("origin");
+        await git(["remote", "set-head", "origin", "feature"]);
+        await commitFiles({ "docs/more.md": "more" }, "add more notes");
+        const result = await runTddCheck(tmpDir, defaultConfig);
+        expect(result.checks[0].status).toBe("warn");
+        expect(result.checks[0].details).toEqual(["src/first.ts"]);
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+      }
+    });
+
     it("skips a local main whose merge base is HEAD and uses origin/main", async () => {
       const bare = await cloneOfBare();
       try {
