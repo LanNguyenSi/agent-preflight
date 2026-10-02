@@ -627,7 +627,7 @@ async function listCommittableFiles(repoPath: string): Promise<string[] | null> 
       // repoPath is a subdirectory of the work tree; if the parent
       // repository ignores it, ls-files would silently list nothing.
       const ignored = await git(["check-ignore", "-q", "--", "."]);
-      if (ignored.exitCode === 0) return null;
+      // Exit 1 = not ignored. Exit 0 = ignored; anything else = git error.
       if (ignored.exitCode !== 1 || ignored.failed) return null;
     }
     const res = await git([
