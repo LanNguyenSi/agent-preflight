@@ -36,6 +36,14 @@ async function getChangedFiles(repoPath: string): Promise<string[]> {
     : null;
   if (tracked !== null) {
     tracked.forEach((f) => changed.add(f));
+    // A base equal to HEAD means no divergence (HEAD equals its upstream or
+    // sits on the default branch): the branch diff is empty, so keep the last
+    // commit as a floor.
+    const head = (await gitLines(repoPath, ["rev-parse", "HEAD"]))?.[0];
+    if (head !== undefined && head === base) {
+      const last = await gitLines(repoPath, ["diff", "--name-only", "--diff-filter=d", "HEAD~1..HEAD"]);
+      (last ?? []).forEach((f) => changed.add(f));
+    }
   } else {
     const committed = await gitLines(repoPath, ["diff", "--name-only", "--diff-filter=d", "HEAD~1..HEAD"]);
     const working = await gitLines(repoPath, ["diff", "--name-only", "--diff-filter=d", "HEAD"]);
