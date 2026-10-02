@@ -2105,7 +2105,7 @@ describe("runSecretDetection — git-enumerated file set", () => {
     // The merge must stop with a conflict (git exits non-zero), so the
     // index then holds three stages of conflicted.js.
     expect(() =>
-      execFileSync("git", ["merge", "other"], { cwd: repoPath, stdio: "ignore" }),
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "merge", "other"], { cwd: repoPath, stdio: "ignore" }),
     ).toThrow();
     const listed = execFileSync("git", ["ls-files"], { cwd: repoPath, encoding: "utf8" })
       .split("\n")
