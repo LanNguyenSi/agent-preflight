@@ -232,6 +232,8 @@ describe.each(kinds)("configured %s commands", (kind) => {
     it.each([
       { name: "no line terminator at all", output: "x".repeat(200_000) },
       { name: "a terminator only in the omitted middle", output: "x".repeat(half + 1000) + "\n" + "x".repeat(half + 1000) },
+      { name: "the tail part after a cut partial line", output: "x".repeat(200_000) + "\nFAILURES! 1\nend" },
+      { name: "the tail part after a cut partial line ending in CRLF", output: "x".repeat(200_000) + "\r\nOK\nend" },
     ])("does not let an empty-matching passRegex pass on a part left empty: $name", async ({ output }) => {
       vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0, all: output, timedOut: false, isCanceled: false } as never);
       const result = await runTestChecks(repoPath, {
