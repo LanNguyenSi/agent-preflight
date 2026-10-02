@@ -189,7 +189,7 @@ describe.each(kinds)("configured %s commands", (kind) => {
       const output = head + "m".repeat(1000) + tail;
       vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0, all: output, timedOut: false, isCanceled: false } as never);
       const result = await runTestChecks(repoPath, {
-        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "^Suite A\nfailed 0$" }] },
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "^Suite A\\s+failed 0$" }] },
       });
       expect(result.checks[0].status).toBe("fail");
     });
@@ -198,7 +198,7 @@ describe.each(kinds)("configured %s commands", (kind) => {
       const output = "P\n" + "x".repeat(half - 9) + "Suite A" + "m".repeat(1000) + "failed 0\n" + "z".repeat(half - 9);
       vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0, all: output, timedOut: false, isCanceled: false } as never);
       const result = await runTestChecks(repoPath, {
-        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "^P$", failRegex: "Suite A\nfailed 0" }] },
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "^P$", failRegex: "Suite A\\s*failed 0" }] },
       });
       expect(result.checks[0].status).toBe("pass");
     });
