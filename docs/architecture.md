@@ -34,8 +34,8 @@ Tests live under `tests/` and mirror the `src/` layout. Build output goes to `di
 
 `preflight run [repoPath]` flows through these steps:
 
-1. `cli.ts` parses flags, resolves the target path to an absolute path, calls `loadConfig`.
-2. `config.ts` reads `.preflight.json` if present and merges it with `defaultConfig()` from `config.ts`. Missing files are not an error; the tool works without config.
+1. `cli.ts` parses flags, resolves the target path to an absolute path, calls `loadConfigWithSource` (with the `--config` value, if any).
+2. `config.ts` picks the config: the explicit file from `--config`, else `PREFLIGHT_CONFIG`, else `.preflight.json` in the repo, and merges it with `defaultConfig()` from `config.ts`. A missing repo file is not an error; the tool works without config. A missing or invalid explicit file is an error (`ExplicitConfigError`, exit 1). The chosen source is reported as `config` in the result. `batch` and `sandbox` do not take an explicit file; `sandbox` rejects it.
 3. `runner.ts` dynamically imports each enabled check module. Imports are dynamic so a missing optional dependency in one check never breaks the others.
 4. Each check returns a `CheckSetResult` of `{ checks, limitations }`. The runner aggregates results, applies acknowledgements, then collects failure blockers and warnings. It adds policy blockers for invalid `requiredChecks`, missing required kinds or any non-passing result of a required kind. Confidence is still calculated from actual check results and limitations; policy blockers add no synthetic check or weight.
 5. `cli.ts` formats the result. `--json` prints `JSON.stringify(result, null, 2)`. The default formatter renders the icon, the score, the blockers, the warnings, and the limitations.

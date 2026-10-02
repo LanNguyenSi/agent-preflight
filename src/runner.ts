@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { CheckKind, CheckResult, CheckToggle, PreflightConfig, PreflightResult } from "./types.js";
+import { CheckKind, CheckResult, CheckToggle, ConfigSource, PreflightConfig, PreflightResult } from "./types.js";
 import { defaultLogDir, ensureProjectSetup, getWorkingDirHint, SetupBuildOutcome } from "./checks/shared.js";
 import { expandLeadingTilde } from "./pathUtils.js";
 import { requiredChecksConfigurationError } from "./config.js";
@@ -152,7 +152,8 @@ function checkSecretDetectionAcknowledgeIgnored(config: PreflightConfig): string
 
 export async function runPreflight(
   repoPath: string,
-  config: PreflightConfig
+  config: PreflightConfig,
+  configSource?: ConfigSource
 ): Promise<PreflightResult> {
   const start = Date.now();
   const checks: CheckResult[] = [];
@@ -320,6 +321,7 @@ export async function runPreflight(
     limitations: [...new Set(limitations)],
     durationMs: Date.now() - start,
     timestamp: new Date().toISOString(),
+    ...(configSource ? { config: configSource } : {}),
   };
 }
 

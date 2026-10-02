@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import path from "path";
-import { loadConfig } from "./config.js";
+import { ExplicitConfigError, loadConfigWithSource } from "./config.js";
 import { runPreflight } from "./runner.js";
 import { runBatch } from "./batch.js";
 import { runSandbox } from "./sandbox.js";
@@ -92,20 +92,35 @@ export function createProgram(): Command {
     .command("run [repoPath]")
     .description("Run preflight checks on a repository")
     .option("--json", "Output raw JSON (default: pretty summary)")
+    .option(
+      "--config <path>",
+      "Use this config file instead of <repoPath>/.preflight.json (relative to the current directory; overrides PREFLIGHT_CONFIG)"
+    )
     .option("--setup", "Enable conservative dependency/setup bootstrap before checks")
     .option("--ci-simulation", "Enable act-based CI simulation (requires act)")
     .option("--no-audit", "Skip dependency audit")
     .option("--no-secrets", "Skip secret detection")
     .action(async (repoPath: string | undefined, opts) => {
       const resolvedPath = path.resolve(repoPath ?? process.cwd());
-      const config = loadConfig(resolvedPath);
+      let loaded: ReturnType<typeof loadConfigWithSource>;
+      try {
+        loaded = loadConfigWithSource(resolvedPath, opts.config);
+      } catch (err) {
+        if (err instanceof ExplicitConfigError) {
+          process.stderr.write(`preflight: ${err.message}\n`);
+          process.exit(1);
+          return;
+        }
+        throw err;
+      }
+      const { config, source } = loaded;
 
       if (opts.setup) config.setup = { ...config.setup, enabled: true };
       if (opts.ciSimulation) config.checks = { ...config.checks, ciSimulation: true };
       if (!opts.audit) config.checks = { ...config.checks, audit: false };
       if (!opts.secrets) config.checks = { ...config.checks, secretDetection: false };
 
-      const result = await runPreflight(resolvedPath, config);
+      const result = await runPreflight(resolvedPath, config, source);
 
       if (opts.json) {
         writeJsonAndExit(result, result.ready ? 0 : 1);
@@ -142,6 +157,7 @@ export function createProgram(): Command {
       }
 
       console.log(`Checks: ${result.checks.length} | Duration: ${result.durationMs}ms`);
+      console.log(`Config: ${source.path ?? "none (defaults)"} (${source.source})`);
       process.exit(result.ready ? 0 : 1);
     });
 
@@ -209,6 +225,7 @@ export function createProgram(): Command {
     .option("--print", "Print the docker command and exit")
     .option("--docker-socket", "Mount /var/run/docker.sock so act can talk to the host daemon")
     .option("--image <image>", "Override the image to run")
+    .option("--config <path>", "Not supported by sandbox; rejected with an error")
     .option("--json", "Output raw JSON from the preflight run")
     .option("--setup", "Enable conservative dependency/setup bootstrap before checks")
     .option("--ci-simulation", "Enable act-based CI simulation inside the container")

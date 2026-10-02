@@ -6,7 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { loadConfig } from "./config.js";
+import { ExplicitConfigError, loadConfigWithSource } from "./config.js";
 import { runPreflight } from "./runner.js";
 import { runBatch } from "./batch.js";
 import { VERSION } from "./version.js";
@@ -84,6 +84,12 @@ const preflightResultOutputShape = {
   limitations: z.array(z.string()),
   durationMs: z.number(),
   timestamp: z.string(),
+  config: z
+    .object({
+      source: z.enum(["option", "env", "repo", "none"]),
+      path: z.string().nullable(),
+    })
+    .optional(),
 };
 const preflightResultSchema = z.object(preflightResultOutputShape);
 
@@ -293,23 +299,41 @@ export function createMcpServer(options: { progressIntervalMs?: number } = {}): 
           .boolean()
           .optional()
           .describe("Skip secret detection. Default false (secret detection runs)."),
+        configPath: z
+          .string()
+          .optional()
+          .describe(
+            "Use this config file instead of <repoPath>/.preflight.json. Absolute, or relative to the " +
+              "server's working directory (not repoPath). Overrides the PREFLIGHT_CONFIG environment " +
+              "variable. A missing or invalid file is an error; there is no fallback. Like .preflight.json, " +
+              "the file can define shell commands that will be executed."
+          ),
       },
       outputSchema: preflightRunOutputShape,
     },
-    async ({ repoPath, ciSimulation, noAudit, noSecrets }, extra) => {
+    async ({ repoPath, ciSimulation, noAudit, noSecrets, configPath }, extra) => {
       const resolvedPath = path.resolve(repoPath);
       if (!isExistingDirectory(resolvedPath)) {
         return pathNotFoundError("repoPath", resolvedPath);
       }
 
-      const config: PreflightConfig = loadConfig(resolvedPath);
+      let loaded: ReturnType<typeof loadConfigWithSource>;
+      try {
+        loaded = loadConfigWithSource(resolvedPath, configPath);
+      } catch (err) {
+        if (err instanceof ExplicitConfigError) {
+          return { isError: true, content: [{ type: "text" as const, text: err.message }] };
+        }
+        throw err;
+      }
+      const config: PreflightConfig = loaded.config;
       if (ciSimulation) config.checks = { ...config.checks, ciSimulation: true };
       if (noAudit) config.checks = { ...config.checks, audit: false };
       if (noSecrets) config.checks = { ...config.checks, secretDetection: false };
 
       const result = await withProgressPings(
         extra,
-        () => runPreflight(resolvedPath, config),
+        () => runPreflight(resolvedPath, config, loaded.source),
         progressIntervalMs
       );
 
@@ -331,6 +355,7 @@ export function createMcpServer(options: { progressIntervalMs?: number } = {}): 
         "(non-recursive, one level deep). Returns the exact structured result " +
         "`preflight batch --json` produces: per-repo ready/confidence/blockers plus " +
         "aggregate ready/notReady/skipped counts. " +
+        "Each repo uses its own .preflight.json; an explicit config file (preflight_run's configPath, PREFLIGHT_CONFIG) is not supported here. " +
         READY_FALSE_WARNING +
         " " +
         SHELL_SURFACE_WARNING,

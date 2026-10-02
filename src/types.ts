@@ -7,6 +7,18 @@ export interface PreflightResult {
   limitations: string[];
   durationMs: number;
   timestamp: string;
+  /** Where the config came from; set by `preflight run` and `preflight_run`. */
+  config?: ConfigSource;
+}
+
+/**
+ * Origin of the config a run used: `option` (--config / MCP configPath),
+ * `env` (PREFLIGHT_CONFIG), `repo` (<repo>/.preflight.json), or `none`
+ * (defaults only, `path` is null).
+ */
+export interface ConfigSource {
+  source: "option" | "env" | "repo" | "none";
+  path: string | null;
 }
 
 export interface CheckResult {

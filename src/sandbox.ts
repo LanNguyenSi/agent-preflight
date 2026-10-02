@@ -4,7 +4,7 @@ import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
 import { createHash } from "crypto";
-import { loadConfig } from "./config.js";
+import { CONFIG_ENV_VAR, ExplicitConfigError, loadConfig, resolveExplicitConfig } from "./config.js";
 import { createProjectContext, fileExists, hasJavaProject, hasNodeProject, hasPhpProject, hasPythonProject } from "./checks/shared.js";
 import { PreflightConfig } from "./types.js";
 
@@ -36,6 +36,8 @@ export interface SandboxCommandOptions {
   print?: boolean;
   dockerSocket?: boolean;
   image?: string;
+  /** Rejected: sandbox does not support an explicit config file. */
+  config?: string;
   json?: boolean;
   setup?: boolean;
   ciSimulation?: boolean;
@@ -115,6 +117,13 @@ export async function createSandboxPlan(
   repoPath: string | undefined,
   options: SandboxCommandOptions
 ): Promise<SandboxPlan> {
+  const explicitConfig = resolveExplicitConfig(options.config);
+  if (explicitConfig) {
+    const via = explicitConfig.origin === "option" ? "--config" : CONFIG_ENV_VAR;
+    throw new ExplicitConfigError(
+      `sandbox does not support an explicit config file (${via} is set); unset it, or run \`preflight run --config\` outside the sandbox`
+    );
+  }
   const workspacePath = resolveWorkspacePath(repoPath);
   const packageRoot = resolvePackageRoot();
   const config = loadConfig(workspacePath);

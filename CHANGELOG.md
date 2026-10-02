@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `preflight run --config <path>` and the `PREFLIGHT_CONFIG` environment variable load the config from a file outside the target repository (#100). Precedence is `--config`, then `PREFLIGHT_CONFIG`, then `<repoPath>/.preflight.json`; the sources are not merged. A relative path is resolved against the current working directory, while `workingDir`, `cwd` and `logDir` in the file stay relative to the target repository. A missing, unreadable or invalid explicit file is an error with a non-zero exit, never a silent fallback; an empty `PREFLIGHT_CONFIG` counts as unset. The result gains `config: { source: "option" | "env" | "repo" | "none", path }`, and the MCP `preflight_run` tool gains `configPath`. `batch` does not support an explicit file and `sandbox` rejects it. An explicit file can define shell commands like `.preflight.json`, so only use trusted files.
+
 ## [0.9.0] - 2026-10-02
 
 ### Changed

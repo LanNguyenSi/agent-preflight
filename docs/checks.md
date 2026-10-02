@@ -198,6 +198,22 @@ Since the log directory can be set from the process environment as well as from 
 
 `workingDir` (default `.`) is the directory checks run against, relative to the repo root; it does not change where `logDir` resolves (see above). `tddExceptions` is a list of glob patterns excluded from the TDD signal check's changed-source scan. `actFlags` and `sandbox.aptPackages`/`sandbox.pipPackages` are covered in [architecture.md](./architecture.md#act-integration) and [architecture.md#sandbox](./architecture.md#sandbox). `setup` is covered in "Setup phase"; command overrides and required checks are described below.
 
+### Config file outside the repository (`--config`, `PREFLIGHT_CONFIG`)
+
+`preflight run` can load its config from a file other than `<repoPath>/.preflight.json`, for example a shared team config or one config for many linked worktrees:
+
+```bash
+preflight run ./my-project --config ../shared/preflight.json
+PREFLIGHT_CONFIG=/srv/team/preflight.json preflight run ./my-project
+```
+
+- Precedence: `--config` > `PREFLIGHT_CONFIG` > `<repoPath>/.preflight.json`. The sources are never merged; the repo file is ignored when an explicit file is given. An empty or blank `PREFLIGHT_CONFIG` counts as unset; an empty `--config` value is an error.
+- A relative path is resolved against the current working directory of the call, not against `repoPath`. Relative `workingDir`, `cwd` and `logDir` values inside the file still refer to the target repository.
+- An explicit file that is missing, a directory, unreadable, not valid JSON or not a JSON object is an error (message on stderr, exit code 1, no check runs). There is no fallback to defaults or to the repo file. A broken repo file without an explicit file keeps the old behaviour (warning, defaults).
+- The result reports the source as `config: { "source": "option" | "env" | "repo" | "none", "path": "<file>" | null }` in `--json` output (and as a `Config:` line in the summary). `repo` names the repo file that was found, `none` means no file was used.
+- The MCP tool `preflight_run` accepts the same thing as `configPath` (relative to the server's working directory). `preflight batch` does not support it: each repo uses its own `.preflight.json`. `preflight sandbox` rejects `--config` and `PREFLIGHT_CONFIG` with an error instead of ignoring them.
+- Security: the explicit file can define shell commands (`customChecks[].command`, `commands.*`) that run on your machine, exactly like the repo file. Only point `--config`, `PREFLIGHT_CONFIG` or `configPath` at files you trust.
+
 ## Command overrides
 
 `commands.lint`, `commands.typecheck`, `commands.test` and `commands.audit` accept arrays mixing command strings and objects:
