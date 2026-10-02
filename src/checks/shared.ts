@@ -278,15 +278,21 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
     // last 65536 code units as two separate parts. Each pattern is tested
     // against each part on its own, so no pattern matches across the omitted
     // middle. Verdict lines usually sit at the end of long runner output.
-    // failRegex searches both parts whole, so a veto only gets stronger; a line
-    // cut at a window edge can still veto, which is the safe direction. The
-    // cut edges can split a line, so passRegex searches only complete lines:
-    // the partial last line of the head and the partial first line of the tail
-    // are dropped (a part without any line terminator is dropped entirely).
-    // The cut position alone decides this, so a complete line that ends exactly
-    // at the head cut or starts exactly at the tail cut is dropped too; that
-    // can only turn a pass into a fail, never the reverse. Text in the omitted
-    // middle is available in failure details but is not searched.
+    // failRegex searches both parts untrimmed, so a veto only gets stronger; a
+    // line cut at a window edge can still veto, which is the safe direction.
+    // The cut edges can split a line, so passRegex searches only complete
+    // lines: the head part ends before the terminator of its last complete
+    // line, and the tail part starts after its first line terminator (a part
+    // without any line terminator is searched as empty). A passRegex that
+    // consumes that last head terminator or requires text after it therefore
+    // does not match at the head cut, and a line whose terminator lies past
+    // the head cut or that starts exactly at the tail cut is dropped; this can
+    // only turn a pass into a fail. Lookarounds see only the part they run in:
+    // a negative lookahead at the end of the head part or a negative
+    // lookbehind at the start of the tail part cannot see the omitted text and
+    // can succeed where the whole output would not match, so exclusions belong
+    // in failRegex. Text in the omitted middle is available in failure details
+    // but is not searched.
     const windows = predicateWindows(all ?? "");
     const completed = !timedOut && !signal && !isCanceled && typeof exitCode === "number" && exitCode !== 127;
     const passRe = options.passRegex === undefined ? undefined : new RegExp(options.passRegex, "m");
@@ -2076,7 +2082,7 @@ function predicateWindows(output: string): { pass: string[]; fail: string[] } {
   const tailStart = LINE_TERMINATOR.exec(tail);
   const completeTail = tailStart ? tail.slice(tailStart.index + tailStart[0].length) : "";
   let headEnd = -1;
-  for (const m of head.matchAll(new RegExp(LINE_TERMINATOR, "g"))) headEnd = m.index + m[0].length;
+  for (const m of head.matchAll(new RegExp(LINE_TERMINATOR, "g"))) headEnd = m.index;
   const completeHead = headEnd >= 0 ? head.slice(0, headEnd) : "";
   return { pass: [completeHead, completeTail], fail: [head, tail] };
 }

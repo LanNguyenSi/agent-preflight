@@ -203,13 +203,30 @@ describe.each(kinds)("configured %s commands", (kind) => {
       expect(result.checks[0].status).toBe("pass");
     });
 
-    it("keeps the terminator of the last complete head line for passRegex", async () => {
+    it.each([
+      { name: "a pattern ending at the line end matches", passRegex: "^OK \\(3\\)$", expected: "pass" },
+      { name: "a pattern consuming the line terminator does not match", passRegex: "^OK \\(3\\)\n", expected: "fail" },
+    ] as const)("ends the head part before the terminator of its last complete line: $name", async ({ passRegex, expected }) => {
       const output = "z".repeat(half - 10) + "\nOK (3)\nqq" + "q".repeat(70_000) + "y".repeat(half);
       vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 1, all: output, timedOut: false, isCanceled: false } as never);
       const result = await runTestChecks(repoPath, {
-        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "^OK \\(3\\)\n" }] },
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex }] },
       });
-      expect(result.checks[0].status).toBe("pass");
+      expect(result.checks[0].status).toBe(expected);
+    });
+
+    it.each([
+      { name: "an empty line after the verdict", next: "FAILURES!", passRegex: "^OK \\(3\\)\n^$", expected: "fail" },
+      { name: "a lookahead past the terminator", next: "FAILURES!", passRegex: "^OK \\(3\\)\n(?!FAILURES)", expected: "fail" },
+      { name: "a real empty line after the verdict", next: "\nFAILURES!", passRegex: "^OK \\(3\\)\n^$", expected: "pass" },
+      { name: "a real complete line after the verdict", next: "PASSED\n", passRegex: "^OK \\(3\\)\n(?!FAILURES)", expected: "pass" },
+    ] as const)("does not invent a line start at the head cut: $name", async ({ next, passRegex, expected }) => {
+      const output = "x".repeat(1000) + "\nOK (3)\n" + next + "y".repeat(half) + "m".repeat(70_000) + "\n" + "z".repeat(half);
+      vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 1, all: output, timedOut: false, isCanceled: false } as never);
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex }] },
+      });
+      expect(result.checks[0].status).toBe(expected);
     });
 
     it("drops a head without any line terminator for passRegex", async () => {
