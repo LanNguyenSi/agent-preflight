@@ -38,7 +38,8 @@ async function getChangedFiles(repoPath: string): Promise<string[]> {
     tracked.forEach((f) => changed.add(f));
     // A base equal to HEAD means no divergence (HEAD equals its upstream or
     // sits on the default branch): the branch diff is empty, so keep the last
-    // commit as a floor.
+    // commit as a floor. It adds nothing when HEAD has no parent (root
+    // commit or shallow clone).
     const head = (await gitLines(repoPath, ["rev-parse", "HEAD"]))?.[0];
     if (head !== undefined && head === base) {
       const last = await gitLines(repoPath, ["diff", "--name-only", "--diff-filter=d", "HEAD~1..HEAD"]);

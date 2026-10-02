@@ -15,9 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   set is now the diff against the merge-base with the upstream or default
   branch (the base resolution used by diff-scoped secret detection, so on a
   pushed branch only the unpushed commits), plus working-tree and untracked
-  changes, ignoring deleted files. When that base equals HEAD, or no base
-  resolves, `HEAD~1..HEAD` is included as well, so the last commit is always
-  examined. When files changed but none is a `.ts`/`.js` file the check
+  changes. Files deleted within the compared range are ignored. When that base
+  equals HEAD, or no base resolves, `HEAD~1..HEAD` is included as well, as
+  long as HEAD has a parent (a root commit or shallow clone adds nothing). A
+  file committed in HEAD and deleted only in the working tree is still
+  flagged. When files changed but none is a `.ts`/`.js` file the check
   reports `skip` with a limitation. With no changed files at all the result
   stays `pass`. With `tdd` in `requiredChecks`, a change containing only
   non-`.ts`/`.js` files now blocks readiness because `skip` is not `pass`.
