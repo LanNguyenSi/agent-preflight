@@ -542,6 +542,20 @@ describe("runTddCheck", () => {
       }
     });
 
+    it("flags the last commit on a detached HEAD at origin/main", async () => {
+      const bare = await cloneOfBare();
+      try {
+        await commitFiles({ "src/a.ts": "export const a = 1;" }, "add a");
+        await git(["push", "-q", "origin", "main"]);
+        await git(["checkout", "-q", "--detach"]);
+        const result = await runTddCheck(tmpDir, defaultConfig);
+        expect(result.checks[0].status).toBe("warn");
+        expect(result.checks[0].details).toEqual(["src/a.ts"]);
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+      }
+    });
+
     it("flags every unpushed commit on main, not only the last one", async () => {
       const bare = await cloneOfBare();
       try {
