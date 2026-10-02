@@ -130,6 +130,92 @@ describe("runTddCheck", () => {
     expect(result.checks[0].details).toBeUndefined();
   });
 
+  it("reports an uncommitted modification of a tracked source when no base resolves", async () => {
+    initRepo({});
+    await initGitRepo();
+    await commitFiles({ "src/old.ts": "export const old = 1;" }, "init");
+    await commitFiles({ "README.md": "# x" }, "docs");
+    fs.writeFileSync(path.join(tmpDir, "src/old.ts"), "export const old = 2;");
+
+    const result = await runTddCheck(tmpDir, defaultConfig);
+    expect(result.checks[0].status).toBe("warn");
+    expect(result.checks[0].details).toEqual(["src/old.ts"]);
+  });
+
+  it("ignores a source deletion committed in HEAD when no base resolves", async () => {
+    initRepo({});
+    const { execa } = await import("execa");
+    await initGitRepo();
+    await commitFiles({ "src/gone.ts": "export const gone = 1;" }, "init");
+    await execa("git", ["rm", "-q", "src/gone.ts"], { cwd: tmpDir });
+    await execa("git", ["commit", "-q", "-m", "remove gone", "--no-gpg-sign"], { cwd: tmpDir });
+
+    const result = await runTddCheck(tmpDir, defaultConfig);
+    expect(result.checks[0].status).toBe("pass");
+    expect(result.checks[0].details).toBeUndefined();
+  });
+
+  it("names an untested source whose path has spaces and non-ASCII characters", async () => {
+    initRepo({});
+    await initGitRepo();
+    await commitFiles({ "README.md": "# x" }, "init");
+    await commitFiles({ "src/sp ace/ü né.ts": "export const a = 1;" }, "add unicode");
+
+    const result = await runTddCheck(tmpDir, defaultConfig);
+    expect(result.checks[0].status).toBe("warn");
+    expect(result.checks[0].details).toEqual(["src/sp ace/ü né.ts"]);
+  });
+
+  it("passes, not skips, when only test files changed", async () => {
+    initRepo({});
+    await initGitRepo();
+    await commitFiles({ "README.md": "# x" }, "init");
+    await commitFiles({ "src/foo.test.ts": "test('foo', () => {});" }, "add test only");
+
+    const result = await runTddCheck(tmpDir, defaultConfig);
+    expect(result.checks[0].status).toBe("pass");
+    expect(result.limitations).toEqual([]);
+  });
+
+  it("passes, not skips, when only configured exception files changed", async () => {
+    initRepo({});
+    await initGitRepo();
+    await commitFiles({ "README.md": "# x" }, "init");
+    await commitFiles({ "src/helpers.ts": "export const h = 1;" }, "add helpers");
+
+    const result = await runTddCheck(tmpDir, { tddExceptions: ["helpers.ts"] });
+    expect(result.checks[0].status).toBe("pass");
+    expect(result.limitations).toEqual([]);
+  });
+
+  it("skips with a limitation for docs-only changes", async () => {
+    initRepo({});
+    await initGitRepo();
+    await commitFiles({ "README.md": "# x" }, "init");
+    await commitFiles({ "README.md": "# y", "docs/a.md": "a" }, "docs");
+
+    const result = await runTddCheck(tmpDir, defaultConfig);
+    expect(result.checks[0].status).toBe("skip");
+    expect(result.checks[0].message).not.toContain("other languages");
+    expect(result.limitations.join("\n")).toContain("2 changed file(s)");
+  });
+
+  it("keeps the verdict for .ts files but adds a limitation when a PHP file changed alongside", async () => {
+    initRepo({});
+    await initGitRepo();
+    await commitFiles({ "README.md": "# x" }, "init");
+    await commitFiles({
+      "src/t.ts": "export const t = 1;",
+      "src/t.test.ts": "test('t', () => {});",
+      "src/S.php": "<?php class S {}",
+    }, "mixed");
+
+    const result = await runTddCheck(tmpDir, defaultConfig);
+    expect(result.checks[0].status).toBe("pass");
+    expect(result.limitations).toHaveLength(1);
+    expect(result.limitations[0]).toContain("tdd-test-counterpart");
+  });
+
   describe("when HEAD does not diverge from its base", () => {
     async function git(args: string[], cwd = tmpDir) {
       const { execa } = await import("execa");
@@ -177,7 +263,7 @@ describe("runTddCheck", () => {
       }
     });
 
-    it("known limitation: a pushed root commit has no parent, so its untested source is not flagged", async () => {
+    it("skips with a limitation when a pushed root commit leaves no diff range to examine", async () => {
       const bare = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-tdd-bare-"));
       try {
         await git(["init", "--bare", "-q", bare], bare);
@@ -188,7 +274,40 @@ describe("runTddCheck", () => {
         await git(["remote", "add", "origin", bare]);
         await git(["push", "-q", "-u", "origin", "main"]);
         const result = await runTddCheck(tmpDir, defaultConfig);
-        expect(result.checks[0].status).toBe("pass");
+        expect(result.checks[0].status).toBe("skip");
+        expect(result.limitations.join("\n")).toContain("diff range could not be determined");
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+      }
+    });
+
+    it("skips with a limitation on a shallow clone whose only visible commit has no parent", async () => {
+      const bare = await cloneOfBare();
+      const shallow = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-tdd-shallow-"));
+      try {
+        await commitFiles({ "src/a.ts": "export const a = 1;" }, "add a");
+        await git(["push", "-q", "origin", "main"]);
+        fs.rmSync(shallow, { recursive: true, force: true });
+        await git(["clone", "-q", "--depth", "1", `file://${bare}`, shallow], os.tmpdir());
+        const result = await runTddCheck(shallow, defaultConfig);
+        expect(result.checks[0].status).toBe("skip");
+        expect(result.limitations.join("\n")).toContain("diff range could not be determined");
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+        fs.rmSync(shallow, { recursive: true, force: true });
+      }
+    });
+
+    it("flags an untested source from the first of two commits on a feature branch pushed with -u", async () => {
+      const bare = await cloneOfBare();
+      try {
+        await git(["checkout", "-q", "-b", "feature"]);
+        await commitFiles({ "src/first.ts": "export const first = 1;" }, "add first");
+        await commitFiles({ "src/b.ts": "export const b = 1;", "src/b.test.ts": "test('b', () => {});" }, "add b with test");
+        await git(["push", "-q", "-u", "origin", "feature"]);
+        const result = await runTddCheck(tmpDir, defaultConfig);
+        expect(result.checks[0].status).toBe("warn");
+        expect(result.checks[0].details).toEqual(["src/first.ts"]);
       } finally {
         fs.rmSync(bare, { recursive: true, force: true });
       }
