@@ -117,6 +117,64 @@ describe("runTddCheck", () => {
     expect(result.checks[0].details).toBeUndefined();
   });
 
+  describe("when HEAD does not diverge from its base", () => {
+    async function git(args: string[], cwd = tmpDir) {
+      const { execa } = await import("execa");
+      return execa("git", args, { cwd });
+    }
+
+    async function cloneOfBare(): Promise<string> {
+      const bare = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-tdd-bare-"));
+      await git(["init", "--bare", "-q", bare], bare);
+      initRepo({});
+      await initGitRepo();
+      await git(["checkout", "-q", "-b", "main"]);
+      await commitFiles({ "README.md": "# x" }, "init");
+      await git(["remote", "add", "origin", bare]);
+      await git(["push", "-q", "-u", "origin", "main"]);
+      return bare;
+    }
+
+    it("flags an untested source in the commit that was just pushed on main", async () => {
+      const bare = await cloneOfBare();
+      try {
+        await commitFiles({ "src/a.ts": "export const a = 1;" }, "add a");
+        await git(["push", "-q", "origin", "main"]);
+        const result = await runTddCheck(tmpDir, defaultConfig);
+        expect(result.checks[0].status).toBe("warn");
+        expect(result.checks[0].details).toContain("src/a.ts");
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+      }
+    });
+
+    it("flags an untested source on a feature branch pushed with -u", async () => {
+      const bare = await cloneOfBare();
+      try {
+        await git(["checkout", "-q", "-b", "feature"]);
+        await commitFiles({ "src/b.ts": "export const b = 1;" }, "add b");
+        await git(["push", "-q", "-u", "origin", "feature"]);
+        const result = await runTddCheck(tmpDir, defaultConfig);
+        expect(result.checks[0].status).toBe("warn");
+        expect(result.checks[0].details).toContain("src/b.ts");
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+      }
+    });
+
+    it("flags an untested source when local main is one commit ahead of origin/main", async () => {
+      const bare = await cloneOfBare();
+      try {
+        await commitFiles({ "src/c.ts": "export const c = 1;" }, "add c");
+        const result = await runTddCheck(tmpDir, defaultConfig);
+        expect(result.checks[0].status).toBe("warn");
+        expect(result.checks[0].details).toContain("src/c.ts");
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("warns when source file has no test counterpart", async () => {
     initRepo({
       "src/foo.ts": "export const foo = 1;",
