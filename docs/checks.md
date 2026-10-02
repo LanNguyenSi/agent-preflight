@@ -878,7 +878,10 @@ the scanned directory). Everything else is not read:
   tracked files of the index being committed; a file tracked only in the real
   index that matches an ignore rule is then not listed, as it is not part of
   that commit) and removed together with the others when they are removed,
-  because it was exported for the other repository.
+  because it was exported for the other repository. Inherited
+  `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` and
+  `GIT_ICASE_PATHSPECS` are always removed for secret detection: they select no
+  repository, and while one of them is set `git check-ignore` fails on every call.
 
 ## Secret detection: obvious test-fixture values don't block
 

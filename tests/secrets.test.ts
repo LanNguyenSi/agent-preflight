@@ -2238,7 +2238,15 @@ describe("runSecretDetection — git-enumerated file set", () => {
       expect(result.limitations.some((l) => l.includes("could not classify"))).toBe(false);
     });
 
-    it("ignores an inherited pathspec mode switch: an ignored tree below a subdirectory target is neither read nor blocking", async () => {
+    // Each name is spelled out here rather than imported, so removing one from
+    // the scrubbed list in the source fails its own case. Each case sets
+    // exactly one switch; git's check-ignore rejects every call under any of them.
+    it.each([
+      "GIT_LITERAL_PATHSPECS",
+      "GIT_GLOB_PATHSPECS",
+      "GIT_NOGLOB_PATHSPECS",
+      "GIT_ICASE_PATHSPECS",
+    ])("ignores an inherited pathspec mode switch %s: an ignored tree below a subdirectory target is neither read nor blocking", async (name) => {
       const repoPath = makeTempDir("preflight-secrets-pathspec-env-");
       gitInit(repoPath);
       fs.mkdirSync(path.join(repoPath, "sub", "ignored"), { recursive: true });
@@ -2247,14 +2255,14 @@ describe("runSecretDetection — git-enumerated file set", () => {
       gitCommitAll(repoPath);
       fs.writeFileSync(path.join(repoPath, "sub", "ignored", "s.js"), secretLine);
 
-      const saved = process.env.GIT_LITERAL_PATHSPECS;
-      process.env.GIT_LITERAL_PATHSPECS = "1";
+      const saved = process.env[name];
+      process.env[name] = "1";
       try {
         const { result, readPaths } = await scanWithReadSpy(path.join(repoPath, "sub"));
         expect(readPaths.some((p) => p.includes(`${path.sep}ignored${path.sep}`))).toBe(false);
         expect(result.checks[0]?.status).toBe("pass");
       } finally {
-        if (saved === undefined) delete process.env.GIT_LITERAL_PATHSPECS; else process.env.GIT_LITERAL_PATHSPECS = saved;
+        if (saved === undefined) delete process.env[name]; else process.env[name] = saved;
       }
     });
 
