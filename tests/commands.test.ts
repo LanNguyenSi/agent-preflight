@@ -130,22 +130,45 @@ describe.each(kinds)("configured %s commands", (kind) => {
   if (kind === "test") {
     const half = 65_536;
     const boundaryCases = [
-      { name: "pass marker at the last head code unit", output: "x".repeat(half - 1) + "P" + "x".repeat(70_000) + "y".repeat(half), expected: "pass" },
-      { name: "pass marker at the first omitted code unit", output: "x".repeat(half) + "P" + "x".repeat(70_000) + "y".repeat(half), expected: "fail" },
-      { name: "pass marker at the last omitted code unit", output: "x".repeat(half) + "x".repeat(70_000) + "P" + "y".repeat(half), expected: "fail" },
-      { name: "pass marker at the first tail code unit", output: "x".repeat(half) + "x".repeat(70_000) + "P" + "y".repeat(half - 1), expected: "pass" },
-      { name: "pass marker at the very end of a long output", output: "x".repeat(200_000) + "P", expected: "pass" },
-      { name: "veto marker at the very end of a long output", output: "P" + "x".repeat(200_000) + "F", expected: "fail" },
-      { name: "veto marker only in the omitted middle", output: "P" + "x".repeat(70_000) + "F" + "x".repeat(70_000) + "y".repeat(half), expected: "pass" },
-      { name: "pass marker after a short lead-in", output: "x".repeat(70_000) + "P", expected: "pass" },
-      { name: "pass marker at the start of a long output", output: "P" + "x".repeat(200_000), expected: "pass" },
-      { name: "pass after a surrogate pair at the last head code unit", output: "😀" + "x".repeat(half - 3) + "P" + "x".repeat(70_000) + "y".repeat(half), expected: "pass" },
+      { name: "pass line complete inside the head", output: "P\n" + "x".repeat(half - 2) + "x".repeat(70_000) + "y".repeat(half), expected: "pass" },
+      { name: "pass marker in the partial last head line", output: "\n" + "x".repeat(half - 2) + "P" + "x".repeat(70_000) + "y".repeat(half), expected: "fail" },
+      { name: "pass line in the omitted middle", output: "x".repeat(half) + "\nP\n" + "x".repeat(70_000) + "y".repeat(half), expected: "fail" },
+      { name: "pass marker in the partial first tail line", output: "x".repeat(half + 70_000) + "P" + "x".repeat(half - 2), expected: "fail" },
+      { name: "pass line complete inside the tail", output: "x".repeat(200_000) + "\nP\n" + "x".repeat(10), expected: "pass" },
+      { name: "pass line as the very last line of a long output", output: "x".repeat(200_000) + "\nP", expected: "pass" },
+      { name: "veto line at the very end of a long output", output: "P\n" + "x".repeat(200_000) + "\nF", expected: "fail" },
+      { name: "veto marker in the partial first tail line", output: "P\n" + "x".repeat(100_000) + "F" + "x".repeat(half - 2), expected: "fail" },
+      { name: "veto marker only in the omitted middle", output: "P\n" + "x".repeat(70_000) + "F" + "x".repeat(70_000) + "\n" + "y".repeat(half), expected: "pass" },
+      { name: "pass line behind a short lead-in", output: "x".repeat(70_000) + "\nP", expected: "pass" },
+      { name: "pass line at the start of a long output", output: "P\n" + "x".repeat(200_000), expected: "pass" },
     ] as const;
 
     it.each(boundaryCases)("searches the first and last 65536 UTF-16 code units: $name", async ({ output, expected }) => {
       vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 1, all: output, timedOut: false, isCanceled: false } as never);
       const result = await runTestChecks(repoPath, {
         logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "P", failRegex: "F" }] },
+      });
+      expect(result.checks[0].status).toBe(expected);
+    });
+
+    it("does not let a cut line turn 'NOT OK (' into a '^OK (' pass", async () => {
+      const tail = "OK (3 tests, 1 failure)\n";
+      const output = "x".repeat(70_000) + "\nNOT " + tail + "z".repeat(half - tail.length);
+      vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 1, all: output, timedOut: false, isCanceled: false } as never);
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "^OK \\(" }] },
+      });
+      expect(result.checks[0].status).toBe("fail");
+    });
+
+    it.each([
+      { name: "exactly 131072 code units is searched whole", pad: 0, expected: "pass" },
+      { name: "131073 code units is split at the midpoint", pad: 1, expected: "fail" },
+    ] as const)("pins the whole-output threshold: $name", async ({ pad, expected }) => {
+      const output = "x".repeat(half - 2) + "ABCD" + "x".repeat(half - 2 + pad);
+      vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0, all: output, timedOut: false, isCanceled: false } as never);
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "ABCD" }] },
       });
       expect(result.checks[0].status).toBe(expected);
     });
