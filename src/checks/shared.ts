@@ -281,8 +281,11 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
     // window's cut edges can split a line, so passRegex searches only complete
     // lines: the partial last line of the head and the partial first line of
     // the tail are dropped (a tail without any line terminator is dropped
-    // entirely). Text in the omitted middle is available in failure details
-    // but is not searched.
+    // entirely). The cut position alone decides this, so a complete line that
+    // ends exactly at the head cut or starts exactly at the tail cut is
+    // dropped too; that can only turn a pass into a fail, never the reverse.
+    // Text in the omitted middle is available in failure details but is not
+    // searched.
     const { pass: passOutput, fail: failOutput } = predicateWindows(all ?? "");
     const completed = !timedOut && !signal && !isCanceled && typeof exitCode === "number" && exitCode !== 127;
     const passMatched = options.passRegex === undefined || new RegExp(options.passRegex, "m").test(passOutput);
