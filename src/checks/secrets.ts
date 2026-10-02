@@ -446,10 +446,15 @@ export async function runSecretDetection(
 
   // `git check-ignore` over just the finding files (not the whole tree).
   const uniqueFiles = [...new Set(findings.map((f) => f.file))];
-  const { gitAvailable, ignoredUntracked } = await classifyIgnored(git, uniqueFiles);
+  const { gitAvailable, ignoredUntracked, unclassified } = await classifyIgnored(git, uniqueFiles);
   if (findings.length > 0 && !gitAvailable) {
     limitations.push(
       "secret-detection: not a git repository (or git unavailable); findings reported as non-blocking warnings",
+    );
+  }
+  if (unclassified > 0) {
+    limitations.push(
+      `secret-detection: git could not classify ${unclassified} path(s); they are treated as committable (eligible to block)`,
     );
   }
 
@@ -536,31 +541,58 @@ export async function runSecretDetection(
  * Resolve which of `relFiles` are gitignored-and-untracked. `git
  * check-ignore` (without `--no-index`) lists a path only when an ignore
  * rule excludes it AND it is not already in the index, which is exactly
- * the "cannot leak via git" set. A 128 exit (not a repo / fatal git
- * error) or a missing `git` binary yields `gitAvailable: false`, and the
- * caller then fails safe by treating every finding as blocking-eligible.
+ * the "cannot leak via git" set. Paths travel NUL-separated (newlines and
+ * non-ASCII names survive verbatim) and each is prefixed with `./`, which
+ * `check-ignore` echoes back unchanged: a file name that starts with `:`
+ * (`:(exclude)x.js`) would otherwise be parsed as pathspec magic, which
+ * `check-ignore` rejects with a fatal error. `--literal-pathspecs` is not
+ * an option here, `check-ignore` refuses that magic too.
+ *
+ * `gitAvailable: false` is reserved for "this is not a git work tree" (or
+ * git cannot run): the caller then reports every finding as non-blocking.
+ * Inside a confirmed work tree a path git cannot classify (the whole batch
+ * fails because of it, for example a path beyond a symbolic link) is never
+ * allowed to downgrade other findings: the batch is retried path by path
+ * and each path that still fails is simply not in the ignored set, so it
+ * stays eligible to block.
  */
 async function classifyIgnored(
   git: GitContext,
   relFiles: string[],
-): Promise<{ gitAvailable: boolean; ignoredUntracked: Set<string> }> {
-  if (relFiles.length === 0) return { gitAvailable: true, ignoredUntracked: new Set() };
-  try {
-    const res = await gitExec(git, ["check-ignore", "--stdin"], {
-      input: relFiles.join("\n"),
+): Promise<{ gitAvailable: boolean; ignoredUntracked: Set<string>; unclassified: number }> {
+  const none = (gitAvailable: boolean, unclassified = 0) => ({
+    gitAvailable,
+    ignoredUntracked: new Set<string>(),
+    unclassified,
+  });
+  if (relFiles.length === 0) return { ...none(true) };
+  const checkIgnore = (paths: string[]) =>
+    gitExec(git, ["check-ignore", "--stdin", "-z"], {
+      input: paths.map((p) => `./${p}\0`).join(""),
+      raw: true,
     });
-    // 0 = at least one path ignored, 1 = none ignored — both are a
-    // healthy repo. Anything else (128 = not a repo / fatal) is "unknown".
-    if (res.exitCode !== 0 && res.exitCode !== 1) {
-      return { gitAvailable: false, ignoredUntracked: new Set() };
+  const parse = (stdout: string) =>
+    stdout.split("\0").filter((p) => p.length > 0).map((p) => (p.startsWith("./") ? p.slice(2) : p));
+  try {
+    const res = await checkIgnore(relFiles);
+    // 0 = at least one path ignored, 1 = none ignored: a healthy repo.
+    if (res.exitCode === 0 || res.exitCode === 1) {
+      return { gitAvailable: true, ignoredUntracked: new Set(parse(res.stdout)), unclassified: 0 };
     }
-    const ignored = new Set(
-      res.stdout.split("\n").map((s) => s.trim()).filter(Boolean),
-    );
-    return { gitAvailable: true, ignoredUntracked: ignored };
+    // Anything else (128 = fatal): not a work tree, or one path poisons the batch.
+    const inside = await gitExec(git, ["rev-parse", "--is-inside-work-tree"]);
+    if (inside.exitCode !== 0 || inside.stdout.trim() !== "true") return none(false);
+    const ignored = new Set<string>();
+    let unclassified = 0;
+    for (const rel of relFiles) {
+      const one = await checkIgnore([rel]);
+      if (one.exitCode === 0) for (const p of parse(one.stdout)) ignored.add(p);
+      else if (one.exitCode !== 1) unclassified++;
+    }
+    return { gitAvailable: true, ignoredUntracked: ignored, unclassified };
   } catch {
     // git binary missing (ENOENT) or spawn failure.
-    return { gitAvailable: false, ignoredUntracked: new Set() };
+    return none(false);
   }
 }
 
@@ -728,17 +760,41 @@ function existsOnDisk(fullPath: string): boolean {
  * Scan a git-listed file set with the same filters the walk applies: a
  * path is skipped when any segment (directory or file name) is in
  * SKIP_DIRS, and file-level filters (`isTextFile`, `IGNORE_FILES`, size
- * cap) are shared via `scanFile`. Only regular files are read: symlinks
- * (tracked links are listed by git) are not followed, exactly like the
- * walk, and gitlink/submodule entries and nested repositories (a
+ * cap) are shared via `scanFile`. Only regular files are read, and only
+ * when every directory between `root` and the file is a real directory:
+ * a symlink is never followed, neither as the file itself nor as any
+ * parent directory (git lists a tracked path even when its directory was
+ * replaced on disk by a symlink, possibly to a tree outside the
+ * repository), exactly like the walk, which never descends a symlinked
+ * directory. Gitlink/submodule entries and nested repositories (a
  * directory, not a file) are skipped, since their contents are not
  * committable into this repository. A path git lists but that no longer
  * exists in the work tree (deleted, not yet staged) is skipped.
  */
 function scanFileList(relPaths: string[], root: string, findings: Finding[]): void {
+  // Verdict per directory prefix ("a", "a/b"): is it a real directory
+  // (not a symlink) whose own parents all are? Shared across the run.
+  const realDirs = new Map<string, boolean>();
+  const isRealDir = (segments: string[]): boolean => {
+    if (segments.length === 0) return true;
+    const key = segments.join("/");
+    const cached = realDirs.get(key);
+    if (cached !== undefined) return cached;
+    let ok = false;
+    if (isRealDir(segments.slice(0, -1))) {
+      try {
+        ok = fs.lstatSync(path.join(root, ...segments)).isDirectory();
+      } catch {
+        ok = false;
+      }
+    }
+    realDirs.set(key, ok);
+    return ok;
+  };
   for (const rel of relPaths) {
     const segments = rel.split("/");
     if (segments.some((seg) => SKIP_DIRS.has(seg))) continue;
+    if (!isRealDir(segments.slice(0, -1))) continue;
     const fullPath = path.join(root, ...segments);
     try {
       if (!fs.lstatSync(fullPath).isFile()) continue;

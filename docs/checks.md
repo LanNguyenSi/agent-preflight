@@ -816,8 +816,12 @@ the scanned directory). Everything else is not read:
   appear. There is no opt-in to scan them. A tracked file stays in scope even
   when an ignore rule matches it (for example a force-added `.env`).
 - **Deleted and non-regular entries are skipped.** A path git lists that is
-  missing from the work tree is ignored; symlinks are not followed (as
-  before), so a tracked link pointing outside the repository is never read.
+  missing from the work tree is ignored. Symlinks are never followed, as
+  before: neither a link that is itself the listed file, nor a link standing in
+  for any directory on the way to it (a tracked directory replaced on disk by a
+  symlink). A listed path is read only when every directory between the
+  scanned directory and the file is a real directory, so nothing outside the
+  repository, or behind a link, is read.
 - **Existing filters still apply to the listed set.** A path with any segment
   in the built-in skip list (`node_modules`, `vendor`, `dist`, `.venv`,
   `.next`, `.cache`, ...) is skipped even when tracked, and the file-level
@@ -828,11 +832,21 @@ the scanned directory). Everything else is not read:
   root, only that subtree is scanned and reported paths are relative to it.
 - **Submodules and nested repositories** are not scanned: git lists them as a
   single directory entry, and their files cannot be committed into this
-  repository.
+  repository. Scan them from inside, as their own repositories; this also
+  applies when a push recurses into submodules (`push --recurse-submodules`),
+  which publishes their commits too.
 - **Submodule side effect.** Because submodule files are no longer walked,
   a finding inside one can no longer make `git check-ignore` fail and
   downgrade every finding in the repository to a non-blocking warning; a new
   secret in the parent repository blocks again.
+- **A path git cannot classify never downgrades another finding.** The ignore
+  classification runs `git check-ignore` with NUL-separated paths, each given
+  as `./<path>` so a file name starting with `:` is not read as pathspec magic.
+  Inside a work tree, if git still fails on the batch, each path is checked on
+  its own and a path git cannot classify stays eligible to block (the
+  limitations list says how many). Only a directory that is not a git work
+  tree (or a missing `git`) reports every finding as a non-blocking warning
+  with the "not a git repository" limitation.
 - **Fallback.** The check falls back to walking the directory tree (previous
   behaviour: findings outside git are non-blocking, and gitignored files are
   scanned and warn) rather than scanning nothing whenever the git listing
