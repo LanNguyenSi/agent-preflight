@@ -616,7 +616,7 @@ interface DiffBaseCandidate {
  * If every candidate is either unresolvable or an untrusted non-diverged
  * guess, `null` is returned so the caller fails safe.
  */
-async function resolveDiffBase(repoPath: string): Promise<string | null> {
+export async function resolveDiffBase(repoPath: string): Promise<string | null> {
   const headSha = (await runGit(repoPath, ["rev-parse", "HEAD"]))?.trim() ?? null;
   const candidates: DiffBaseCandidate[] = [];
   const upstream = await runGit(repoPath, [

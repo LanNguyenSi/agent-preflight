@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The `tdd-test-counterpart` check (#99) reported `pass` ("No checkable source
+  files changed") for PHP- or Python-only changes, uncommitted work and
+  multi-commit branches, which raised the confidence score. It now collects
+  changed files from the branch diff against the merge-base (the base
+  resolution used by diff-scoped secret detection) plus working-tree and
+  untracked changes, ignoring deleted files, and falls back to
+  `HEAD~1..HEAD` plus working-tree changes when no base resolves. When files
+  changed but none is a `.ts`/`.js` file it reports `skip` with a limitation.
+  With no changed files at all the result stays `pass`.
+
 ## [0.8.0] - 2026-10-01
 
 ### Added

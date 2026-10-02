@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { CheckResult, PreflightConfig } from "../types.js";
 import { CheckSetResult } from "./shared.js";
+import { resolveDiffBase } from "./secrets.js";
 
 const DEFAULT_EXCEPTIONS = ["index.ts", "index.js", "types.ts", "types.js", "constants.ts", "constants.js"];
 
@@ -9,23 +10,40 @@ const SOURCE_EXT = /\.(ts|js)$/;
 const TEST_PATTERN = /\.(test|spec)\.(ts|js)$/;
 const IGNORED_DIRS = new Set(["node_modules", "dist", "build", ".git", "coverage"]);
 
-/** Find changed source files via git diff */
-async function getChangedSourceFiles(repoPath: string): Promise<string[]> {
+/** Run git and return the non-empty output lines, or null on failure. */
+async function gitLines(cwd: string, args: string[]): Promise<string[] | null> {
   const { execa } = await import("execa");
-
-  // Try diff against HEAD~1, fall back to all tracked files
   const { stdout, exitCode } = await execa(
-    "git", ["diff", "--name-only", "HEAD~1..HEAD"],
-    { cwd: repoPath, reject: false },
+    "git", ["-c", "core.quotePath=false", ...args],
+    { cwd, reject: false },
   );
+  if (exitCode !== 0) return null;
+  return stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+}
 
-  const files = exitCode === 0
-    ? stdout.trim().split("\n").filter(Boolean)
-    : [];
-
-  return files
-    .filter((f) => SOURCE_EXT.test(f))
-    .filter((f) => !TEST_PATTERN.test(f));
+/**
+ * Every file the current work changed, relative to the git root: the branch
+ * diff against the merge-base (same base resolution as diff-scoped secret
+ * detection) including working-tree edits, plus untracked-and-unignored
+ * files. Deleted files are excluded. Without a resolvable base the diff falls
+ * back to HEAD~1..HEAD plus working-tree changes against HEAD.
+ */
+async function getChangedFiles(repoPath: string): Promise<string[]> {
+  const changed = new Set<string>();
+  const base = await resolveDiffBase(repoPath);
+  const tracked = base !== null
+    ? await gitLines(repoPath, ["diff", "--name-only", "--diff-filter=d", base])
+    : null;
+  if (tracked !== null) {
+    tracked.forEach((f) => changed.add(f));
+  } else {
+    const committed = await gitLines(repoPath, ["diff", "--name-only", "--diff-filter=d", "HEAD~1..HEAD"]);
+    const working = await gitLines(repoPath, ["diff", "--name-only", "--diff-filter=d", "HEAD"]);
+    [...(committed ?? []), ...(working ?? [])].forEach((f) => changed.add(f));
+  }
+  const untracked = await gitLines(repoPath, ["ls-files", "--others", "--exclude-standard"]);
+  (untracked ?? []).forEach((f) => changed.add(f));
+  return [...changed];
 }
 
 /** Return git's real worktree root so linked worktrees and path aliases agree. */
@@ -112,17 +130,37 @@ export async function runTddCheck(
   let targetPath: string;
   try { targetPath = fs.realpathSync(repoPath); } catch { targetPath = repoPath; }
   const gitRoot = await getGitRoot(targetPath);
-  const changedFiles = gitRoot
-    ? (await getChangedSourceFiles(gitRoot))
+  const allChanged = gitRoot
+    ? (await getChangedFiles(gitRoot))
       .map((file) => toTargetRelativePath(gitRoot, targetPath, file))
       .filter((file): file is string => file !== null)
     : [];
+  const changedFiles = allChanged
+    .filter((f) => SOURCE_EXT.test(f))
+    .filter((f) => !TEST_PATTERN.test(f));
   const exceptions = new Set(config.tddExceptions ?? DEFAULT_EXCEPTIONS);
 
   // Filter out exceptions
   const filesToCheck = changedFiles.filter(
     (f) => !exceptions.has(path.basename(f)),
   );
+
+  // Changed files exist but none is a .ts/.js file: the check cannot judge
+  // them, so it must not report a pass that raises confidence.
+  if (allChanged.length > 0 && !allChanged.some((f) => SOURCE_EXT.test(f))) {
+    checks.push({
+      name: "tdd-test-counterpart",
+      kind: "tdd",
+      status: "skip",
+      message: "Changed files are not .ts/.js sources; test counterparts were not checked",
+      durationMs: Date.now() - start,
+      confidenceContribution: 0.05,
+    });
+    limitations.push(
+      "tdd-test-counterpart only checks .ts/.js sources; changed files in other languages were not checked",
+    );
+    return { checks, limitations };
+  }
 
   if (filesToCheck.length === 0) {
     checks.push({

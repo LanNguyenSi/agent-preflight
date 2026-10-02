@@ -35,7 +35,7 @@ If no checks run, the score is 0.
 | Dependency audit | 0.15 |
 | CI simulation (single `act --dryrun` check) | 0.25 |
 | Secret detection | 0.10 |
-| TDD signal (warn or pass) | 0.05 to 0.10 |
+| TDD signal (warn or pass; a `skip` for non-`.ts`/`.js` changes adds no pass weight) | 0.05 to 0.10 |
 | Custom checks | 0.10 |
 | Git state, clean worktree | 0.05 |
 | Git state, protected branch | 0.05 |

@@ -63,6 +63,58 @@ describe("runTddCheck", () => {
     expect(result.checks[0].status).toBe("pass");
   });
 
+  it("skips with a limitation when only non-.ts/.js files changed", async () => {
+    initRepo({});
+    await initGitRepo();
+    await commitFiles({ "README.md": "# x" }, "init");
+    await commitFiles({ "src/Service.php": "<?php class Service {}" }, "add php");
+
+    const result = await runTddCheck(tmpDir, defaultConfig);
+    expect(result.checks).toHaveLength(1);
+    expect(result.checks[0].status).toBe("skip");
+    expect(result.limitations.join("\n")).toContain("tdd-test-counterpart");
+  });
+
+  it("reports an untested source added in the first of two branch commits", async () => {
+    initRepo({});
+    const { execa } = await import("execa");
+    await initGitRepo();
+    await commitFiles({ "README.md": "# x" }, "init");
+    const { stdout: defaultBranch } = await execa("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: tmpDir });
+    expect(["main", "master"]).toContain(defaultBranch.trim());
+    await execa("git", ["checkout", "-b", "feature"], { cwd: tmpDir });
+    await commitFiles({ "src/first.ts": "export const first = 1;" }, "add first");
+    await commitFiles({ "docs/notes.md": "notes" }, "add notes");
+
+    const result = await runTddCheck(tmpDir, defaultConfig);
+    expect(result.checks[0].status).toBe("warn");
+    expect(result.checks[0].details).toContain("src/first.ts");
+  });
+
+  it("reports an uncommitted untested source change", async () => {
+    initRepo({});
+    await initGitRepo();
+    await commitFiles({ "src/old.ts": "export const old = 1;", "src/old.test.ts": "test('o', () => {});" }, "init");
+    await commitFiles({ "README.md": "# x" }, "docs");
+    fs.writeFileSync(path.join(tmpDir, "src/fresh.ts"), "export const fresh = 1;");
+
+    const result = await runTddCheck(tmpDir, defaultConfig);
+    expect(result.checks[0].status).toBe("warn");
+    expect(result.checks[0].details).toContain("src/fresh.ts");
+  });
+
+  it("does not treat a deleted source file as needing a test", async () => {
+    initRepo({});
+    const { execa } = await import("execa");
+    await initGitRepo();
+    await commitFiles({ "src/gone.ts": "export const gone = 1;" }, "init");
+    await commitFiles({ "README.md": "# x" }, "docs");
+    await execa("git", ["rm", "-q", "src/gone.ts"], { cwd: tmpDir });
+
+    const result = await runTddCheck(tmpDir, defaultConfig);
+    expect(result.checks[0].status).not.toBe("warn");
+  });
+
   it("warns when source file has no test counterpart", async () => {
     initRepo({
       "src/foo.ts": "export const foo = 1;",
