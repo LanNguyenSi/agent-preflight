@@ -74,7 +74,7 @@ async function nearestDiffBase(repoPath: string): Promise<string | null> {
     const count = (await gitLines(repoPath, ["rev-list", "--count", `${mb}..HEAD`]))?.[0];
     bases.push({ mb, distance: count === undefined ? Number.POSITIVE_INFINITY : Number(count) });
   };
-  const secretsBase = await resolveDiffBase(repoPath);
+  const secretsBase = await resolveDiffBase({ repoPath, env: process.env });
   const fromCopy = upstream !== undefined && copies.has(upstream)
     && secretsBase === (await gitLines(repoPath, ["merge-base", "HEAD", upstream]))?.[0];
   if (secretsBase !== null && !fromCopy) await consider(secretsBase);
