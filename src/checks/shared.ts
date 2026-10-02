@@ -273,10 +273,14 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
       return { limitation: options.missingLimitation };
     }
 
-    // Limit predicate work to the first 65536 UTF-16 code units of combined
-    // output. Text beyond that bound is available in failure details but is
-    // not searched for a pass or veto marker.
-    const predicateOutput = (all ?? "").slice(0, 65_536);
+    // Limit predicate work to a bounded window of the combined output: the
+    // whole output up to 131072 UTF-16 code units, otherwise the first and the
+    // last 65536 joined by a newline so no pattern matches across the omitted
+    // middle. Verdict lines usually sit at the end of long runner output.
+    // Trade-off: the tail starts at an arbitrary offset, so a "^" anchor can
+    // match inside a line that was cut there. Text in the omitted middle is
+    // available in failure details but is not searched.
+    const predicateOutput = predicateWindow(all ?? "");
     const completed = !timedOut && !signal && !isCanceled && typeof exitCode === "number" && exitCode !== 127;
     const passMatched = options.passRegex === undefined || new RegExp(options.passRegex, "m").test(predicateOutput);
     const failMatched = options.failRegex !== undefined && new RegExp(options.failRegex, "m").test(predicateOutput);
@@ -2050,4 +2054,11 @@ async function runSetupCommand(
   );
 
   return { exitCode: exitCode ?? 1, timedOut: Boolean(timedOut), output: all };
+}
+
+const PREDICATE_WINDOW_PART = 65_536;
+
+function predicateWindow(output: string): string {
+  if (output.length <= PREDICATE_WINDOW_PART * 2) return output;
+  return `${output.slice(0, PREDICATE_WINDOW_PART)}\n${output.slice(-PREDICATE_WINDOW_PART)}`;
 }

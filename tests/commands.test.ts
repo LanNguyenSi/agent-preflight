@@ -128,21 +128,42 @@ describe.each(kinds)("configured %s commands", (kind) => {
   });
 
   if (kind === "test") {
+    const half = 65_536;
     const boundaryCases = [
-      { name: "pass marker at the last included code unit", output: "x".repeat(65_535) + "P", expected: "pass" },
-      { name: "pass marker at the first excluded code unit", output: "x".repeat(65_536) + "P", expected: "fail" },
-      { name: "veto marker at the last included code unit", output: "P" + "x".repeat(65_534) + "F", expected: "fail" },
-      { name: "veto marker at the first excluded code unit", output: "P" + "x".repeat(65_535) + "F", expected: "pass" },
-      { name: "pass after a surrogate pair at the last included code unit", output: "😀" + "x".repeat(65_533) + "P", expected: "pass" },
-      { name: "pass after a surrogate pair at the first excluded code unit", output: "😀" + "x".repeat(65_534) + "P", expected: "fail" },
+      { name: "pass marker at the last head code unit", output: "x".repeat(half - 1) + "P" + "x".repeat(70_000) + "y".repeat(half), expected: "pass" },
+      { name: "pass marker at the first omitted code unit", output: "x".repeat(half) + "P" + "x".repeat(70_000) + "y".repeat(half), expected: "fail" },
+      { name: "pass marker at the last omitted code unit", output: "x".repeat(half) + "x".repeat(70_000) + "P" + "y".repeat(half), expected: "fail" },
+      { name: "pass marker at the first tail code unit", output: "x".repeat(half) + "x".repeat(70_000) + "P" + "y".repeat(half - 1), expected: "pass" },
+      { name: "pass marker at the very end of a long output", output: "x".repeat(200_000) + "P", expected: "pass" },
+      { name: "veto marker at the very end of a long output", output: "P" + "x".repeat(200_000) + "F", expected: "fail" },
+      { name: "veto marker only in the omitted middle", output: "P" + "x".repeat(70_000) + "F" + "x".repeat(70_000) + "y".repeat(half), expected: "pass" },
+      { name: "pass marker after a short lead-in", output: "x".repeat(70_000) + "P", expected: "pass" },
+      { name: "pass marker at the start of a long output", output: "P" + "x".repeat(200_000), expected: "pass" },
+      { name: "pass after a surrogate pair at the last head code unit", output: "😀" + "x".repeat(half - 3) + "P" + "x".repeat(70_000) + "y".repeat(half), expected: "pass" },
     ] as const;
 
-    it.each(boundaryCases)("searches only the first 65536 UTF-16 code units: $name", async ({ output, expected }) => {
+    it.each(boundaryCases)("searches the first and last 65536 UTF-16 code units: $name", async ({ output, expected }) => {
       vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 1, all: output, timedOut: false, isCanceled: false } as never);
       const result = await runTestChecks(repoPath, {
         logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "P", failRegex: "F" }] },
       });
       expect(result.checks[0].status).toBe(expected);
+    });
+
+    it("does not match a pattern across the omitted middle", async () => {
+      const output = "x".repeat(half - 2) + "AB" + "x".repeat(70_000) + "CD" + "y".repeat(half - 2);
+      vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0, all: output, timedOut: false, isCanceled: false } as never);
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "ABCD" }] },
+      });
+      expect(result.checks[0].status).toBe("fail");
+    });
+
+    it("finds a real verdict line behind more than 128 KiB of output", async () => {
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "head -c 150000 /dev/zero | tr '\\0' x; printf '\\nOK (3 tests)\\n'; exit 1", passRegex: "^OK \\(" }] },
+      });
+      expect(result.checks[0].status).toBe("pass");
     });
   }
 

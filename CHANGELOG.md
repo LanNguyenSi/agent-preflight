@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `passRegex` and `failRegex` now search the first and the last 65536 UTF-16
+  code units of long combined output (the whole output up to 131072), so
+  verdict lines printed at the end of long runner output are no longer missed
+  (#97). Text in the omitted middle is still not searched.
+
 ## [0.8.0] - 2026-10-01
 
 ### Added
