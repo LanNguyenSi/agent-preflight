@@ -878,7 +878,7 @@ the scanned directory). Everything else is not read:
   tracked files of the index being committed; a file tracked only in the real
   index that matches an ignore rule is then not listed, as it is not part of
   that commit) and removed together with the others when they are removed,
-  because it was exported for the other repository. Inherited
+  because it was exported for the other repository. `GIT_INDEX_FILE` is not checked on its own: when it is the only inherited variable that belongs to another repository (for example a hook of repository A scanning repository B), that index is used, and an ignored file force-added in B but not tracked by that index is then not listed. Inherited
   `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` and
   `GIT_ICASE_PATHSPECS` are always removed for secret detection: they select no
   repository, and while one of them is set `git check-ignore` fails on every call.
