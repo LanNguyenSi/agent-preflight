@@ -1959,4 +1959,89 @@ describe("runSecretDetection — git-enumerated file set", () => {
     expect(result.checks[0]?.status).toBe("pass");
     expect(result.checks[0]?.details).toEqual([]);
   });
+
+  /** A bare repository whose work tree is a separate directory (dotfile-manager style). */
+  function makeBarePlusWorktree(): { bare: string; work: string } {
+    const bare = makeTempDir("preflight-secrets-bare-");
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main"], { cwd: bare, stdio: "ignore" });
+    const work = makeTempDir("preflight-secrets-bare-work-");
+    fs.writeFileSync(path.join(work, ".gitignore"), "ign/\n");
+    fs.mkdirSync(path.join(work, "ign"));
+    fs.writeFileSync(path.join(work, "ign", "i.js"), secretLine);
+    fs.writeFileSync(path.join(work, "leak.js"), secretLine);
+    execFileSync(
+      "git",
+      ["--git-dir", bare, "--work-tree", work, "add", ".gitignore", "leak.js"],
+      { cwd: work, stdio: "ignore" },
+    );
+    return { bare, work };
+  }
+
+  it("keeps GIT_DIR and GIT_WORK_TREE of a bare repository with a separate work tree", async () => {
+    const { bare, work } = makeBarePlusWorktree();
+
+    const result = await withEnv({ GIT_DIR: bare, GIT_WORK_TREE: work }, () =>
+      runSecretDetection(work),
+    );
+
+    // The staged secret is committable and blocks; the ignored file is not
+    // read, which also shows the git listing (not the walk) was used.
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["leak.js:1"]);
+  });
+
+  it("works with the environment git exports to a pre-commit hook of such a repository", async () => {
+    const { bare, work } = makeBarePlusWorktree();
+
+    // As exported to a hook by `git --git-dir=... --work-tree=... commit`.
+    const result = await withEnv(
+      { GIT_DIR: bare, GIT_WORK_TREE: work, GIT_INDEX_FILE: path.join(bare, "index"), GIT_PREFIX: "" },
+      () => runSecretDetection(work),
+    );
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["leak.js:1"]);
+  });
+
+  it("uses the git listing for a repository with a separate git directory (.git file)", async () => {
+    const gitDir = path.join(makeTempDir("preflight-secrets-sepgit-dir-"), "repo.git");
+    const repoPath = makeTempDir("preflight-secrets-sepgit-");
+    execFileSync("git", ["init", "-q", "-b", "main", "--separate-git-dir", gitDir], {
+      cwd: repoPath,
+      stdio: "ignore",
+    });
+    expect(fs.statSync(path.join(repoPath, ".git")).isFile()).toBe(true);
+    fs.writeFileSync(path.join(repoPath, ".gitignore"), "ign/\n");
+    fs.mkdirSync(path.join(repoPath, "ign"));
+    fs.writeFileSync(path.join(repoPath, "ign", "i.js"), secretLine);
+    fs.writeFileSync(path.join(repoPath, "leak.js"), secretLine);
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["leak.js:1"]);
+  });
+
+  it("uses the git listing in a linked worktree whose GIT_DIR points at its own git directory", async () => {
+    const main = makeTempDir("preflight-secrets-linked-main-");
+    gitInit(main);
+    fs.writeFileSync(path.join(main, ".gitignore"), "ign/\n");
+    fs.writeFileSync(path.join(main, "a.js"), "export const a = 1;\n");
+    gitCommitAll(main);
+    const linked = path.join(makeTempDir("preflight-secrets-linked-parent-"), "wt");
+    git(main, "worktree", "add", "-q", "-b", "wt", linked);
+    fs.mkdirSync(path.join(linked, "ign"));
+    fs.writeFileSync(path.join(linked, "ign", "i.js"), secretLine);
+    fs.writeFileSync(path.join(linked, "leak.js"), secretLine);
+    const linkedGitDir = path.join(main, ".git", "worktrees", "wt");
+    expect(fs.existsSync(linkedGitDir)).toBe(true);
+
+    const result = await withEnv(
+      { GIT_DIR: linkedGitDir, GIT_INDEX_FILE: path.join(linkedGitDir, "index") },
+      () => runSecretDetection(linked),
+    );
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["leak.js:1"]);
+  });
 });

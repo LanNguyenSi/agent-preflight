@@ -431,7 +431,10 @@ export async function runSecretDetection(
   // dependency trees (CMS webroots, vendored cores, ...) from being read
   // at all. Outside git, or when git fails, fall back to the filesystem
   // walk so a git problem never means "scanned nothing".
-  const gitFiles = await listCommittableFiles(repoPath);
+  // One environment for every git call below (listing, ignore
+  // classification, diff scope), so they all describe the same repository.
+  const git: GitContext = { repoPath, env: await resolveGitEnv(repoPath) };
+  const gitFiles = await listCommittableFiles(git);
   if (gitFiles !== null) {
     scanFileList(gitFiles, repoPath, rawFindings);
   } else {
@@ -443,7 +446,7 @@ export async function runSecretDetection(
 
   // `git check-ignore` over just the finding files (not the whole tree).
   const uniqueFiles = [...new Set(findings.map((f) => f.file))];
-  const { gitAvailable, ignoredUntracked } = await classifyIgnored(repoPath, uniqueFiles);
+  const { gitAvailable, ignoredUntracked } = await classifyIgnored(git, uniqueFiles);
   if (findings.length > 0 && !gitAvailable) {
     limitations.push(
       "secret-detection: not a git repository (or git unavailable); findings reported as non-blocking warnings",
@@ -457,7 +460,7 @@ export async function runSecretDetection(
   const strict = config.secretDetectionStrict === true;
   let changedFiles: Set<string> | null = null;
   if (gitAvailable && !strict && findings.length > 0) {
-    changedFiles = await resolveChangedFiles(repoPath);
+    changedFiles = await resolveChangedFiles(git);
     if (changedFiles === null) {
       limitations.push(
         "secret-detection: could not resolve a diff base; every committable finding treated as blocking",
@@ -538,12 +541,12 @@ export async function runSecretDetection(
  * caller then fails safe by treating every finding as blocking-eligible.
  */
 async function classifyIgnored(
-  repoPath: string,
+  git: GitContext,
   relFiles: string[],
 ): Promise<{ gitAvailable: boolean; ignoredUntracked: Set<string> }> {
   if (relFiles.length === 0) return { gitAvailable: true, ignoredUntracked: new Set() };
   try {
-    const res = await gitExec(repoPath, ["check-ignore", "--stdin"], {
+    const res = await gitExec(git, ["check-ignore", "--stdin"], {
       input: relFiles.join("\n"),
     });
     // 0 = at least one path ignored, 1 = none ignored — both are a
@@ -561,41 +564,99 @@ async function classifyIgnored(
   }
 }
 
-/**
- * Environment for every git call in this file: the inherited process
- * environment minus the variables that redirect git to a repository other
- * than the one containing `repoPath` (`GIT_DIR`, `GIT_WORK_TREE`,
- * `GIT_COMMON_DIR`, `GIT_PREFIX`). Left in place they make `git ls-files`
- * succeed against that other repository, list paths that do not exist under
- * `repoPath`, and so scan nothing; and they make the ignore and diff-scope
- * classification describe that other repository, which can downgrade a real
- * blocker to a warning. Using one environment for listing and classification
- * keeps both describing the same repository.
- *
- * `GIT_INDEX_FILE` is deliberately kept: a hook running `git commit` points
- * it at the index being committed, and the listing should agree with it. A
- * file that is tracked only in the real index and matches an ignore rule is
- * then not listed, which is acceptable because it is not part of the commit
- * being made. Untracked files are unaffected: `--others` lists everything
- * in the work tree that the chosen index does not track.
- */
-function gitEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_PREFIX"]) {
-    delete env[key];
-  }
-  return env;
+/** Where and with which environment every git call of one secret-detection run executes. */
+interface GitContext {
+  repoPath: string;
+  env: NodeJS.ProcessEnv;
 }
 
-/** Run git in `repoPath` with the scrubbed environment; never rejects on a non-zero exit. */
+const GIT_REDIRECT_VARS = ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_PREFIX"];
+
+/**
+ * Choose the environment for every git call of this run, once.
+ *
+ * Variables such as `GIT_DIR` and `GIT_WORK_TREE` are not always noise.
+ * Hooks of a repository whose git directory is chosen explicitly (a bare
+ * repository with `--work-tree`, as dotfile managers use) export them, and
+ * discovery from the scanned directory would find no repository at all.
+ * But when they point at some other repository they make `git ls-files`
+ * list that repository's paths (scanning nothing) and make the ignore and
+ * diff-scope classification describe the wrong repository, which can
+ * downgrade a real blocker to a warning. So:
+ *
+ *   - The inherited environment is used when the repository it selects has
+ *     a work tree containing the scanned directory AND is the same
+ *     repository (same common git dir) that plain discovery from the
+ *     scanned directory finds, or discovery finds none (an env-only
+ *     repository). This keeps hook environments, linked worktrees and
+ *     bare-plus-work-tree setups intact.
+ *   - Otherwise the variables are considered to point elsewhere and are
+ *     removed (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`,
+ *     `GIT_PREFIX`), and so is `GIT_INDEX_FILE`: it was exported for the
+ *     other repository, so its index says nothing about this one.
+ *
+ * In the inherited choice `GIT_INDEX_FILE` is kept: a hook running
+ * `git commit` points it at the index being committed, and the listing
+ * should agree with it. A file that is tracked only in the real index and
+ * matches an ignore rule is then not listed, which is acceptable because it
+ * is not part of the commit being made. Untracked files are unaffected:
+ * `--others` lists everything in the work tree that the chosen index does
+ * not track.
+ */
+async function resolveGitEnv(repoPath: string): Promise<NodeJS.ProcessEnv> {
+  const inherited: NodeJS.ProcessEnv = { ...process.env };
+  if (!GIT_REDIRECT_VARS.some((k) => inherited[k] !== undefined)) return inherited;
+
+  const scrubbed: NodeJS.ProcessEnv = { ...inherited };
+  for (const key of [...GIT_REDIRECT_VARS, "GIT_INDEX_FILE"]) delete scrubbed[key];
+
+  const inheritedCtx: GitContext = { repoPath, env: inherited };
+  if ((await worktreeRelativePath(inheritedCtx)) === null) return scrubbed;
+  const discovered = await gitCommonDir({ repoPath, env: scrubbed });
+  if (discovered === null) return inherited; // env-only repository
+  const selected = await gitCommonDir(inheritedCtx);
+  return selected !== null && selected === discovered ? inherited : scrubbed;
+}
+
+/** Real path of the common git directory selected by `git.env` from `git.repoPath`, or null. */
+async function gitCommonDir(git: GitContext): Promise<string | null> {
+  try {
+    const res = await gitExec(git, ["rev-parse", "--git-common-dir"], { raw: true });
+    if (res.exitCode !== 0 || res.failed) return null;
+    return fs.realpathSync(path.resolve(git.repoPath, res.stdout.replace(/\r?\n$/, "")));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Path of `git.repoPath` relative to the top level of its work tree
+ * (`""` when it is the top level), or null when there is no work tree or
+ * it does not contain `git.repoPath`.
+ */
+async function worktreeRelativePath(git: GitContext): Promise<string | null> {
+  try {
+    const top = await gitExec(git, ["rev-parse", "--show-toplevel"], { raw: true });
+    if (top.exitCode !== 0 || top.failed) return null;
+    const realTop = fs.realpathSync(top.stdout.replace(/\r?\n$/, ""));
+    const realRepo = fs.realpathSync(git.repoPath);
+    const rel = path.relative(realTop, realRepo);
+    if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
+    return rel;
+  } catch {
+    return null;
+  }
+}
+
+/** Run git in `git.repoPath` with the chosen environment; never rejects on a non-zero exit. */
 function gitExec(
-  repoPath: string,
+  git: GitContext,
   args: string[],
   options: { input?: string; raw?: boolean } = {},
 ) {
   return execa("git", args, {
-    cwd: repoPath,
-    env: gitEnv(),
+    cwd: git.repoPath,
+    env: git.env,
     extendEnv: false,
     reject: false,
     input: options.input,
@@ -625,15 +686,12 @@ function gitExec(
  *   - git lists entries but none of them exists on disk, which means the
  *     listing describes some other tree.
  */
-async function listCommittableFiles(repoPath: string): Promise<string[] | null> {
-  const git = (args: string[]) => gitExec(repoPath, args, { raw: true });
+async function listCommittableFiles(ctx: GitContext): Promise<string[] | null> {
+  const { repoPath } = ctx;
+  const git = (args: string[]) => gitExec(ctx, args, { raw: true });
   try {
-    const top = await git(["rev-parse", "--show-toplevel"]);
-    if (top.exitCode !== 0 || top.failed) return null;
-    const realTop = fs.realpathSync(top.stdout.replace(/\r?\n$/, ""));
-    const realRepo = fs.realpathSync(repoPath);
-    const rel = path.relative(realTop, realRepo);
-    if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
+    const rel = await worktreeRelativePath(ctx);
+    if (rel === null) return null;
     if (rel !== "") {
       // repoPath is a subdirectory of the work tree; if the parent
       // repository ignores it, ls-files would silently list nothing.
@@ -692,9 +750,9 @@ function scanFileList(relPaths: string[], root: string, findings: Finding[]): vo
 }
 
 /** Run a git command; return stdout on a clean exit, `null` on any failure. */
-async function runGit(repoPath: string, args: string[]): Promise<string | null> {
+async function runGit(git: GitContext, args: string[]): Promise<string | null> {
   try {
-    const res = await gitExec(repoPath, args);
+    const res = await gitExec(git, args);
     return res.exitCode === 0 ? res.stdout : null;
   } catch {
     return null;
@@ -757,14 +815,14 @@ interface DiffBaseCandidate {
  * If every candidate is either unresolvable or an untrusted non-diverged
  * guess, `null` is returned so the caller fails safe.
  */
-async function resolveDiffBase(repoPath: string): Promise<string | null> {
-  const headSha = (await runGit(repoPath, ["rev-parse", "HEAD"]))?.trim() ?? null;
+async function resolveDiffBase(git: GitContext): Promise<string | null> {
+  const headSha = (await runGit(git, ["rev-parse", "HEAD"]))?.trim() ?? null;
   const candidates: DiffBaseCandidate[] = [];
-  const upstream = await runGit(repoPath, [
+  const upstream = await runGit(git, [
     "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}",
   ]);
   if (upstream) candidates.push({ ref: upstream.trim(), trusted: true });
-  const originHead = await runGit(repoPath, ["rev-parse", "--abbrev-ref", "origin/HEAD"]);
+  const originHead = await runGit(git, ["rev-parse", "--abbrev-ref", "origin/HEAD"]);
   if (originHead) candidates.push({ ref: originHead.trim(), trusted: true });
   candidates.push(
     { ref: "origin/main", trusted: true },
@@ -775,7 +833,7 @@ async function resolveDiffBase(repoPath: string): Promise<string | null> {
 
   for (const { ref, trusted } of candidates) {
     if (!ref) continue;
-    const mb = (await runGit(repoPath, ["merge-base", "HEAD", ref]))?.trim();
+    const mb = (await runGit(git, ["merge-base", "HEAD", ref]))?.trim();
     if (!mb) continue;
     if (headSha !== null && mb === headSha && !trusted) continue; // unconfirmed guess: not real divergence signal
     return mb;
@@ -791,8 +849,8 @@ async function resolveDiffBase(repoPath: string): Promise<string | null> {
  * normalised to line up with `Finding.file`. `null` when the diff base
  * is unresolvable — the caller treats that as "scope unknown".
  */
-async function resolveChangedFiles(repoPath: string): Promise<Set<string> | null> {
-  const base = await resolveDiffBase(repoPath);
+async function resolveChangedFiles(git: GitContext): Promise<Set<string> | null> {
+  const base = await resolveDiffBase(git);
   if (base === null) return null;
 
   const changed = new Set<string>();
@@ -805,7 +863,7 @@ async function resolveChangedFiles(repoPath: string): Promise<Set<string> | null
   // line up with `Finding.file` and `ls-files --others` (both already
   // cwd-relative) instead of carrying a leading subdir prefix that would
   // never match and silently downgrade every finding to a warning.
-  const diff = await runGit(repoPath, [
+  const diff = await runGit(git, [
     "-c", "core.quotePath=false", "diff", "--name-only", "--relative", base,
   ]);
   if (diff === null) return null;
@@ -814,7 +872,7 @@ async function resolveChangedFiles(repoPath: string): Promise<Set<string> | null
     if (p) changed.add(p);
   }
   // New files not yet tracked (and not gitignored) are part of this change.
-  const others = await runGit(repoPath, [
+  const others = await runGit(git, [
     "-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard",
   ]);
   if (others !== null) {

@@ -841,11 +841,25 @@ the scanned directory). Everything else is not read:
   level does not contain the scanned directory, when the scanned directory is
   itself ignored by a parent repository (an ignored build directory, a
   project under an ignore-everything dotfiles repository), or when git lists
-  entries but none of them exists on disk. The listing runs without
-  `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and `GIT_PREFIX` from the
-  environment, so a variable pointing at another repository cannot redirect
-  it. `GIT_INDEX_FILE` is kept, so hook contexts that commit from a temporary
-  index list the same tracked files as before.
+  entries but none of them exists on disk.
+
+  Every git call secret detection makes (file listing, ignore classification,
+  diff base and changed files) runs in one environment, chosen once per run, so
+  they all describe the same repository. Inherited `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_COMMON_DIR` and `GIT_PREFIX` are **kept** when the repository they select
+  has a work tree containing the scanned directory and is the same repository
+  that plain discovery from that directory finds (or discovery finds none): this
+  is what hooks of linked worktrees and of bare repositories with a separate
+  work tree (dotfile managers) export. They are **removed** when they point
+  elsewhere: the selected work tree does not contain the scanned directory, or
+  the selected repository differs from the one containing it. A redirect to
+  another repository would otherwise list that repository's files and
+  classify against its ignore rules and diff base. `GIT_INDEX_FILE` is kept
+  together with the inherited variables (a hook running `git commit` lists the
+  tracked files of the index being committed; a file tracked only in the real
+  index that matches an ignore rule is then not listed, as it is not part of
+  that commit) and removed together with the others when they are removed,
+  because it was exported for the other repository.
 
 ## Secret detection: obvious test-fixture values don't block
 
