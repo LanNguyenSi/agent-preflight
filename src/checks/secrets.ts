@@ -543,10 +543,8 @@ async function classifyIgnored(
 ): Promise<{ gitAvailable: boolean; ignoredUntracked: Set<string> }> {
   if (relFiles.length === 0) return { gitAvailable: true, ignoredUntracked: new Set() };
   try {
-    const res = await execa("git", ["check-ignore", "--stdin"], {
-      cwd: repoPath,
+    const res = await gitExec(repoPath, ["check-ignore", "--stdin"], {
       input: relFiles.join("\n"),
-      reject: false,
     });
     // 0 = at least one path ignored, 1 = none ignored — both are a
     // healthy repo. Anything else (128 = not a repo / fatal) is "unknown".
@@ -564,23 +562,45 @@ async function classifyIgnored(
 }
 
 /**
- * Environment for the file-listing git calls: the inherited process
+ * Environment for every git call in this file: the inherited process
  * environment minus the variables that redirect git to a repository other
  * than the one containing `repoPath` (`GIT_DIR`, `GIT_WORK_TREE`,
  * `GIT_COMMON_DIR`, `GIT_PREFIX`). Left in place they make `git ls-files`
  * succeed against that other repository, list paths that do not exist under
- * `repoPath`, and so scan nothing. `GIT_INDEX_FILE` is deliberately kept: a
- * hook running `git commit` points it at the index being committed, and
- * the listing should agree with it. It cannot hide a file, because
- * `--others` still lists everything in the work tree that index does not
- * track.
+ * `repoPath`, and so scan nothing; and they make the ignore and diff-scope
+ * classification describe that other repository, which can downgrade a real
+ * blocker to a warning. Using one environment for listing and classification
+ * keeps both describing the same repository.
+ *
+ * `GIT_INDEX_FILE` is deliberately kept: a hook running `git commit` points
+ * it at the index being committed, and the listing should agree with it. A
+ * file that is tracked only in the real index and matches an ignore rule is
+ * then not listed, which is acceptable because it is not part of the commit
+ * being made. Untracked files are unaffected: `--others` lists everything
+ * in the work tree that the chosen index does not track.
  */
-function gitListingEnv(): NodeJS.ProcessEnv {
+function gitEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_PREFIX"]) {
     delete env[key];
   }
   return env;
+}
+
+/** Run git in `repoPath` with the scrubbed environment; never rejects on a non-zero exit. */
+function gitExec(
+  repoPath: string,
+  args: string[],
+  options: { input?: string; raw?: boolean } = {},
+) {
+  return execa("git", args, {
+    cwd: repoPath,
+    env: gitEnv(),
+    extendEnv: false,
+    reject: false,
+    input: options.input,
+    ...(options.raw ? { stripFinalNewline: false, maxBuffer: 512 * 1024 * 1024 } : {}),
+  });
 }
 
 /**
@@ -606,20 +626,11 @@ function gitListingEnv(): NodeJS.ProcessEnv {
  *     listing describes some other tree.
  */
 async function listCommittableFiles(repoPath: string): Promise<string[] | null> {
-  const env = gitListingEnv();
-  const git = async (args: string[]) =>
-    execa("git", args, {
-      cwd: repoPath,
-      env,
-      extendEnv: false,
-      reject: false,
-      stripFinalNewline: false,
-      maxBuffer: 512 * 1024 * 1024,
-    });
+  const git = (args: string[]) => gitExec(repoPath, args, { raw: true });
   try {
     const top = await git(["rev-parse", "--show-toplevel"]);
     if (top.exitCode !== 0 || top.failed) return null;
-    const realTop = fs.realpathSync(top.stdout.trim());
+    const realTop = fs.realpathSync(top.stdout.replace(/\r?\n$/, ""));
     const realRepo = fs.realpathSync(repoPath);
     const rel = path.relative(realTop, realRepo);
     if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
@@ -628,7 +639,7 @@ async function listCommittableFiles(repoPath: string): Promise<string[] | null> 
       // repository ignores it, ls-files would silently list nothing.
       const ignored = await git(["check-ignore", "-q", "--", "."]);
       // Exit 1 = not ignored. Exit 0 = ignored; anything else = git error.
-      if (ignored.exitCode !== 1 || ignored.failed) return null;
+      if (ignored.exitCode !== 1) return null;
     }
     const res = await git([
       "-c", "core.quotePath=false",
@@ -683,7 +694,7 @@ function scanFileList(relPaths: string[], root: string, findings: Finding[]): vo
 /** Run a git command; return stdout on a clean exit, `null` on any failure. */
 async function runGit(repoPath: string, args: string[]): Promise<string | null> {
   try {
-    const res = await execa("git", args, { cwd: repoPath, reject: false });
+    const res = await gitExec(repoPath, args);
     return res.exitCode === 0 ? res.stdout : null;
   } catch {
     return null;

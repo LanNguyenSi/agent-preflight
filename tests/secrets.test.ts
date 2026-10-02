@@ -1752,9 +1752,13 @@ describe("runSecretDetection — git-enumerated file set", () => {
   });
 
   it("is not fooled by GIT_DIR and GIT_WORK_TREE pointing at another repository", async () => {
-    // A foreign repository shares one benign file name with the scanned
-    // directory, so a listing taken from it still "exists on disk" and
-    // only the environment scrubbing keeps the secret file in scope.
+    // Without a guard, `git ls-files` here succeeds against the foreign
+    // repository and lists only its files, so the secret file would drop
+    // out of the scan. The foreign repository shares one benign file name
+    // with the scanned directory so the "no listed entry exists" backstop
+    // does not apply. The work-tree containment check and the ignore check
+    // each catch this scenario on their own; the GIT_DIR-only test below is
+    // the one that pins the environment scrubbing.
     const foreign = makeTempDir("preflight-secrets-foreign-");
     gitInit(foreign);
     fs.writeFileSync(path.join(foreign, "README.md"), "# foreign\n");
@@ -1868,5 +1872,91 @@ describe("runSecretDetection — git-enumerated file set", () => {
     // exits 128 and masked every finding as a non-blocking warning.
     expect(result.checks[0]?.status).toBe("fail");
     expect(result.checks[0]?.details).toEqual(["parent.js:1"]);
+  });
+
+  /** Run `fn` with the given environment variables set, restoring them afterwards. */
+  async function withEnv<T>(vars: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+    const saved: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(vars)) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+    try {
+      return await fn();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      }
+    }
+  }
+
+  it("still reports a force-added tracked secret when GIT_DIR alone points at another repository", async () => {
+    // Containment and ignore checks pass here (the work tree is the scanned
+    // directory), so only scrubbing GIT_DIR keeps the real index in use: in
+    // the foreign index .env is untracked and, via the scanned directory's
+    // .gitignore, ignored, so it would be neither listed nor blocking.
+    const foreign = makeTempDir("preflight-secrets-foreign-gitdir-");
+    gitInit(foreign);
+    const repoPath = makeTempDir("preflight-secrets-gitdir-only-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, ".gitignore"), ".env\n");
+    fs.writeFileSync(path.join(repoPath, ".env"), `API_KEY="${REAL_SECRET}"\n`);
+    git(repoPath, "add", "-f", ".env");
+
+    const result = await withEnv({ GIT_DIR: path.join(foreign, ".git") }, () =>
+      runSecretDetection(repoPath),
+    );
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain(".env:1");
+  });
+
+  it("keeps a new untracked secret blocking when GIT_DIR and GIT_WORK_TREE point at a foreign repository with a resolvable diff base", async () => {
+    const remote = makeTempDir("preflight-secrets-foreign-remote-");
+    git(remote, "init", "-q", "--bare", "-b", "main");
+    const foreign = makeTempDir("preflight-secrets-foreign-upstream-");
+    gitInit(foreign);
+    fs.writeFileSync(path.join(foreign, "README.md"), "# foreign\n");
+    gitCommitAll(foreign);
+    git(foreign, "remote", "add", "origin", remote);
+    git(foreign, "push", "-q", "origin", "main");
+    git(foreign, "branch", "-q", "-u", "origin/main");
+    const repoPath = makeTempDir("preflight-secrets-foreign-diffbase-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# scanned\n");
+    fs.writeFileSync(path.join(repoPath, "new.js"), secretLine);
+
+    // Default (diff-scoped) tiering: the foreign repository's diff base and
+    // changed-file set must not be used to classify the scanned directory.
+    const result = await withEnv(
+      { GIT_DIR: path.join(foreign, ".git"), GIT_WORK_TREE: foreign },
+      () => runSecretDetection(repoPath),
+    );
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("new.js:1");
+  });
+
+  it("uses the git listing for a non-ignored subdirectory and never reads ignored files below it", async () => {
+    const root = makeTempDir("preflight-secrets-subdir-ignored-below-");
+    gitInit(root);
+    fs.writeFileSync(path.join(root, ".gitignore"), "pkg/build/\n");
+    fs.mkdirSync(path.join(root, "pkg", "build"), { recursive: true });
+    fs.writeFileSync(path.join(root, "pkg", "build", "b.js"), secretLine);
+    fs.writeFileSync(path.join(root, "pkg", "ok.js"), "export const a = 1;\n");
+
+    const readSpy = vi.spyOn(fs, "readFileSync");
+    let result;
+    try {
+      result = await runSecretDetection(path.join(root, "pkg"));
+      const readPaths = readSpy.mock.calls.map((c) => String(c[0]));
+      expect(readPaths.some((p) => p.endsWith("b.js"))).toBe(false);
+      expect(readPaths.some((p) => p.endsWith("ok.js"))).toBe(true);
+    } finally {
+      readSpy.mockRestore();
+    }
+
+    expect(result.checks[0]?.status).toBe("pass");
+    expect(result.checks[0]?.details).toEqual([]);
   });
 });
