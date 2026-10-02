@@ -17,27 +17,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   candidates are local refs only: the base resolved by diff-scoped secret
   detection, `<remote>/HEAD`, `<remote>/main` and `<remote>/master` of every
   remote, and local `main` and `master` only when all of their commits are
-  already on a remote. The current branch, its upstream, its pushed copies
-  `<remote>/<branch>` (unless the branch is `main` or `master`) and symbolic
-  refs to them are never candidates; a pushed copy does not vouch for local
-  `main`/`master`, and a secret-detection base that comes from such a copy is
-  used only when no other merge base remains. A merge base equal to HEAD is
+  already on a remote. The current branch, its upstream and symbolic refs to
+  them are never candidates. The branch's pushed copies `<remote>/<branch>`
+  do not vouch for local `main`/`master`, and a secret-detection base that
+  comes from the upstream copy is used only when no other merge base remains,
+  so every unpushed commit is still checked. A merge base equal to HEAD is
   ignored, and the merge base with the fewest commits up to HEAD wins, so a
   fork branch is compared with `upstream/main` when that ref or a local `main`
-  pulled from it exists. When
-  the only candidates are stale the check can over-report; a default branch
-  other than `main` or `master` is found only through `<remote>/HEAD`. A
-  stacked branch is compared with its parent only while the parent is its
-  upstream, otherwise with the nearest default branch, so an untested file
-  from a pushed parent feature branch is reported. Working-tree and untracked
-  changes are included. Files deleted within the compared range are ignored.
-  When no merge base remains, `HEAD~1..HEAD` is used instead; when HEAD is a
-  root commit or sits on a shallow boundary that range cannot be computed, and
-  the limitation "diff range could not be determined (shallow clone or root
-  commit)" is added, also when other changed files are visible; if no other
-  changed file was found the check reports
-  `skip` instead of `pass`. CI checkouts with `actions/checkout` default to
-  depth 1, so set `fetch-depth: 0` when `tdd` is required. When the last
+  pulled from it exists. When the only candidates are stale the check can
+  over-report; a default branch other than `main` or `master` is found only
+  through `<remote>/HEAD`. A stacked branch is compared with its parent only
+  while the parent is its upstream, otherwise with the nearest default
+  branch, so an untested file from a pushed parent feature branch is
+  reported. Working-tree and untracked changes are included. Files deleted
+  within the compared range are ignored. When no merge base remains,
+  `HEAD~1..HEAD` is used instead; when HEAD is a root commit or sits on a
+  shallow boundary that range cannot be computed, and the limitation "diff
+  range could not be determined (shallow clone or root commit)" is added,
+  also when other changed files are visible; if no other changed file was
+  found the check reports `skip` instead of `pass`. CI checkouts with
+  `actions/checkout` default to depth 1, so set `fetch-depth: 0` when `tdd` is
+  required. When the last
   commit is examined through `HEAD~1..HEAD`, a file committed in HEAD and
   deleted only in the working tree is still flagged. Only `.ts`/`.js` sources
   are checked; `.tsx`, `.jsx`, `.mts`, `.cts`, `.mjs` and `.cjs` are other file
