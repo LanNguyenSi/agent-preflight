@@ -244,7 +244,9 @@ describe("runTddCheck", () => {
   describe("when HEAD does not diverge from its base", () => {
     async function git(args: string[], cwd = tmpDir) {
       const { execa } = await import("execa");
-      return execa("git", args, { cwd });
+      // CI runners default to "master" for new repositories; pin it so bare
+      // remotes created here have a HEAD that clones can check out.
+      return execa("git", ["-c", "init.defaultBranch=main", ...args], { cwd });
     }
 
     async function cloneOfBare(): Promise<string> {
@@ -333,6 +335,22 @@ describe("runTddCheck", () => {
         const result = await runTddCheck(tmpDir, defaultConfig);
         expect(result.checks[0].status).toBe("warn");
         expect(result.checks[0].details).toEqual(["src/first.ts"]);
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+      }
+    });
+
+    it("compares a stacked branch with the parent it tracks, not with main", async () => {
+      const bare = await cloneOfBare();
+      try {
+        await git(["checkout", "-q", "-b", "parent"]);
+        await commitFiles({ "src/p.ts": "export const p = 1;" }, "add p");
+        await git(["push", "-q", "-u", "origin", "parent"]);
+        await git(["checkout", "-q", "-b", "child", "--track", "origin/parent"]);
+        await commitFiles({ "src/c.ts": "export const c = 1;", "src/c.test.ts": "test('c', () => {});" }, "add c with test");
+        const result = await runTddCheck(tmpDir, defaultConfig);
+        expect(result.checks[0].status).toBe("pass");
+        expect(result.checks[0].details ?? []).toEqual([]);
       } finally {
         fs.rmSync(bare, { recursive: true, force: true });
       }
