@@ -854,7 +854,12 @@ the scanned directory). Everything else is not read:
   elsewhere: the selected work tree does not contain the scanned directory, or
   the selected repository differs from the one containing it. A redirect to
   another repository would otherwise list that repository's files and
-  classify against its ignore rules and diff base. `GIT_INDEX_FILE` is kept
+  classify against its ignore rules and diff base. Two limits follow from the
+  rule: "the same repository" compares the common git directory, so the hook
+  environment of one linked worktree is also accepted when a sibling worktree
+  of the same repository is scanned; and when only the environment defines the
+  repository (discovery finds none), that repository's ignore rules decide
+  what is listed, so its excludes can leave files unscanned. `GIT_INDEX_FILE` is kept
   together with the inherited variables (a hook running `git commit` lists the
   tracked files of the index being committed; a file tracked only in the real
   index that matches an ignore rule is then not listed, as it is not part of
