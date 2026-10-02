@@ -1835,17 +1835,18 @@ describe("runSecretDetection — git-enumerated file set", () => {
   it("falls back to the walk when every git-listed entry is missing from disk", async () => {
     const repoPath = makeTempDir("preflight-secrets-all-missing-");
     gitInit(repoPath);
-    fs.writeFileSync(path.join(repoPath, ".gitignore"), ".env\n");
     fs.writeFileSync(path.join(repoPath, "gone.js"), "export const a = 1;\n");
     gitCommitAll(repoPath);
     fs.rmSync(path.join(repoPath, "gone.js"));
-    fs.rmSync(path.join(repoPath, ".gitignore"));
+    // Excluded via .git/info/exclude so the only listed entry (the
+    // tracked, now deleted gone.js) is missing from disk.
+    fs.writeFileSync(path.join(repoPath, ".git", "info", "exclude"), ".env\n");
     fs.writeFileSync(path.join(repoPath, ".env"), `API_KEY="${REAL_SECRET}"\n`);
 
     const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
 
-    // Listing = {.gitignore, gone.js}, neither on disk: the listing is not
-    // trusted, so the walk runs and finds the file. Never "scanned nothing".
+    // Listing = {gone.js}, not on disk: the listing is not trusted, so the
+    // walk runs and finds the file. Never "scanned nothing".
     expect(result.checks[0]?.details?.join("\n")).toContain(".env:1");
   });
 
