@@ -614,14 +614,14 @@ describe("runTddCheck", () => {
       },
     );
 
-    it("does not trust a local main that holds the branch's first commit", async () => {
+    it.each(["main", "feature"])("does not trust a local main that holds the branch's first commit (origin/HEAD at %s)", async (head) => {
       const bare = await cloneOfBare();
       try {
-        await git(["remote", "set-head", "origin", "main"]);
         await commitFiles({ "src/first.ts": "export const first = 1;" }, "add first");
         await git(["checkout", "-q", "-b", "feature"]);
         await commitFiles({ "docs/notes.md": "notes" }, "add notes");
         await git(["push", "-q", "-u", "origin", "feature"]);
+        await git(["remote", "set-head", "origin", head]);
         const result = await runTddCheck(tmpDir, defaultConfig);
         expect(result.checks[0].status).toBe("warn");
         expect(result.checks[0].details).toEqual(["src/first.ts"]);

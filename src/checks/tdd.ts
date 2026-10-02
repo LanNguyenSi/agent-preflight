@@ -31,15 +31,14 @@ const DEFAULT_BRANCHES = ["main", "master"];
  * - the base diff-scoped secret detection resolves (`resolveDiffBase`),
  * - `<remote>/HEAD`, `<remote>/main` and `<remote>/master` of every remote,
  * - local `main` and `master`, only when every commit on them is on a remote.
- * Refs that carry this branch's own work are never candidates: the current
- * branch, its upstream, its pushed copies `<remote>/<branch>` (none when the
- * branch is itself `main` or `master`) and any symbolic ref pointing at one
- * of them. A pushed copy does not count as "on a remote" for local
- * `main`/`master`, and when the secret-detection base is the merge base with
- * a pushed copy it is used only if no other merge base remains. Candidate
- * refs are deduplicated by commit, a merge base equal to HEAD is ignored,
- * and the merge base with the fewest commits up to HEAD wins (the first one
- * on a tie).
+ * The current branch, its upstream and any symbolic ref pointing at either
+ * are never candidates. The branch's pushed copies `<remote>/<branch>` hold
+ * its own commits: they (and symbolic refs to them) do not count as "on a
+ * remote" for local `main`/`master`, and when the secret-detection base is
+ * the merge base with the upstream copy it is used only if no other merge
+ * base remains. Candidate refs are deduplicated by commit, a merge base equal
+ * to HEAD is ignored, and the merge base with the fewest commits up to HEAD
+ * wins (the first one on a tie).
  */
 async function nearestDiffBase(repoPath: string): Promise<string | null> {
   const head = (await gitLines(repoPath, ["rev-parse", "--verify", "--quiet", "HEAD"]))?.[0];
@@ -48,12 +47,8 @@ async function nearestDiffBase(repoPath: string): Promise<string | null> {
   const upstream = (await gitLines(repoPath, ["rev-parse", "--symbolic-full-name", "@{u}"]))?.[0];
   const remotes = (await gitLines(repoPath, ["remote"])) ?? [];
   const branch = current?.replace(/^refs\/heads\//, "");
-  const copies = new Set(
-    branch === undefined || DEFAULT_BRANCHES.includes(branch)
-      ? []
-      : remotes.map((remote) => `refs/remotes/${remote}/${branch}`),
-  );
-  const own = new Set(copies);
+  const copies = new Set(branch === undefined ? [] : remotes.map((remote) => `refs/remotes/${remote}/${branch}`));
+  const own = new Set<string>();
   if (current !== undefined) own.add(current);
   if (upstream !== undefined) own.add(upstream);
 
