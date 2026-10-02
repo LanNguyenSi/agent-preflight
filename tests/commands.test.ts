@@ -229,6 +229,17 @@ describe.each(kinds)("configured %s commands", (kind) => {
       expect(result.checks[0].status).toBe(expected);
     });
 
+    it.each([
+      { name: "no line terminator at all", output: "x".repeat(200_000) },
+      { name: "a terminator only in the omitted middle", output: "x".repeat(half + 1000) + "\n" + "x".repeat(half + 1000) },
+    ])("does not let an empty-matching passRegex pass on a part left empty: $name", async ({ output }) => {
+      vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0, all: output, timedOut: false, isCanceled: false } as never);
+      const result = await runTestChecks(repoPath, {
+        logDir, commands: { test: [{ run: "mocked predicate output", passRegex: "^$" }] },
+      });
+      expect(result.checks[0].status).toBe("fail");
+    });
+
     it("drops a head without any line terminator for passRegex", async () => {
       const output = "x".repeat(half - 1) + "P" + "x".repeat(10_000) + "y".repeat(half);
       vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0, all: output, timedOut: false, isCanceled: false } as never);

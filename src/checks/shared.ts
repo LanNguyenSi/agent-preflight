@@ -283,7 +283,8 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
     // The cut edges can split a line, so passRegex searches only complete
     // lines: the head part ends before the terminator of its last complete
     // line, and the tail part starts after its first line terminator (a part
-    // without any line terminator is searched as empty). A passRegex that
+    // left empty by that trimming, such as one without any line terminator,
+    // is not searched). A passRegex that
     // consumes that last head terminator or requires text after it therefore
     // does not match at the head cut, and a line whose terminator lies past
     // the head cut or that starts exactly at the tail cut is dropped; this can
@@ -2084,5 +2085,5 @@ function predicateWindows(output: string): { pass: string[]; fail: string[] } {
   let headEnd = -1;
   for (const m of head.matchAll(new RegExp(LINE_TERMINATOR, "g"))) headEnd = m.index;
   const completeHead = headEnd >= 0 ? head.slice(0, headEnd) : "";
-  return { pass: [completeHead, completeTail], fail: [head, tail] };
+  return { pass: [completeHead, completeTail].filter((part) => part.length > 0), fail: [head, tail] };
 }
