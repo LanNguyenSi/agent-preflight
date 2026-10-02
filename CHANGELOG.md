@@ -14,24 +14,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   multi-commit branches, which raised the confidence score. The changed-file
   set is now the diff against the merge-base with the upstream or default
   branch (the base resolution used by diff-scoped secret detection), unioned
-  with the diff against the merge-base with the remote default branch
-  (`origin/HEAD`, else `origin/main`, else `origin/master`, local refs only),
-  so a branch pushed with `-u` still shows all of its commits. Working-tree and
+  with the diff against the nearest default-branch merge-base, so a branch
+  pushed with `-u` still shows all of its commits. That nearest base is chosen
+  from local refs only (`<remote>/HEAD`, `<remote>/main` and `<remote>/master`
+  of every remote, plus local `main` and `master`), skipping the current
+  branch, its upstream and any candidate whose merge base is HEAD itself, and
+  taking the merge base with the fewest commits up to HEAD; a stale fork
+  `origin/main` or a leftover `origin/master` therefore loses to a nearer
+  base, while a stale ref that is the only candidate can still over-report. A
+  stacked branch is compared with the nearest default branch, so an untested
+  file from a pushed parent feature branch is reported. Working-tree and
   untracked changes are included. Files deleted within the compared range are
   ignored. When the base equals HEAD, or no base resolves, `HEAD~1..HEAD` is
   included as well; when HEAD is a root commit or sits on a shallow boundary
-  that range cannot be computed, and if no other changed file was found the
-  check reports `skip` with a limitation ("diff range could not be
-  determined") instead of `pass`. When the last commit is examined through
-  `HEAD~1..HEAD`, a file committed in HEAD and deleted only in the working
-  tree is still flagged. When files changed but none is a `.ts`/`.js` file
-  (a PHP-only, docs-only or config-only change) the check reports `skip` with
-  a limitation; when source files in other languages change alongside
-  `.ts`/`.js` files the verdict stays as computed for the `.ts`/`.js` files and
-  a limitation is added. With no changed files at all the result stays `pass`.
-  With `tdd` in `requiredChecks`, a change containing only non-`.ts`/`.js`
-  files, or one whose diff range could not be determined, now blocks readiness
-  because `skip` is not `pass`.
+  that range cannot be computed, and the limitation "diff range could not be
+  determined (shallow clone or root commit)" is added, also when other changed
+  files are visible; if no other changed file was found the check reports
+  `skip` instead of `pass`. CI checkouts with `actions/checkout` default to
+  depth 1, so set `fetch-depth: 0` when `tdd` is required. When the last
+  commit is examined through `HEAD~1..HEAD`, a file committed in HEAD and
+  deleted only in the working tree is still flagged. Only `.ts`/`.js` sources
+  are checked; `.tsx`, `.jsx`, `.mts`, `.cts`, `.mjs` and `.cjs` are other file
+  types. When files changed but none is a `.ts`/`.js` file (a PHP-only,
+  `.tsx`-only, docs-only or config-only change) the check reports `skip` with
+  the limitation "other file types not checked"; when source files of other
+  types change alongside `.ts`/`.js` files the verdict stays as computed for
+  the `.ts`/`.js` files and the same limitation is added. With no changed files
+  at all the result stays `pass`. With `tdd` in `requiredChecks`, a change
+  containing only non-`.ts`/`.js` files, or one whose diff range could not be
+  determined and shows no other change, now blocks readiness because `skip` is
+  not `pass`.
 
 ## [0.8.0] - 2026-10-01
 

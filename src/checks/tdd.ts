@@ -8,7 +8,7 @@ const DEFAULT_EXCEPTIONS = ["index.ts", "index.js", "types.ts", "types.js", "con
 
 const SOURCE_EXT = /\.(ts|js)$/;
 const TEST_PATTERN = /\.(test|spec)\.(ts|js)$/;
-/** Source files in other languages that this check cannot pair with tests. */
+/** Source files of other types (other languages, or JS/TS variants) that this check cannot pair with tests. */
 const OTHER_SOURCE_EXT = /\.(tsx|jsx|mts|cts|mjs|cjs|php|py|rb|go|rs|java|kt|kts|scala|cs|c|cc|cpp|h|hpp|swift|vue|svelte|sh)$/;
 const IGNORED_DIRS = new Set(["node_modules", "dist", "build", ".git", "coverage"]);
 
@@ -24,17 +24,46 @@ async function gitLines(cwd: string, args: string[]): Promise<string[] | null> {
 }
 
 /**
- * Merge base of HEAD with the remote default branch (`origin/HEAD`, else
- * `origin/main`, else `origin/master`; only refs that exist locally, no
- * network), or null when none resolves. A pushed branch has its upstream at
- * HEAD, so this keeps the earlier commits of the branch visible.
+ * Nearest merge base of HEAD with a default branch, or null. Candidates are
+ * the local refs `<remote>/HEAD`, `<remote>/main` and `<remote>/master` of
+ * every remote plus local `main` and `master` (no network). The current
+ * branch, its upstream and any symbolic ref pointing at either are skipped,
+ * and so is a candidate whose merge base is HEAD itself, since it carries no
+ * information. Of the rest, the merge base with the fewest commits up to
+ * HEAD wins, so a stale fork or a leftover `master` loses to a nearer base. A
+ * pushed branch has its upstream at HEAD, so this keeps the earlier commits
+ * of the branch visible.
  */
 async function defaultBranchMergeBase(repoPath: string): Promise<string | null> {
-  for (const ref of ["origin/HEAD", "origin/main", "origin/master"]) {
-    const mb = (await gitLines(repoPath, ["merge-base", "HEAD", ref]))?.[0];
-    if (mb !== undefined) return mb;
+  const head = (await gitLines(repoPath, ["rev-parse", "--verify", "--quiet", "HEAD"]))?.[0];
+  const own = new Set<string>();
+  const current = (await gitLines(repoPath, ["symbolic-ref", "-q", "HEAD"]))?.[0];
+  if (current !== undefined) own.add(current);
+  const upstream = (await gitLines(repoPath, ["rev-parse", "--symbolic-full-name", "@{u}"]))?.[0];
+  if (upstream !== undefined) own.add(upstream);
+
+  const candidates: string[] = [];
+  for (const remote of (await gitLines(repoPath, ["remote"])) ?? []) {
+    for (const name of ["HEAD", "main", "master"]) candidates.push(`refs/remotes/${remote}/${name}`);
   }
-  return null;
+  candidates.push("refs/heads/main", "refs/heads/master");
+  const existing = new Map<string, string>();
+  for (const line of (await gitLines(repoPath, ["for-each-ref", "--format=%(refname) %(symref)", ...candidates])) ?? []) {
+    const [name, symref] = line.split(" ");
+    existing.set(name, symref || name);
+  }
+
+  let best: { mb: string; distance: number } | null = null;
+  for (const ref of candidates) {
+    const target = existing.get(ref);
+    if (target === undefined || own.has(ref) || own.has(target)) continue;
+    const mb = (await gitLines(repoPath, ["merge-base", "HEAD", ref]))?.[0];
+    if (mb === undefined || mb === head) continue;
+    const count = (await gitLines(repoPath, ["rev-list", "--count", `${mb}..HEAD`]))?.[0];
+    const distance = count === undefined ? Number.POSITIVE_INFINITY : Number(count);
+    if (distance < (best?.distance ?? Number.POSITIVE_INFINITY)) best = { mb, distance };
+  }
+  return best?.mb ?? null;
 }
 
 interface ChangedFiles {
@@ -47,7 +76,7 @@ interface ChangedFiles {
  * Every file the current work changed, relative to the git root: the branch
  * diff against the merge-base (same base resolution as diff-scoped secret
  * detection) including working-tree edits, unioned with the diff against the
- * default-branch merge-base, plus untracked-and-unignored files. Deleted
+ * nearest default-branch merge-base, plus untracked-and-unignored files. Deleted
  * files are excluded. Without a resolvable base the diff falls back to
  * HEAD~1..HEAD plus working-tree changes against HEAD.
  */
@@ -188,21 +217,25 @@ export async function runTddCheck(
     (f) => !exceptions.has(path.basename(f)),
   );
 
-  // Nothing was found and the last commit could not be examined (root commit
-  // or shallow boundary): an empty set here is not evidence of "no changes".
-  if (allChanged.length === 0 && found.rangeUnknown) {
-    checks.push({
-      name: "tdd-test-counterpart",
-      kind: "tdd",
-      status: "skip",
-      message: "Diff range could not be determined (shallow clone or root commit); test counterparts were not checked",
-      durationMs: Date.now() - start,
-      confidenceContribution: 0.05,
-    });
+  // The last commit could not be examined (root commit or shallow boundary):
+  // the found set may miss committed changes, so say so whatever else was
+  // found, and with nothing found an empty set is not evidence of "no
+  // changes".
+  if (found.rangeUnknown) {
     limitations.push(
-      "tdd-test-counterpart: diff range could not be determined (shallow clone or root commit); changed files were not checked",
+      "tdd-test-counterpart: diff range could not be determined (shallow clone or root commit); committed changes may not have been checked",
     );
-    return { checks, limitations };
+    if (allChanged.length === 0) {
+      checks.push({
+        name: "tdd-test-counterpart",
+        kind: "tdd",
+        status: "skip",
+        message: "Diff range could not be determined (shallow clone or root commit); test counterparts were not checked",
+        durationMs: Date.now() - start,
+        confidenceContribution: 0.05,
+      });
+      return { checks, limitations };
+    }
   }
 
   // Changed files exist but none is a .ts/.js file: the check cannot judge
@@ -218,17 +251,18 @@ export async function runTddCheck(
       confidenceContribution: 0.05,
     });
     limitations.push(
-      `tdd-test-counterpart only checks .ts/.js sources; ${others} changed file(s) of other types were not checked`,
+      `tdd-test-counterpart only checks .ts/.js sources; other file types not checked (${others} changed file(s))`,
     );
     return { checks, limitations };
   }
 
-  // Checked .ts/.js files alongside source files in other languages: the
-  // verdict below covers only the .ts/.js files.
+  // Checked .ts/.js files alongside source files of other types (other
+  // languages, or .tsx/.jsx/.mts/.cts/.mjs/.cjs): the verdict below covers
+  // only the .ts/.js files.
   const unchecked = allChanged.filter((f) => OTHER_SOURCE_EXT.test(f));
   if (unchecked.length > 0) {
     limitations.push(
-      `tdd-test-counterpart only checks .ts/.js sources; ${unchecked.length} changed source file(s) in other languages were not checked`,
+      `tdd-test-counterpart only checks .ts/.js sources; other file types not checked (${unchecked.length} changed source file(s))`,
     );
   }
 
