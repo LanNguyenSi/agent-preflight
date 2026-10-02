@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `passRegex` and `failRegex` now search the first and the last 65536 UTF-16
+  code units of long combined output (the whole output up to 131072), so
+  verdict lines printed at the end of long runner output are no longer missed
+  (#97). Text in the omitted middle is still not searched, the head and the
+  tail are matched separately so no pattern matches across the omitted part,
+  and `passRegex` ignores the partial lines at the window's cut edges. The head
+  part ends before the terminator of its last complete line, so a `passRegex`
+  that consumes that terminator or requires text after it does not match
+  there, which can only turn a pass into a fail. Lookarounds cannot see past a
+  cut, so exclusions belong in `failRegex`. A `failRegex` searches both parts
+  untrimmed and can still match a line partly cut at a window edge and veto.
+
 ## [0.8.0] - 2026-10-01
 
 ### Added

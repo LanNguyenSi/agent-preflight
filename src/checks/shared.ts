@@ -273,13 +273,33 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
       return { limitation: options.missingLimitation };
     }
 
-    // Limit predicate work to the first 65536 UTF-16 code units of combined
-    // output. Text beyond that bound is available in failure details but is
-    // not searched for a pass or veto marker.
-    const predicateOutput = (all ?? "").slice(0, 65_536);
+    // Limit predicate work to a bounded window of the combined output: the
+    // whole output up to 131072 UTF-16 code units, otherwise the first and the
+    // last 65536 code units as two separate parts. Each pattern is tested
+    // against each part on its own, so no pattern matches across the omitted
+    // middle. Verdict lines usually sit at the end of long runner output.
+    // failRegex searches both parts untrimmed, so a veto only gets stronger; a
+    // line cut at a window edge can still veto, which is the safe direction.
+    // The cut edges can split a line, so passRegex searches only complete
+    // lines: the head part ends before the terminator of its last complete
+    // line, and the tail part starts after its first line terminator (a part
+    // left empty by that trimming, such as one without any line terminator,
+    // is not searched). A passRegex that
+    // consumes that last head terminator or requires text after it therefore
+    // does not match at the head cut, and a line whose terminator lies past
+    // the head cut or that starts exactly at the tail cut is dropped; this can
+    // only turn a pass into a fail. Lookarounds see only the part they run in:
+    // a negative lookahead at the end of the head part or a negative
+    // lookbehind at the start of the tail part cannot see the omitted text and
+    // can succeed where the whole output would not match, so exclusions belong
+    // in failRegex. Text in the omitted middle is available in failure details
+    // but is not searched.
+    const windows = predicateWindows(all ?? "");
     const completed = !timedOut && !signal && !isCanceled && typeof exitCode === "number" && exitCode !== 127;
-    const passMatched = options.passRegex === undefined || new RegExp(options.passRegex, "m").test(predicateOutput);
-    const failMatched = options.failRegex !== undefined && new RegExp(options.failRegex, "m").test(predicateOutput);
+    const passRe = options.passRegex === undefined ? undefined : new RegExp(options.passRegex, "m");
+    const failRe = options.failRegex === undefined ? undefined : new RegExp(options.failRegex, "m");
+    const passMatched = passRe === undefined || windows.pass.some((part) => passRe.test(part));
+    const failMatched = failRe !== undefined && windows.fail.some((part) => failRe.test(part));
     const passed = options.passRegex === undefined
       ? exitCode === 0
       : completed && passMatched && !failMatched;
@@ -2050,4 +2070,20 @@ async function runSetupCommand(
   );
 
   return { exitCode: exitCode ?? 1, timedOut: Boolean(timedOut), output: all };
+}
+
+const PREDICATE_WINDOW_PART = 65_536;
+
+const LINE_TERMINATOR = /\r\n?|[\n\u2028\u2029]/;
+
+function predicateWindows(output: string): { pass: string[]; fail: string[] } {
+  if (output.length <= PREDICATE_WINDOW_PART * 2) return { pass: [output], fail: [output] };
+  const head = output.slice(0, PREDICATE_WINDOW_PART);
+  const tail = output.slice(-PREDICATE_WINDOW_PART);
+  const tailStart = LINE_TERMINATOR.exec(tail);
+  const completeTail = tailStart ? tail.slice(tailStart.index + tailStart[0].length) : "";
+  let headEnd = -1;
+  for (const m of head.matchAll(new RegExp(LINE_TERMINATOR, "g"))) headEnd = m.index;
+  const completeHead = headEnd >= 0 ? head.slice(0, headEnd) : "";
+  return { pass: [completeHead, completeTail].filter((part) => part.length > 0), fail: [head, tail] };
 }
