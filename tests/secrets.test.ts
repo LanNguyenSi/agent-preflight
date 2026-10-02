@@ -1750,4 +1750,122 @@ describe("runSecretDetection — git-enumerated file set", () => {
     expect(result.checks[0]?.status).toBe("pass");
     expect(result.checks[0]?.details).toEqual([]);
   });
+
+  it("is not fooled by GIT_DIR and GIT_WORK_TREE pointing at another repository", async () => {
+    // A foreign repository shares one benign file name with the scanned
+    // directory, so a listing taken from it still "exists on disk" and
+    // only the environment scrubbing keeps the secret file in scope.
+    const foreign = makeTempDir("preflight-secrets-foreign-");
+    gitInit(foreign);
+    fs.writeFileSync(path.join(foreign, "README.md"), "# foreign\n");
+    fs.writeFileSync(path.join(foreign, "only-there.txt"), "x\n");
+    git(foreign, "add", "-A");
+    const repoPath = makeTempDir("preflight-secrets-redirected-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# scanned\n");
+    fs.writeFileSync(path.join(repoPath, "leak.js"), secretLine);
+
+    const saved = { dir: process.env.GIT_DIR, tree: process.env.GIT_WORK_TREE };
+    process.env.GIT_DIR = path.join(foreign, ".git");
+    process.env.GIT_WORK_TREE = foreign;
+    let result;
+    try {
+      result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+    } finally {
+      if (saved.dir === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved.dir;
+      if (saved.tree === undefined) delete process.env.GIT_WORK_TREE; else process.env.GIT_WORK_TREE = saved.tree;
+    }
+
+    expect(result.checks[0]?.details).toContain("leak.js:1");
+  });
+
+  it("keeps working when a hook-style GIT_INDEX_FILE points at a copy of the index", async () => {
+    const repoPath = makeTempDir("preflight-secrets-index-file-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "tracked.js"), secretLine);
+    git(repoPath, "add", "tracked.js");
+    fs.writeFileSync(path.join(repoPath, "new.js"), secretLine);
+    const indexCopy = path.join(makeTempDir("preflight-secrets-index-copy-"), "index");
+    fs.copyFileSync(path.join(repoPath, ".git", "index"), indexCopy);
+
+    const saved = process.env.GIT_INDEX_FILE;
+    process.env.GIT_INDEX_FILE = indexCopy;
+    let result;
+    try {
+      result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+    } finally {
+      if (saved === undefined) delete process.env.GIT_INDEX_FILE; else process.env.GIT_INDEX_FILE = saved;
+    }
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(
+      expect.arrayContaining(["tracked.js:1", "new.js:1"]),
+    );
+  });
+
+  it("falls back to the walk when repoPath is itself ignored by a parent repository", async () => {
+    const parent = makeTempDir("preflight-secrets-parent-ignore-");
+    gitInit(parent);
+    fs.writeFileSync(path.join(parent, ".gitignore"), "build/\n");
+    const repoPath = path.join(parent, "build", "proj");
+    fs.mkdirSync(repoPath, { recursive: true });
+    fs.writeFileSync(path.join(repoPath, "leak.js"), secretLine);
+
+    const result = await runSecretDetection(repoPath);
+
+    // Not a silent pass: the walk reads the directory, and the parent
+    // repository classifies the file as gitignored-untracked (warn).
+    expect(result.checks[0]?.status).toBe("warn");
+    expect(result.checks[0]?.details).toContain("leak.js:1 (non-blocking)");
+  });
+
+  it("uses the git listing for a non-ignored subdirectory of a repository whose other paths are ignored", async () => {
+    const parent = makeTempDir("preflight-secrets-parent-partial-");
+    gitInit(parent);
+    fs.writeFileSync(path.join(parent, ".gitignore"), "build/\n");
+    fs.mkdirSync(path.join(parent, "pkg"));
+    fs.writeFileSync(path.join(parent, "pkg", "leak.js"), secretLine);
+
+    const result = await runSecretDetection(path.join(parent, "pkg"), { secretDetectionStrict: true });
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["leak.js:1"]);
+  });
+
+  it("falls back to the walk when every git-listed entry is missing from disk", async () => {
+    const repoPath = makeTempDir("preflight-secrets-all-missing-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, ".gitignore"), ".env\n");
+    fs.writeFileSync(path.join(repoPath, "gone.js"), "export const a = 1;\n");
+    gitCommitAll(repoPath);
+    fs.rmSync(path.join(repoPath, "gone.js"));
+    fs.rmSync(path.join(repoPath, ".gitignore"));
+    fs.writeFileSync(path.join(repoPath, ".env"), `API_KEY="${REAL_SECRET}"\n`);
+
+    const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+    // Listing = {.gitignore, gone.js}, neither on disk: the listing is not
+    // trusted, so the walk runs and finds the file. Never "scanned nothing".
+    expect(result.checks[0]?.details?.join("\n")).toContain(".env:1");
+  });
+
+  it("scans a repository with a real submodule: parent secret blocks, submodule files are not scanned", async () => {
+    const subSource = makeTempDir("preflight-secrets-submodule-src-");
+    gitInit(subSource);
+    fs.writeFileSync(path.join(subSource, "inner.js"), secretLine);
+    git(subSource, "add", "-A");
+    git(subSource, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "sub");
+    const repoPath = makeTempDir("preflight-secrets-submodule-parent-");
+    gitInit(repoPath);
+    git(repoPath, "-c", "protocol.file.allow=always", "submodule", "add", "-q", subSource, "sub");
+    expect(fs.existsSync(path.join(repoPath, "sub", "inner.js"))).toBe(true);
+    fs.writeFileSync(path.join(repoPath, "parent.js"), secretLine);
+
+    const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+    // The walk used to descend into the submodule, where `git check-ignore`
+    // exits 128 and masked every finding as a non-blocking warning.
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["parent.js:1"]);
+  });
 });

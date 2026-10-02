@@ -829,10 +829,23 @@ the scanned directory). Everything else is not read:
 - **Submodules and nested repositories** are not scanned: git lists them as a
   single directory entry, and their files cannot be committed into this
   repository.
-- **Fallback.** Outside a git work tree, with `git` missing, or when the git
-  listing fails for any reason, the check falls back to walking the directory
-  tree (previous behaviour, all findings non-blocking outside git) rather than
-  scanning nothing.
+- **Submodule side effect.** Because submodule files are no longer walked,
+  a finding inside one can no longer make `git check-ignore` fail and
+  downgrade every finding in the repository to a non-blocking warning; a new
+  secret in the parent repository blocks again.
+- **Fallback.** The check falls back to walking the directory tree (previous
+  behaviour: findings outside git are non-blocking, and gitignored files are
+  scanned and warn) rather than scanning nothing whenever the git listing
+  cannot be trusted to cover the scanned directory: outside a git work tree,
+  with `git` missing, when any git command fails, when the work tree's top
+  level does not contain the scanned directory, when the scanned directory is
+  itself ignored by a parent repository (an ignored build directory, a
+  project under an ignore-everything dotfiles repository), or when git lists
+  entries but none of them exists on disk. The listing runs without
+  `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and `GIT_PREFIX` from the
+  environment, so a variable pointing at another repository cannot redirect
+  it. `GIT_INDEX_FILE` is kept, so hook contexts that commit from a temporary
+  index list the same tracked files as before.
 
 ## Secret detection: obvious test-fixture values don't block
 

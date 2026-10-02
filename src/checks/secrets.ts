@@ -388,6 +388,9 @@ interface Finding {
  *   - A file that is gitignored AND untracked: it cannot be pushed, so
  *     `warn`. (`git check-ignore` without `--no-index` reports exactly
  *     this set — a tracked file is never listed even if a rule matches.)
+ *     This tier is reachable only on the filesystem-walk fallback: inside
+ *     a git work tree the scanned set comes from `git ls-files`, which
+ *     never lists such files, so they are not read at all.
  *   - An obvious test-fixture constant: the matched value itself starts
  *     with `test-`/`test_`/`dummy-`/`dummy_`/`fake-`/`fake_` AND the file
  *     lives under a directory literally named `test` or `tests`: `warn`.
@@ -504,7 +507,7 @@ export async function runSecretDetection(
       message += ` (+${warning.length} non-blocking)`;
     }
   } else if (warning.length > 0) {
-    message = `${warning.length} potential secret(s) in non-blocking location(s) (pre-existing, gitignored, docs, test-fixture, or non-git)`;
+    message = `${warning.length} potential secret(s) in non-blocking location(s) (pre-existing, docs, test-fixture, non-git, or gitignored on the walk fallback)`;
   }
 
   const details = [
@@ -561,6 +564,26 @@ async function classifyIgnored(
 }
 
 /**
+ * Environment for the file-listing git calls: the inherited process
+ * environment minus the variables that redirect git to a repository other
+ * than the one containing `repoPath` (`GIT_DIR`, `GIT_WORK_TREE`,
+ * `GIT_COMMON_DIR`, `GIT_PREFIX`). Left in place they make `git ls-files`
+ * succeed against that other repository, list paths that do not exist under
+ * `repoPath`, and so scan nothing. `GIT_INDEX_FILE` is deliberately kept: a
+ * hook running `git commit` points it at the index being committed, and
+ * the listing should agree with it. It cannot hide a file, because
+ * `--others` still lists everything in the work tree that index does not
+ * track.
+ */
+function gitListingEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_PREFIX"]) {
+    delete env[key];
+  }
+  return env;
+}
+
+/**
  * The committable files below `repoPath`: tracked files plus untracked
  * files that no ignore rule excludes, as `repoPath`-relative,
  * forward-slash paths (NUL-separated on the wire, so spaces, newlines and
@@ -570,25 +593,65 @@ async function classifyIgnored(
  *
  * When `repoPath` is a subdirectory of the git root, git lists only that
  * subtree, relative to it, which matches `Finding.file` of the walk.
- * Returns `null` (caller falls back to the walk) when `repoPath` is not
- * in a git work tree, git is missing, or the command fails for any
- * reason, including output beyond the buffer limit.
+ * Returns `null` (caller falls back to the walk) whenever the listing
+ * cannot be trusted to cover `repoPath`:
+ *
+ *   - `repoPath` is not in a git work tree, git is missing, or any git
+ *     command fails (including output beyond the buffer limit);
+ *   - the work tree's top level does not contain `repoPath`;
+ *   - `repoPath` is itself inside a parent repository and is ignored by
+ *     it (an ignored build directory, a project under an
+ *     ignore-everything dotfiles repository): git would list nothing;
+ *   - git lists entries but none of them exists on disk, which means the
+ *     listing describes some other tree.
  */
 async function listCommittableFiles(repoPath: string): Promise<string[] | null> {
+  const env = gitListingEnv();
+  const git = async (args: string[]) =>
+    execa("git", args, {
+      cwd: repoPath,
+      env,
+      extendEnv: false,
+      reject: false,
+      stripFinalNewline: false,
+      maxBuffer: 512 * 1024 * 1024,
+    });
   try {
-    const res = await execa(
-      "git",
-      [
-        "-c", "core.quotePath=false",
-        "ls-files", "-z", "--cached", "--others", "--exclude-standard",
-      ],
-      { cwd: repoPath, reject: false, stripFinalNewline: false, maxBuffer: 512 * 1024 * 1024 },
-    );
+    const top = await git(["rev-parse", "--show-toplevel"]);
+    if (top.exitCode !== 0 || top.failed) return null;
+    const realTop = fs.realpathSync(top.stdout.trim());
+    const realRepo = fs.realpathSync(repoPath);
+    const rel = path.relative(realTop, realRepo);
+    if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
+    if (rel !== "") {
+      // repoPath is a subdirectory of the work tree; if the parent
+      // repository ignores it, ls-files would silently list nothing.
+      const ignored = await git(["check-ignore", "-q", "--", "."]);
+      if (ignored.exitCode === 0) return null;
+      if (ignored.exitCode !== 1 || ignored.failed) return null;
+    }
+    const res = await git([
+      "-c", "core.quotePath=false",
+      "ls-files", "-z", "--cached", "--others", "--exclude-standard",
+    ]);
     if (res.exitCode !== 0 || res.failed) return null;
     // A merge conflict lists a path once per index stage; dedupe.
-    return [...new Set(res.stdout.split("\0").filter((p) => p.length > 0))];
+    const files = [...new Set(res.stdout.split("\0").filter((p) => p.length > 0))];
+    if (files.length > 0 && !files.some((f) => existsOnDisk(path.join(repoPath, ...f.split("/"))))) {
+      return null;
+    }
+    return files;
   } catch {
     return null;
+  }
+}
+
+function existsOnDisk(fullPath: string): boolean {
+  try {
+    fs.lstatSync(fullPath);
+    return true;
+  } catch {
+    return false;
   }
 }
 
