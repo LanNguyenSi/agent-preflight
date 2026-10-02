@@ -2,7 +2,7 @@ import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runSecretDetection } from "../src/checks/secrets.js";
 
 const tempDirs: string[] = [];
@@ -49,7 +49,7 @@ describe("runSecretDetection — git-aware severity", () => {
     expect(result.checks[0]?.details).toContain("src/leaked.js:1");
   });
 
-  it("warns (does not fail) on a secret in a gitignored, untracked file", async () => {
+  it("does not fail (and does not report) a secret in a gitignored, untracked file", async () => {
     const repoPath = makeTempDir("preflight-secrets-gitignored-");
     gitInit(repoPath);
     fs.writeFileSync(path.join(repoPath, ".gitignore"), ".env\n");
@@ -58,9 +58,11 @@ describe("runSecretDetection — git-aware severity", () => {
     const result = await runSecretDetection(repoPath);
 
     // A gitignored .env holding real credentials is the normal, correct
-    // state — it cannot leak via git, so it must not block.
-    expect(result.checks[0]?.status).toBe("warn");
-    expect(result.checks[0]?.details?.[0]).toContain(".env:1");
+    // state — it cannot leak via git, so it must not block. Inside a git
+    // work tree the file set comes from git, which never lists it, so it
+    // is not even read and produces no warning either.
+    expect(result.checks[0]?.status).toBe("pass");
+    expect(result.checks[0]?.details).toEqual([]);
   });
 
   it("fails on a secret in a TRACKED file even when a .gitignore rule matches it", async () => {
@@ -1546,7 +1548,7 @@ describe("runSecretDetection — default branch with no divergence (agent-tasks 
     ).toBe(false);
   });
 
-  it("warns (does not over-block) on a GITIGNORED untracked secret file on a non-diverged default branch", async () => {
+  it("does not block (or report) a GITIGNORED untracked secret file on a non-diverged default branch", async () => {
     const cloneDir = makeFreshClone("app.js", "export const x = 1;\n", { ".gitignore": ".env\n" });
     // Untracked AND ignored: cannot leak via git, so it must stay a warn
     // even though the branch has not diverged from the default branch.
@@ -1554,6 +1556,762 @@ describe("runSecretDetection — default branch with no divergence (agent-tasks 
 
     const result = await runSecretDetection(cloneDir);
 
+    expect(result.checks[0]?.status).toBe("pass");
+    expect(result.checks[0]?.details).toEqual([]);
+  });
+});
+
+describe("runSecretDetection — git-enumerated file set", () => {
+  const secretLine = `const secret = "${REAL_SECRET}";\n`;
+
+  function git(dir: string, ...args: string[]): void {
+    execFileSync("git", args, { cwd: dir, stdio: "ignore" });
+  }
+
+  function gitCommitAll(dir: string): void {
+    git(dir, "add", "-A");
+    git(
+      dir,
+      "-c", "user.name=t", "-c", "user.email=t@example.com",
+      "commit", "-q", "-m", "init",
+    );
+  }
+
+  it("never reads files inside a large gitignored directory outside SKIP_DIRS", async () => {
+    const repoPath = makeTempDir("preflight-secrets-big-ignored-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, ".gitignore"), "web/core/\nweb/libraries/\n");
+    fs.writeFileSync(path.join(repoPath, "app.js"), "export const x = 1;\n");
+    for (const dir of ["web/core/lib", "web/libraries/foo"]) {
+      fs.mkdirSync(path.join(repoPath, dir), { recursive: true });
+      for (let i = 0; i < 150; i++) {
+        fs.writeFileSync(path.join(repoPath, dir, `f${i}.js`), secretLine);
+      }
+    }
+
+    const readSpy = vi.spyOn(fs, "readFileSync");
+    let result;
+    try {
+      result = await runSecretDetection(repoPath);
+      const readPaths = readSpy.mock.calls.map((c) => String(c[0]));
+      expect(readPaths.some((p) => p.includes(`${path.sep}web${path.sep}`))).toBe(false);
+      expect(readPaths.some((p) => p.endsWith("app.js"))).toBe(true);
+    } finally {
+      readSpy.mockRestore();
+    }
+
+    expect(result.checks[0]?.status).toBe("pass");
+    expect(result.checks[0]?.details).toEqual([]);
+  });
+
+  it("still fails on tracked and on untracked-not-ignored secrets", async () => {
+    const repoPath = makeTempDir("preflight-secrets-committable-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, ".gitignore"), "web/core/\n");
+    fs.writeFileSync(path.join(repoPath, "tracked.js"), secretLine);
+    gitCommitAll(repoPath);
+    fs.writeFileSync(path.join(repoPath, "untracked.js"), secretLine);
+    fs.mkdirSync(path.join(repoPath, "web", "core"), { recursive: true });
+    fs.writeFileSync(path.join(repoPath, "web", "core", "ignored.js"), secretLine);
+
+    const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+    expect(result.checks[0]?.status).toBe("fail");
+    const details = result.checks[0]?.details ?? [];
+    expect(details).toContain("tracked.js:1");
+    expect(details).toContain("untracked.js:1");
+    expect(details.some((d) => d.includes("ignored.js"))).toBe(false);
+  });
+
+  it("scans a force-added tracked file under an ignored path", async () => {
+    const repoPath = makeTempDir("preflight-secrets-forced-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, ".gitignore"), "web/core/\n");
+    fs.mkdirSync(path.join(repoPath, "web", "core"), { recursive: true });
+    fs.writeFileSync(path.join(repoPath, "web", "core", "forced.js"), secretLine);
+    git(repoPath, "add", "-f", "web/core/forced.js");
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("web/core/forced.js:1");
+  });
+
+  it("falls back to the filesystem walk outside a git repository", async () => {
+    const dir = makeTempDir("preflight-secrets-nongit-");
+    fs.mkdirSync(path.join(dir, "web", "core"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "web", "core", "found.js"), secretLine);
+
+    const result = await runSecretDetection(dir);
+
     expect(result.checks[0]?.status).toBe("warn");
+    expect(result.checks[0]?.details).toContain("web/core/found.js:1 (non-blocking)");
+    expect(result.limitations.some((l) => l.includes("not a git repository"))).toBe(true);
+  });
+
+  it("falls back to the walk when git cannot list files (broken .git), never scanning nothing", async () => {
+    const dir = makeTempDir("preflight-secrets-brokengit-");
+    fs.mkdirSync(path.join(dir, ".git")); // present but not a valid repository
+    fs.writeFileSync(path.join(dir, "leak.js"), secretLine);
+
+    const result = await runSecretDetection(dir);
+
+    expect(result.checks[0]?.status).not.toBe("pass");
+    expect(result.checks[0]?.details?.join("\n")).toContain("leak.js:1");
+  });
+
+  it("handles paths with spaces, unicode and newlines", async () => {
+    const repoPath = makeTempDir("preflight-secrets-odd-names-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "mein Ordner", "Übung"), { recursive: true });
+    fs.writeFileSync(path.join(repoPath, "mein Ordner", "Übung", "größe ü.js"), secretLine);
+    fs.writeFileSync(path.join(repoPath, "line\nbreak.js"), secretLine);
+
+    const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+    expect(result.checks[0]?.status).toBe("fail");
+    const details = result.checks[0]?.details ?? [];
+    expect(details).toContain("mein Ordner/Übung/größe ü.js:1");
+    expect(details).toContain("line\nbreak.js:1");
+  });
+
+  it("skips files git lists but that were deleted from the work tree", async () => {
+    const repoPath = makeTempDir("preflight-secrets-deleted-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "gone.js"), "export const a = 1;\n");
+    fs.writeFileSync(path.join(repoPath, "stay.js"), secretLine);
+    gitCommitAll(repoPath);
+    fs.rmSync(path.join(repoPath, "gone.js"));
+
+    const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["stay.js:1"]);
+  });
+
+  it("does not follow symlinks, including tracked ones pointing outside the repo", async () => {
+    const outside = makeTempDir("preflight-secrets-outside-");
+    fs.writeFileSync(path.join(outside, "outside.js"), secretLine);
+    fs.mkdirSync(path.join(outside, "dir"));
+    fs.writeFileSync(path.join(outside, "dir", "inner.js"), secretLine);
+    const repoPath = makeTempDir("preflight-secrets-symlink-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "ok.js"), "export const a = 1;\n");
+    fs.symlinkSync(path.join(outside, "outside.js"), path.join(repoPath, "link-file.js"));
+    fs.symlinkSync(path.join(outside, "dir"), path.join(repoPath, "link-dir"));
+    git(repoPath, "add", "-f", "link-file.js", "link-dir");
+
+    const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+    expect(result.checks[0]?.status).toBe("pass");
+    expect(result.checks[0]?.details).toEqual([]);
+  });
+
+  it("scans only the subtree when repoPath is a subdirectory of the git root", async () => {
+    const root = makeTempDir("preflight-secrets-subdir-");
+    gitInit(root);
+    fs.mkdirSync(path.join(root, "pkg", "src"), { recursive: true });
+    fs.mkdirSync(path.join(root, "other"));
+    fs.writeFileSync(path.join(root, "pkg", "src", "a.js"), secretLine);
+    fs.writeFileSync(path.join(root, "other", "b.js"), secretLine);
+    fs.writeFileSync(path.join(root, "top.js"), secretLine);
+
+    const result = await runSecretDetection(path.join(root, "pkg"), { secretDetectionStrict: true });
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["src/a.js:1"]);
+  });
+
+  it("applies SKIP_DIRS to git-listed paths like the walk does", async () => {
+    const repoPath = makeTempDir("preflight-secrets-skipdirs-");
+    gitInit(repoPath);
+    fs.mkdirSync(path.join(repoPath, "vendor", "lib"), { recursive: true });
+    fs.mkdirSync(path.join(repoPath, "packages", "x", "node_modules"), { recursive: true });
+    fs.writeFileSync(path.join(repoPath, "vendor", "lib", "v.js"), secretLine);
+    fs.writeFileSync(path.join(repoPath, "packages", "x", "node_modules", "n.js"), secretLine);
+    git(repoPath, "add", "-f", ".");
+
+    const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+    expect(result.checks[0]?.status).toBe("pass");
+  });
+
+  it("does not scan nested repositories (their files cannot be committed here)", async () => {
+    const repoPath = makeTempDir("preflight-secrets-nested-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "top.js"), "export const a = 1;\n");
+    const nested = path.join(repoPath, "nested");
+    fs.mkdirSync(nested);
+    gitInit(nested);
+    fs.writeFileSync(path.join(nested, "inner.js"), secretLine);
+
+    const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+    expect(result.checks[0]?.status).toBe("pass");
+    expect(result.checks[0]?.details).toEqual([]);
+  });
+
+  it("is not fooled by GIT_DIR and GIT_WORK_TREE pointing at another repository", async () => {
+    // Without a guard, `git ls-files` here succeeds against the foreign
+    // repository and lists only its files, so the secret file would drop
+    // out of the scan. The foreign repository shares one benign file name
+    // with the scanned directory so the "no listed entry exists" backstop
+    // does not apply. The work-tree containment check and the ignore check
+    // each catch this scenario on their own; the GIT_DIR-only test below is
+    // the one that pins the environment scrubbing.
+    const foreign = makeTempDir("preflight-secrets-foreign-");
+    gitInit(foreign);
+    fs.writeFileSync(path.join(foreign, "README.md"), "# foreign\n");
+    fs.writeFileSync(path.join(foreign, "only-there.txt"), "x\n");
+    git(foreign, "add", "-A");
+    const repoPath = makeTempDir("preflight-secrets-redirected-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# scanned\n");
+    fs.writeFileSync(path.join(repoPath, "leak.js"), secretLine);
+
+    const saved = { dir: process.env.GIT_DIR, tree: process.env.GIT_WORK_TREE };
+    process.env.GIT_DIR = path.join(foreign, ".git");
+    process.env.GIT_WORK_TREE = foreign;
+    let result;
+    try {
+      result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+    } finally {
+      if (saved.dir === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved.dir;
+      if (saved.tree === undefined) delete process.env.GIT_WORK_TREE; else process.env.GIT_WORK_TREE = saved.tree;
+    }
+
+    expect(result.checks[0]?.details).toContain("leak.js:1");
+  });
+
+  it("keeps working when a hook-style GIT_INDEX_FILE points at a copy of the index", async () => {
+    const repoPath = makeTempDir("preflight-secrets-index-file-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "tracked.js"), secretLine);
+    git(repoPath, "add", "tracked.js");
+    fs.writeFileSync(path.join(repoPath, "new.js"), secretLine);
+    const indexCopy = path.join(makeTempDir("preflight-secrets-index-copy-"), "index");
+    fs.copyFileSync(path.join(repoPath, ".git", "index"), indexCopy);
+
+    const saved = process.env.GIT_INDEX_FILE;
+    process.env.GIT_INDEX_FILE = indexCopy;
+    let result;
+    try {
+      result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+    } finally {
+      if (saved === undefined) delete process.env.GIT_INDEX_FILE; else process.env.GIT_INDEX_FILE = saved;
+    }
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(
+      expect.arrayContaining(["tracked.js:1", "new.js:1"]),
+    );
+  });
+
+  it("falls back to the walk when repoPath is itself ignored by a parent repository", async () => {
+    const parent = makeTempDir("preflight-secrets-parent-ignore-");
+    gitInit(parent);
+    fs.writeFileSync(path.join(parent, ".gitignore"), "build/\n");
+    const repoPath = path.join(parent, "build", "proj");
+    fs.mkdirSync(repoPath, { recursive: true });
+    fs.writeFileSync(path.join(repoPath, "leak.js"), secretLine);
+
+    const result = await runSecretDetection(repoPath);
+
+    // Not a silent pass: the walk reads the directory, and the parent
+    // repository classifies the file as gitignored-untracked (warn).
+    expect(result.checks[0]?.status).toBe("warn");
+    expect(result.checks[0]?.details).toContain("leak.js:1 (non-blocking)");
+  });
+
+  it("uses the git listing for a non-ignored subdirectory of a repository whose other paths are ignored", async () => {
+    const parent = makeTempDir("preflight-secrets-parent-partial-");
+    gitInit(parent);
+    fs.writeFileSync(path.join(parent, ".gitignore"), "build/\n");
+    fs.mkdirSync(path.join(parent, "pkg"));
+    fs.writeFileSync(path.join(parent, "pkg", "leak.js"), secretLine);
+
+    const result = await runSecretDetection(path.join(parent, "pkg"), { secretDetectionStrict: true });
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["leak.js:1"]);
+  });
+
+  it("falls back to the walk when every git-listed entry is missing from disk", async () => {
+    const repoPath = makeTempDir("preflight-secrets-all-missing-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "gone.js"), "export const a = 1;\n");
+    gitCommitAll(repoPath);
+    fs.rmSync(path.join(repoPath, "gone.js"));
+    // Excluded via .git/info/exclude so the only listed entry (the
+    // tracked, now deleted gone.js) is missing from disk.
+    fs.writeFileSync(path.join(repoPath, ".git", "info", "exclude"), ".env\n");
+    fs.writeFileSync(path.join(repoPath, ".env"), `API_KEY="${REAL_SECRET}"\n`);
+
+    const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+    // Listing = {gone.js}, not on disk: the listing is not trusted, so the
+    // walk runs and finds the file. Never "scanned nothing".
+    expect(result.checks[0]?.details?.join("\n")).toContain(".env:1");
+  });
+
+  it("scans a repository with a real submodule: parent secret blocks, submodule files are not scanned", async () => {
+    const subSource = makeTempDir("preflight-secrets-submodule-src-");
+    gitInit(subSource);
+    fs.writeFileSync(path.join(subSource, "inner.js"), secretLine);
+    git(subSource, "add", "-A");
+    git(subSource, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "sub");
+    const repoPath = makeTempDir("preflight-secrets-submodule-parent-");
+    gitInit(repoPath);
+    git(repoPath, "-c", "protocol.file.allow=always", "submodule", "add", "-q", subSource, "sub");
+    expect(fs.existsSync(path.join(repoPath, "sub", "inner.js"))).toBe(true);
+    fs.writeFileSync(path.join(repoPath, "parent.js"), secretLine);
+
+    const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+    // The walk used to descend into the submodule, where `git check-ignore`
+    // exits 128 and masked every finding as a non-blocking warning.
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["parent.js:1"]);
+  });
+
+  /** Run `fn` with the given environment variables set, restoring them afterwards. */
+  async function withEnv<T>(vars: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+    const saved: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(vars)) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+    try {
+      return await fn();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      }
+    }
+  }
+
+  it("still reports a force-added tracked secret when GIT_DIR alone points at another repository", async () => {
+    // Containment and ignore checks pass here (the work tree is the scanned
+    // directory), so only scrubbing GIT_DIR keeps the real index in use: in
+    // the foreign index .env is untracked and, via the scanned directory's
+    // .gitignore, ignored, so it would be neither listed nor blocking.
+    const foreign = makeTempDir("preflight-secrets-foreign-gitdir-");
+    gitInit(foreign);
+    const repoPath = makeTempDir("preflight-secrets-gitdir-only-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, ".gitignore"), ".env\n");
+    fs.writeFileSync(path.join(repoPath, ".env"), `API_KEY="${REAL_SECRET}"\n`);
+    git(repoPath, "add", "-f", ".env");
+
+    const result = await withEnv({ GIT_DIR: path.join(foreign, ".git") }, () =>
+      runSecretDetection(repoPath),
+    );
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain(".env:1");
+  });
+
+  it("keeps a new untracked secret blocking when GIT_DIR and GIT_WORK_TREE point at a foreign repository with a resolvable diff base", async () => {
+    const remote = makeTempDir("preflight-secrets-foreign-remote-");
+    git(remote, "init", "-q", "--bare", "-b", "main");
+    const foreign = makeTempDir("preflight-secrets-foreign-upstream-");
+    gitInit(foreign);
+    fs.writeFileSync(path.join(foreign, "README.md"), "# foreign\n");
+    gitCommitAll(foreign);
+    git(foreign, "remote", "add", "origin", remote);
+    git(foreign, "push", "-q", "origin", "main");
+    git(foreign, "branch", "-q", "-u", "origin/main");
+    const repoPath = makeTempDir("preflight-secrets-foreign-diffbase-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# scanned\n");
+    fs.writeFileSync(path.join(repoPath, "new.js"), secretLine);
+
+    // Default (diff-scoped) tiering: the foreign repository's diff base and
+    // changed-file set must not be used to classify the scanned directory.
+    const result = await withEnv(
+      { GIT_DIR: path.join(foreign, ".git"), GIT_WORK_TREE: foreign },
+      () => runSecretDetection(repoPath),
+    );
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain("new.js:1");
+  });
+
+  it("uses the git listing for a non-ignored subdirectory and never reads ignored files below it", async () => {
+    const root = makeTempDir("preflight-secrets-subdir-ignored-below-");
+    gitInit(root);
+    fs.writeFileSync(path.join(root, ".gitignore"), "pkg/build/\n");
+    fs.mkdirSync(path.join(root, "pkg", "build"), { recursive: true });
+    fs.writeFileSync(path.join(root, "pkg", "build", "b.js"), secretLine);
+    fs.writeFileSync(path.join(root, "pkg", "ok.js"), "export const a = 1;\n");
+
+    const readSpy = vi.spyOn(fs, "readFileSync");
+    let result;
+    try {
+      result = await runSecretDetection(path.join(root, "pkg"));
+      const readPaths = readSpy.mock.calls.map((c) => String(c[0]));
+      expect(readPaths.some((p) => p.endsWith("b.js"))).toBe(false);
+      expect(readPaths.some((p) => p.endsWith("ok.js"))).toBe(true);
+    } finally {
+      readSpy.mockRestore();
+    }
+
+    expect(result.checks[0]?.status).toBe("pass");
+    expect(result.checks[0]?.details).toEqual([]);
+  });
+
+  /** A bare repository whose work tree is a separate directory (dotfile-manager style). */
+  function makeBarePlusWorktree(): { bare: string; work: string } {
+    const bare = makeTempDir("preflight-secrets-bare-");
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main"], { cwd: bare, stdio: "ignore" });
+    const work = makeTempDir("preflight-secrets-bare-work-");
+    fs.writeFileSync(path.join(work, ".gitignore"), "ign/\n");
+    fs.mkdirSync(path.join(work, "ign"));
+    fs.writeFileSync(path.join(work, "ign", "i.js"), secretLine);
+    fs.writeFileSync(path.join(work, "leak.js"), secretLine);
+    execFileSync(
+      "git",
+      ["--git-dir", bare, "--work-tree", work, "add", ".gitignore", "leak.js"],
+      { cwd: work, stdio: "ignore" },
+    );
+    return { bare, work };
+  }
+
+  it("keeps GIT_DIR and GIT_WORK_TREE of a bare repository with a separate work tree", async () => {
+    const { bare, work } = makeBarePlusWorktree();
+
+    const result = await withEnv({ GIT_DIR: bare, GIT_WORK_TREE: work }, () =>
+      runSecretDetection(work),
+    );
+
+    // The staged secret is committable and blocks; the ignored file is not
+    // read, which also shows the git listing (not the walk) was used.
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["leak.js:1"]);
+  });
+
+  it("works with the environment git exports to a pre-commit hook of such a repository", async () => {
+    const { bare, work } = makeBarePlusWorktree();
+
+    // As exported to a hook by `git --git-dir=... --work-tree=... commit`.
+    const result = await withEnv(
+      { GIT_DIR: bare, GIT_WORK_TREE: work, GIT_INDEX_FILE: path.join(bare, "index"), GIT_PREFIX: "" },
+      () => runSecretDetection(work),
+    );
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["leak.js:1"]);
+  });
+
+  it("uses the git listing for a repository with a separate git directory (.git file)", async () => {
+    const gitDir = path.join(makeTempDir("preflight-secrets-sepgit-dir-"), "repo.git");
+    const repoPath = makeTempDir("preflight-secrets-sepgit-");
+    execFileSync("git", ["init", "-q", "-b", "main", "--separate-git-dir", gitDir], {
+      cwd: repoPath,
+      stdio: "ignore",
+    });
+    expect(fs.statSync(path.join(repoPath, ".git")).isFile()).toBe(true);
+    fs.writeFileSync(path.join(repoPath, ".gitignore"), "ign/\n");
+    fs.mkdirSync(path.join(repoPath, "ign"));
+    fs.writeFileSync(path.join(repoPath, "ign", "i.js"), secretLine);
+    fs.writeFileSync(path.join(repoPath, "leak.js"), secretLine);
+
+    const result = await runSecretDetection(repoPath);
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["leak.js:1"]);
+  });
+
+  it("uses the git listing in a linked worktree whose GIT_DIR points at its own git directory", async () => {
+    const main = makeTempDir("preflight-secrets-linked-main-");
+    gitInit(main);
+    fs.writeFileSync(path.join(main, ".gitignore"), "ign/\n");
+    fs.writeFileSync(path.join(main, "a.js"), "export const a = 1;\n");
+    gitCommitAll(main);
+    const linked = path.join(makeTempDir("preflight-secrets-linked-parent-"), "wt");
+    git(main, "worktree", "add", "-q", "-b", "wt", linked);
+    fs.mkdirSync(path.join(linked, "ign"));
+    fs.writeFileSync(path.join(linked, "ign", "i.js"), secretLine);
+    fs.writeFileSync(path.join(linked, "leak.js"), secretLine);
+    const linkedGitDir = path.join(main, ".git", "worktrees", "wt");
+    expect(fs.existsSync(linkedGitDir)).toBe(true);
+
+    const result = await withEnv(
+      { GIT_DIR: linkedGitDir, GIT_INDEX_FILE: path.join(linkedGitDir, "index") },
+      () => runSecretDetection(linked),
+    );
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["leak.js:1"]);
+  });
+
+  it("does not apply another repository's linked-worktree hook environment to the scanned repository", async () => {
+    // Hook environment of repository A's linked worktree (GIT_DIR,
+    // GIT_INDEX_FILE, GIT_PREFIX) while scanning repository B, whose
+    // .env is force-added although ignored. Only discarding the foreign
+    // GIT_INDEX_FILE makes B's own index the one that is listed.
+    const a = makeTempDir("preflight-secrets-hookenv-a-");
+    gitInit(a);
+    fs.writeFileSync(path.join(a, "x.txt"), "x\n");
+    gitCommitAll(a);
+    const aLinked = path.join(makeTempDir("preflight-secrets-hookenv-awt-"), "wt");
+    git(a, "worktree", "add", "-q", "-b", "wt", aLinked);
+    const aGitDir = path.join(a, ".git", "worktrees", "wt");
+    const b = makeTempDir("preflight-secrets-hookenv-b-");
+    gitInit(b);
+    fs.writeFileSync(path.join(b, ".gitignore"), ".env\n");
+    fs.writeFileSync(path.join(b, ".env"), `API_KEY="${REAL_SECRET}"\n`);
+    git(b, "add", "-f", ".env", ".gitignore");
+
+    const result = await withEnv(
+      { GIT_DIR: aGitDir, GIT_INDEX_FILE: path.join(aGitDir, "index"), GIT_PREFIX: "" },
+      () => runSecretDetection(b, { secretDetectionStrict: true }),
+    );
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toContain(".env:1");
+  });
+
+  it("still blocks a committable secret when GIT_WORK_TREE alone points at an unrelated directory", async () => {
+    const repoPath = makeTempDir("preflight-secrets-worktree-only-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, "n.js"), secretLine);
+    const elsewhere = makeTempDir("preflight-secrets-worktree-elsewhere-");
+
+    const result = await withEnv({ GIT_WORK_TREE: elsewhere }, () =>
+      runSecretDetection(repoPath, { secretDetectionStrict: true }),
+    );
+
+    // Trusting that redirected (empty) work tree would list nothing and
+    // report a clean pass.
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["n.js:1"]);
+  });
+
+  it("reports a secret in a merge-conflicted file exactly once", async () => {
+    const repoPath = makeTempDir("preflight-secrets-conflict-");
+    gitInit(repoPath);
+    const file = path.join(repoPath, "conflicted.js");
+    const body = (first: string, last: string) =>
+      `${first}\nline2\nline3\n${secretLine}line5\nline6\n${last}\n`;
+    fs.writeFileSync(file, body("base-first", "base-last"));
+    gitCommitAll(repoPath);
+    git(repoPath, "checkout", "-q", "-b", "other");
+    fs.writeFileSync(file, body("theirs-first", "theirs-last"));
+    git(repoPath, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qam", "theirs");
+    git(repoPath, "checkout", "-q", "main");
+    fs.writeFileSync(file, body("ours-first", "ours-last"));
+    git(repoPath, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qam", "ours");
+    // The merge must stop with a conflict (git exits non-zero), so the
+    // index then holds three stages of conflicted.js.
+    expect(() =>
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "merge", "other"], { cwd: repoPath, stdio: "ignore" }),
+    ).toThrow();
+    const listed = execFileSync("git", ["ls-files"], { cwd: repoPath, encoding: "utf8" })
+      .split("\n")
+      .filter((l) => l === "conflicted.js");
+    expect(listed.length).toBe(3);
+
+    const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details?.filter((d) => d.startsWith("conflicted.js:"))).toHaveLength(1);
+  });
+
+  describe("paths git lists but the scan must not trust", () => {
+    /** A tracked config/settings.js whose directory is then replaced by a symlink to `target`. */
+    function repoWithSymlinkedDir(target: (repoPath: string) => string): string {
+      const repoPath = makeTempDir("preflight-secrets-symdir-");
+      gitInit(repoPath);
+      fs.mkdirSync(path.join(repoPath, "config"));
+      fs.writeFileSync(path.join(repoPath, "config", "settings.js"), "module.exports = {};\n");
+      gitCommitAll(repoPath);
+      const real = target(repoPath);
+      fs.rmSync(path.join(repoPath, "config"), { recursive: true });
+      fs.symlinkSync(real, path.join(repoPath, "config"), "dir");
+      fs.writeFileSync(path.join(repoPath, "new-leak.js"), secretLine);
+      return repoPath;
+    }
+
+    async function scanWithReadSpy(repoPath: string) {
+      const readSpy = vi.spyOn(fs, "readFileSync");
+      try {
+        const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+        return { result, readPaths: readSpy.mock.calls.map((c) => String(c[0])) };
+      } finally {
+        readSpy.mockRestore();
+      }
+    }
+
+    it("does not read a tracked file through a directory replaced by a symlink to a tree outside the repository, and a new secret still blocks", async () => {
+      const outside = makeTempDir("preflight-secrets-symdir-outside-");
+      fs.writeFileSync(path.join(outside, "settings.js"), secretLine);
+
+      const repoPath = repoWithSymlinkedDir(() => outside);
+      const { result, readPaths } = await scanWithReadSpy(repoPath);
+
+      expect(readPaths.some((p) => p.includes(outside) || p.includes(`${path.sep}config${path.sep}`))).toBe(false);
+      expect(result.checks[0]?.status).toBe("fail");
+      expect(result.checks[0]?.details).toEqual(["new-leak.js:1"]);
+    });
+
+    it("does not read a tracked file through a directory replaced by a symlink to a tree inside the repository", async () => {
+      const repoPath = repoWithSymlinkedDir((r) => {
+        const real = path.join(r, "real-config");
+        fs.mkdirSync(real);
+        fs.writeFileSync(path.join(real, "settings.js"), secretLine);
+        fs.writeFileSync(path.join(r, ".gitignore"), "real-config/\n");
+        return real;
+      });
+      const { result, readPaths } = await scanWithReadSpy(repoPath);
+
+      expect(readPaths.some((p) => p.includes(`${path.sep}config${path.sep}`))).toBe(false);
+      expect(readPaths.some((p) => p.includes(`${path.sep}real-config${path.sep}`))).toBe(false);
+      expect(result.checks[0]?.status).toBe("fail");
+      expect(result.checks[0]?.details).toEqual(["new-leak.js:1"]);
+    });
+
+    it("does not read a file below a nested symlinked directory either", async () => {
+      const outside = makeTempDir("preflight-secrets-symdir-nested-outside-");
+      fs.mkdirSync(path.join(outside, "deep"));
+      fs.writeFileSync(path.join(outside, "deep", "s.js"), secretLine);
+      const repoPath = makeTempDir("preflight-secrets-symdir-nested-");
+      gitInit(repoPath);
+      fs.mkdirSync(path.join(repoPath, "a", "b"), { recursive: true });
+      fs.writeFileSync(path.join(repoPath, "a", "b", "s.js"), "module.exports = {};\n");
+      gitCommitAll(repoPath);
+      fs.rmSync(path.join(repoPath, "a", "b"), { recursive: true });
+      fs.symlinkSync(path.join(outside, "deep"), path.join(repoPath, "a", "b"), "dir");
+
+      const { result, readPaths } = await scanWithReadSpy(repoPath);
+
+      expect(readPaths.some((p) => p.includes(outside))).toBe(false);
+      expect(result.checks[0]?.status).toBe("pass");
+    });
+
+    it("does not read a tracked file through a symlinked grandparent directory", async () => {
+      const outside = makeTempDir("preflight-secrets-symdir-grand-outside-");
+      fs.mkdirSync(path.join(outside, "b"));
+      fs.writeFileSync(path.join(outside, "b", "c.js"), secretLine);
+      const repoPath = makeTempDir("preflight-secrets-symdir-grand-");
+      gitInit(repoPath);
+      fs.mkdirSync(path.join(repoPath, "a", "b"), { recursive: true });
+      fs.writeFileSync(path.join(repoPath, "a", "b", "c.js"), "module.exports = {};\n");
+      gitCommitAll(repoPath);
+      fs.rmSync(path.join(repoPath, "a"), { recursive: true });
+      fs.symlinkSync(outside, path.join(repoPath, "a"), "dir");
+
+      const { result, readPaths } = await scanWithReadSpy(repoPath);
+
+      expect(readPaths.some((p) => p.includes(outside) || p.includes(`${path.sep}a${path.sep}b${path.sep}`))).toBe(false);
+      expect(result.checks[0]?.status).toBe("pass");
+    });
+
+    it("does not read any of several tracked files under one directory replaced by a symlink", async () => {
+      const outside = makeTempDir("preflight-secrets-symdir-multi-outside-");
+      fs.writeFileSync(path.join(outside, "a.js"), secretLine);
+      fs.writeFileSync(path.join(outside, "b.js"), secretLine);
+      const repoPath = makeTempDir("preflight-secrets-symdir-multi-");
+      gitInit(repoPath);
+      fs.mkdirSync(path.join(repoPath, "c"));
+      fs.writeFileSync(path.join(repoPath, "c", "a.js"), "module.exports = {};\n");
+      fs.writeFileSync(path.join(repoPath, "c", "b.js"), "module.exports = {};\n");
+      gitCommitAll(repoPath);
+      fs.rmSync(path.join(repoPath, "c"), { recursive: true });
+      fs.symlinkSync(outside, path.join(repoPath, "c"), "dir");
+
+      const { result, readPaths } = await scanWithReadSpy(repoPath);
+
+      expect(readPaths.some((p) => p.includes(outside) || p.includes(`${path.sep}c${path.sep}`))).toBe(false);
+      expect(result.checks[0]?.status).toBe("pass");
+    });
+
+    it("keeps a bare repository target non-blocking as not a work tree", async () => {
+      const repoPath = makeTempDir("preflight-secrets-bare-");
+      execFileSync("git", ["init", "-q", "--bare", repoPath]);
+      fs.writeFileSync(path.join(repoPath, "description"), secretLine);
+
+      const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+      expect(result.checks[0]?.status).toBe("warn");
+      expect(result.limitations.some((l) => l.includes("not a git repository"))).toBe(true);
+      expect(result.limitations.some((l) => l.includes("could not classify"))).toBe(false);
+    });
+
+    // Each name is spelled out here rather than imported, so removing one from
+    // the scrubbed list in the source fails its own case. Each case sets
+    // exactly one switch; git's check-ignore rejects every call under any of them.
+    it.each([
+      "GIT_LITERAL_PATHSPECS",
+      "GIT_GLOB_PATHSPECS",
+      "GIT_NOGLOB_PATHSPECS",
+      "GIT_ICASE_PATHSPECS",
+    ])("ignores an inherited pathspec mode switch %s: an ignored tree below a subdirectory target is neither read nor blocking", async (name) => {
+      const repoPath = makeTempDir("preflight-secrets-pathspec-env-");
+      gitInit(repoPath);
+      fs.mkdirSync(path.join(repoPath, "sub", "ignored"), { recursive: true });
+      fs.writeFileSync(path.join(repoPath, ".gitignore"), "sub/ignored/\n");
+      fs.writeFileSync(path.join(repoPath, "sub", "ok.js"), "module.exports = {};\n");
+      gitCommitAll(repoPath);
+      fs.writeFileSync(path.join(repoPath, "sub", "ignored", "s.js"), secretLine);
+
+      const saved = process.env[name];
+      process.env[name] = "1";
+      try {
+        const { result, readPaths } = await scanWithReadSpy(path.join(repoPath, "sub"));
+        expect(readPaths.some((p) => p.includes(`${path.sep}ignored${path.sep}`))).toBe(false);
+        expect(result.checks[0]?.status).toBe("pass");
+      } finally {
+        if (saved === undefined) delete process.env[name]; else process.env[name] = saved;
+      }
+    });
+
+    it("keeps a new secret blocking when a file is named like pathspec magic", async () => {
+      const repoPath = makeTempDir("preflight-secrets-magic-name-");
+      gitInit(repoPath);
+      fs.writeFileSync(path.join(repoPath, ":(exclude)x.js"), secretLine);
+      fs.writeFileSync(path.join(repoPath, "new-leak.js"), secretLine);
+
+      const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+      expect(result.checks[0]?.status).toBe("fail");
+      expect(result.checks[0]?.details).toEqual(
+        expect.arrayContaining([":(exclude)x.js:1", "new-leak.js:1"]),
+      );
+      expect(result.checks[0]?.details?.some((d) => d.includes("non-blocking"))).toBe(false);
+    });
+
+    it("classifies a file named like pathspec magic as itself (ignored by a parent repository: non-blocking)", async () => {
+      const parent = makeTempDir("preflight-secrets-magic-parent-");
+      gitInit(parent);
+      fs.writeFileSync(path.join(parent, ".gitignore"), "build/\n");
+      const repoPath = path.join(parent, "build", "proj");
+      fs.mkdirSync(repoPath, { recursive: true });
+      fs.writeFileSync(path.join(repoPath, ":(exclude)x.js"), secretLine);
+
+      const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+      // Walk fallback (the parent ignores repoPath). The name is looked up
+      // as a file name, so the parent's ignore rule applies and it warns.
+      expect(result.checks[0]?.status).toBe("warn");
+      expect(result.checks[0]?.details).toEqual([":(exclude)x.js:1 (non-blocking)"]);
+      expect(result.limitations.some((l) => l.includes("could not classify"))).toBe(false);
+    });
+
+    it("keeps findings blocking when git cannot classify them inside a work tree", async () => {
+      const repoPath = makeTempDir("preflight-secrets-corrupt-index-");
+      gitInit(repoPath);
+      fs.writeFileSync(path.join(repoPath, "new-leak.js"), secretLine);
+      // A corrupt index makes `git ls-files` and `git check-ignore` fail
+      // while the directory is still plainly a git work tree.
+      fs.writeFileSync(path.join(repoPath, ".git", "index"), "this is not an index\n");
+
+      const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+      expect(result.checks[0]?.status).toBe("fail");
+      expect(result.checks[0]?.details).toEqual(["new-leak.js:1"]);
+      expect(result.limitations.some((l) => l.includes("not a git repository"))).toBe(false);
+      expect(result.limitations.some((l) => l.includes("could not classify 1 path(s)"))).toBe(true);
+    });
   });
 });

@@ -14,7 +14,7 @@ Check-specific descriptions below use the default gate unless stated otherwise. 
 | Typecheck | `typecheck` | Type errors and broken builds | `tsc --noEmit`, `mypy`, `phpstan`, `psalm`, `mvn compile`, `gradle classes` | `fail` on type errors |
 | Test | `test` | Broken test suites | `npm test`, `pytest`, `composer run test`, `mvn test`, `gradle test` | `fail` when tests fail; `skip` for the auto-detected `npm test` when every failing package is unbuilt on disk (it has a `build` script of its own, a declared artifact is missing), holds no build output at all, and its own output names a path that resolves either to that missing artifact itself or to something in the missing artifact's directory that is likewise NOT on disk. "Holds no build output" is a PACKAGE property: every output directory the package identifies (the directory of each declared artifact, plus `dist` when it identifies none) is absent or empty. Any entry in any of them means a build ran and did not produce the artifact, so a partially built package (one declared artifact its build never emits, the rest built -- including one emitted into a different or nested directory) stays a blocking `fail` whose message names the directory that decided it, the artifact, and the rebuild remedy; a stale partial output directory is included. See ["Build-required test classification"](#build-required-test-classification-an-unbuilt-package-is-not-a-broken-one) below |
 | Dependency audit | `audit` | Known CVEs in dependencies | `npm audit --json`, `pip-audit`, `composer audit` | `fail` on high-severity findings; `skip` with a limitation when npm returned no report (including a timeout) |
-| Secret detection | `secret-detection` | API keys, tokens, private keys in source files | regex scan, git-aware + diff-scoped severity | `fail` only when the current change introduced the secret; `warn` for pre-existing, gitignored, docs, or non-git |
+| Secret detection | `secret-detection` | API keys, tokens, private keys in source files | regex scan, git-aware + diff-scoped severity | `fail` only when the current change introduced the secret; `warn` for pre-existing, docs, test-fixture, or non-git (gitignored files are not scanned inside a git work tree) |
 | Commit convention | `commit-convention` | Recent commit messages that do not follow conventional commits | `git log` | `warn` only |
 | TDD signal | `tdd` | Source files changed in the last commit without a paired test file | `git diff HEAD~1..HEAD`, filesystem scan | `warn` to nudge; blocks only when `tdd` is required; associates filenames only, it does not establish coverage or prove a TDD workflow |
 | CI simulation (opt-in) | `ci-simulation` | Workflow failures before push | `act` against `.github/workflows/` | `fail` when act exits non-zero |
@@ -278,7 +278,7 @@ The setup phase is intentionally conservative. It only runs when the project fil
 ## Behavior notes
 
 - Dependency bootstrap is opt-in. The runner never touches `node_modules/`, `vendor/`, or virtualenvs unless `--setup` is passed.
-- Secret detection is git-aware and diff-scoped. A hit is a `fail` blocker only when the secret can reach the remote **and** the current change introduced it: the file is committable (tracked, or untracked-but-not-ignored) **and** the current branch changed it, measured against the merge-base with the upstream / default branch (uncommitted edits and new untracked files included). A hit in a gitignored-and-untracked file (a `.env` holding real credentials is the normal, correct state), in a `.md` documentation file, in a directory that is not a git repository, or in a tracked file the branch never touched is a non-blocking `warn`. When the merge-base cannot be resolved the check fails safe and treats every committable finding as blocking. Set `"secretDetectionStrict": true` to drop the diff-scoping and block on every committable finding. A finding is also downgraded to `warn` (regardless of diff scope or `secretDetectionStrict`) when it is an obvious test-fixture constant: the file lives under a directory literally named `test` or `tests` **and** the matched value itself starts with `test-`/`test_`/`dummy-`/`dummy_`/`fake-`/`fake_`; either condition alone still blocks (see ["Secret detection: obvious test-fixture values don't block"](#secret-detection-obvious-test-fixture-values-dont-block) below for the exact boundary and why it's kept narrow). Keep example values in template files like `.env.example` or `.env.template`. For a measured comparison of the current regex-based engine against gitleaks and trufflehog (class coverage, false positives, runtime, license), see [`docs/secret-scanner-investigation.md`](secret-scanner-investigation.md).
+- Secret detection is git-aware and diff-scoped. A hit is a `fail` blocker only when the secret can reach the remote **and** the current change introduced it: the file is committable (tracked, or untracked-but-not-ignored) **and** the current branch changed it, measured against the merge-base with the upstream / default branch (uncommitted edits and new untracked files included). Gitignored-and-untracked files (a `.env` holding real credentials is the normal, correct state) are not scanned at all inside a git work tree (see [Secret detection: scanned file set](#secret-detection-scanned-file-set)). A hit in a `.md` documentation file, in a directory that is not a git repository, or in a tracked file the branch never touched is a non-blocking `warn`. When the merge-base cannot be resolved the check fails safe and treats every committable finding as blocking. Set `"secretDetectionStrict": true` to drop the diff-scoping and block on every committable finding. A finding is also downgraded to `warn` (regardless of diff scope or `secretDetectionStrict`) when it is an obvious test-fixture constant: the file lives under a directory literally named `test` or `tests` **and** the matched value itself starts with `test-`/`test_`/`dummy-`/`dummy_`/`fake-`/`fake_`; either condition alone still blocks (see ["Secret detection: obvious test-fixture values don't block"](#secret-detection-obvious-test-fixture-values-dont-block) below for the exact boundary and why it's kept narrow). Keep example values in template files like `.env.example` or `.env.template`. For a measured comparison of the current regex-based engine against gitleaks and trufflehog (class coverage, false positives, runtime, license), see [`docs/secret-scanner-investigation.md`](secret-scanner-investigation.md).
 - To suppress an intentional finding (a demo/example key), either list it in `secretAllowlist` in `.preflight.json` (entries are a repo-relative path, a `path:line` pair, or a `*`-glob) or put a `pragma: allowlist secret` comment on the line:
 
   ```json
@@ -800,6 +800,88 @@ identical to `true`, with no acknowledge behavior in play.
   test-fixture values don't block" below. A configured but ignored
   `checks.secretDetection.acknowledge` is reported in `limitations` (not
   silently dropped), pointing at these alternatives.
+
+## Secret detection: scanned file set
+
+Inside a git work tree, secret detection scans exactly the files git reports
+as committable: tracked files plus untracked files that no ignore rule
+excludes (`git ls-files -z --cached --others --exclude-standard`, relative to
+the scanned directory). Everything else is not read:
+
+- **Gitignored, untracked files are not scanned.** They cannot reach the
+  remote, so before this change they only ever produced non-blocking
+  warnings, but the filesystem walk read them anyway, which made the check
+  slow on trees with large gitignored directories (a CMS webroot's
+  `core`/`contrib`/`libraries` is the typical case). Those warnings no longer
+  appear. There is no opt-in to scan them. A tracked file stays in scope even
+  when an ignore rule matches it (for example a force-added `.env`).
+- **Deleted and non-regular entries are skipped.** A path git lists that is
+  missing from the work tree is ignored. Symlinks are never followed, as
+  before: neither a link that is itself the listed file, nor a link standing in
+  for any directory on the way to it (a tracked directory replaced on disk by a
+  symlink). A listed path is read only when every directory between the
+  scanned directory and the file is a real directory, so nothing outside the
+  repository, or behind a link, is read.
+- **Existing filters still apply to the listed set.** A path with any segment
+  in the built-in skip list (`node_modules`, `vendor`, `dist`, `.venv`,
+  `.next`, `.cache`, ...) is skipped even when tracked, and the file-level
+  rules (binary extensions, files over 2 MiB, `.env.example` templates,
+  `*.test.ts`) are unchanged. Severity rules, patterns and diff-scoping are
+  unchanged.
+- **Subdirectories.** When the scanned directory is a subdirectory of the git
+  root, only that subtree is scanned and reported paths are relative to it.
+- **Submodules and nested repositories** are not scanned: git lists them as a
+  single directory entry, and their files cannot be committed into this
+  repository. Scan them from inside, as their own repositories; this also
+  applies when a push recurses into submodules (`push --recurse-submodules`),
+  which publishes their commits too.
+- **Submodule side effect.** Because submodule files are no longer walked,
+  a finding inside one can no longer make `git check-ignore` fail and
+  downgrade every finding in the repository to a non-blocking warning; a new
+  secret in the parent repository blocks again.
+- **A path git cannot classify never downgrades another finding.** The ignore
+  classification runs `git check-ignore` with NUL-separated paths, each given
+  as `./<path>` so a file name starting with `:` is not read as pathspec magic.
+  Inside a work tree, if git still fails on the batch, each path is checked on
+  its own and a path git cannot classify stays eligible to block (the
+  limitations list says how many). Only a directory that is not a git work
+  tree (or a missing `git`) reports every finding as a non-blocking warning
+  with the "not a git repository" limitation.
+- **Fallback.** The check falls back to walking the directory tree (previous
+  behaviour: findings outside git are non-blocking, and gitignored files are
+  scanned and warn) rather than scanning nothing whenever the git listing
+  cannot be trusted to cover the scanned directory: outside a git work tree,
+  with `git` missing, when any git command fails, when the work tree's top
+  level does not contain the scanned directory, when the scanned directory is
+  itself ignored by a parent repository (an ignored build directory, a
+  project under an ignore-everything dotfiles repository), or when git lists
+  entries but none of them exists on disk.
+
+  Every git call secret detection makes (file listing, ignore classification,
+  diff base and changed files) runs in one environment, chosen once per run, so
+  they all describe the same repository. Inherited `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_COMMON_DIR` and `GIT_PREFIX` are **kept** when the repository they select
+  has a work tree containing the scanned directory and is the same repository
+  that plain discovery from that directory finds (or discovery finds none): this
+  is what hooks of linked worktrees and of bare repositories with a separate
+  work tree (dotfile managers) export. They are **removed** when they point
+  elsewhere: the selected work tree does not contain the scanned directory, or
+  the selected repository differs from the one containing it. A redirect to
+  another repository would otherwise list that repository's files and
+  classify against its ignore rules and diff base. Two limits follow from the
+  rule: "the same repository" compares the common git directory, so the hook
+  environment of one linked worktree is also accepted when a sibling worktree
+  of the same repository is scanned; and when only the environment defines the
+  repository (discovery finds none), that repository's ignore rules decide
+  what is listed, so its excludes can leave files unscanned. `GIT_INDEX_FILE` is kept
+  together with the inherited variables (a hook running `git commit` lists the
+  tracked files of the index being committed; a file tracked only in the real
+  index that matches an ignore rule is then not listed, as it is not part of
+  that commit) and removed together with the others when they are removed,
+  because it was exported for the other repository. `GIT_INDEX_FILE` is not checked on its own: when it is the only inherited variable that belongs to another repository (for example a hook of repository A scanning repository B), that index is used, and an ignored file force-added in B but not tracked by that index is then not listed. Inherited
+  `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` and
+  `GIT_ICASE_PATHSPECS` are always removed for secret detection: they select no
+  repository, and while one of them is set `git check-ignore` fails on every call.
 
 ## Secret detection: obvious test-fixture values don't block
 
