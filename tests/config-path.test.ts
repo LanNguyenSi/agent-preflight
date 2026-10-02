@@ -16,6 +16,7 @@ import {
 } from "../src/config.js";
 import { createProgram } from "../src/cli.js";
 import { createSandboxPlan } from "../src/sandbox.js";
+import { runBatch } from "../src/batch.js";
 import type { PreflightResult } from "../src/types.js";
 
 const tempDirs: string[] = [];
@@ -165,14 +166,39 @@ describe("loadConfigFromFile", () => {
     expect(() => loadConfigFromFile(file)).toThrow(/cannot read/);
   });
 
-  it("merges the file over the defaults and keeps field validation warnings non-fatal", () => {
+  it("merges a clean file over the defaults", () => {
     const dir = makeTempDir("preflight-cfgpath-files-");
-    const file = writeFile(dir, "ok.json", JSON.stringify({ protectedBranches: ["trunk"], logDir: 5 }));
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const file = writeFile(dir, "ok.json", JSON.stringify({ protectedBranches: ["trunk"] }));
     const loaded = loadConfigFromFile(file);
     expect(loaded.config.protectedBranches).toEqual(["trunk"]);
     expect(loaded.config.checks?.lint).toBe(true);
     expect(loaded.path).toBe(file);
+  });
+
+  it("treats every validation warning as fatal and lists all of them", () => {
+    const dir = makeTempDir("preflight-cfgpath-files-");
+    const file = writeFile(
+      dir,
+      "warn.json",
+      JSON.stringify({
+        logDir: 5,
+        checks: { secretDetection: "yes" },
+        customChecks: [{ name: "must-run", comand: "false" }],
+        customCheck: [],
+      })
+    );
+    let message = "";
+    try {
+      loadConfigFromFile(file);
+    } catch (err) {
+      expect(err).toBeInstanceOf(ExplicitConfigError);
+      message = (err as Error).message;
+    }
+    expect(message).toContain(file);
+    expect(message).toContain("logDir");
+    expect(message).toContain("checks.secretDetection");
+    expect(message).toContain("customChecks[0]");
+    expect(message).toContain('unrecognized field "customCheck"');
   });
 });
 
@@ -233,7 +259,23 @@ describe("loadConfigWithSource", () => {
     const loaded = loadConfigWithSource(repo);
     expect(loaded.config.checks?.lint).toBe(true);
     expect(loaded.config.workingDir).toBe(".");
+    expect(loaded.source).toEqual({ source: "none", path: null });
+  });
+
+  it("reports none when the repo .preflight.json is a directory or not an object", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const dirRepo = makeRepo();
+    fs.mkdirSync(path.join(dirRepo, ".preflight.json"));
+    expect(loadConfigWithSource(dirRepo).source).toEqual({ source: "none", path: null });
+    expect(loadConfigWithSource(makeRepo("[]")).source).toEqual({ source: "none", path: null });
+  });
+
+  it("keeps reporting repo for a repo file that loads with field warnings", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const repo = makeRepo(JSON.stringify({ logDir: 5, protectedBranches: ["x"] }));
+    const loaded = loadConfigWithSource(repo);
     expect(loaded.source.source).toBe("repo");
+    expect(loaded.config.protectedBranches).toEqual(["x"]);
   });
 });
 
@@ -338,6 +380,54 @@ describe("preflight run --config (real runner)", () => {
     expect(fs.existsSync(sentinel)).toBe(false);
   });
 
+  it("fails with exit 1, lists every problem and runs no check for an explicit file with field warnings", async () => {
+    const sentinel = path.join(makeTempDir("preflight-cfgpath-sentinel-"), "ran");
+    const repo = makeRepo(configWithCheck("repo-check", `touch ${sentinel}`));
+    const bad = writeFile(
+      makeTempDir("preflight-cfgpath-ext-"),
+      "drop.json",
+      JSON.stringify({
+        checks: { ...BASE_CHECKS, secretDetection: "yes" },
+        customChecks: [{ name: "must-run", comand: `touch ${sentinel}` }],
+        customCheck: [],
+      })
+    );
+
+    const viaOption = await runCli(["run", repo, "--json", "--config", bad]);
+    expect(viaOption.exitCode).toBe(1);
+    expect(viaOption.json).toBeUndefined();
+    expect(viaOption.stderr).toContain("customChecks[0]");
+    expect(viaOption.stderr).toContain("checks.secretDetection");
+    expect(viaOption.stderr).toContain('unrecognized field "customCheck"');
+
+    vi.stubEnv("PREFLIGHT_CONFIG", bad);
+    const viaEnv = await runCli(["run", repo, "--json"]);
+    expect(viaEnv.exitCode).toBe(1);
+    expect(fs.existsSync(sentinel)).toBe(false);
+  });
+
+  it("still runs with warnings from a repo file (lenient behaviour unchanged)", async () => {
+    const repo = makeRepo(configWithCheck("repo-check", "true", { surprise: true }));
+    const { exitCode, json } = await runCli(["run", repo, "--json"]);
+    expect(exitCode).toBe(0);
+    expect(json?.config?.source).toBe("repo");
+  });
+
+  it("does not pass PREFLIGHT_CONFIG on to check commands", async () => {
+    const repo = makeRepo();
+    const external = writeFile(
+      makeTempDir("preflight-cfgpath-ext-"),
+      "shared.json",
+      configWithCheck("env-hidden", 'test -z "${PREFLIGHT_CONFIG+set}"')
+    );
+    const { exitCode, json } = await runCli(["run", repo, "--json", "--config", external]);
+    expect(exitCode).toBe(0);
+    expect(json?.checks.find((c) => c.name === "env-hidden")?.status).toBe("pass");
+    vi.stubEnv("PREFLIGHT_CONFIG", external);
+    const viaEnv = await runCli(["run", repo, "--json"]);
+    expect(viaEnv.json?.checks.find((c) => c.name === "env-hidden")?.status).toBe("pass");
+  });
+
   it("treats an empty PREFLIGHT_CONFIG as unset", async () => {
     const repo = makeRepo(configWithCheck("repo-check", "true"));
     vi.stubEnv("PREFLIGHT_CONFIG", "");
@@ -346,7 +436,36 @@ describe("preflight run --config (real runner)", () => {
   });
 });
 
+describe("batch ignores an explicit config", () => {
+  it("uses each repo's own file even when PREFLIGHT_CONFIG is set", async () => {
+    const root = makeTempDir("preflight-cfgpath-batch-");
+    const repo = path.join(root, "one");
+    fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".preflight.json"), configWithCheck("repo-check", "true"));
+    const sentinel = path.join(makeTempDir("preflight-cfgpath-sentinel-"), "ran");
+    const external = writeFile(
+      makeTempDir("preflight-cfgpath-ext-"),
+      "shared.json",
+      configWithCheck("external-check", `touch ${sentinel}`)
+    );
+    vi.stubEnv("PREFLIGHT_CONFIG", external);
+
+    const batch = await runBatch(root);
+    expect(batch.results[0].result?.checks.map((c) => c.name)).toEqual(["repo-check"]);
+    expect(batch.results[0].result?.config).toBeUndefined();
+    expect(fs.existsSync(sentinel)).toBe(false);
+  });
+});
+
 describe("sandbox rejects an explicit config", () => {
+  it("exits 1 with a one-line message and no stack trace at the CLI", async () => {
+    vi.stubEnv("PREFLIGHT_CONFIG", "/some/shared.json");
+    const { exitCode, stderr } = await runCli(["sandbox", makeRepo(), "--print"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("preflight: sandbox does not support an explicit config file");
+    expect(stderr).not.toContain("    at ");
+  });
+
   it("fails with a clear message for the environment variable", async () => {
     vi.stubEnv("PREFLIGHT_CONFIG", "/some/shared.json");
     await expect(createSandboxPlan(makeRepo(), { print: true })).rejects.toThrow(

@@ -142,6 +142,7 @@ async function runCommand(args: string[]): Promise<{ exitCode: number | undefine
 let localProgram: ReturnType<typeof createProgram>;
 
 beforeEach(() => {
+  vi.stubEnv("PREFLIGHT_CONFIG", "");
   localProgram = createProgram();
 
   mockLoadConfig.mockReturnValue({
@@ -169,6 +170,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.clearAllMocks();
 });
 

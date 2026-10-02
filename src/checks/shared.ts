@@ -2037,9 +2037,13 @@ function buildCommandEnv(repoPath: string): NodeJS.ProcessEnv {
     process.env.PATH ?? "",
   ].filter(Boolean);
 
+  // PREFLIGHT_CONFIG selects preflight's own config file; it is not meant
+  // for the checked project's commands, so it is cleared for them
+  // (undefined removes the variable even when the child env is extended).
   return {
     ...process.env,
     PATH: pathEntries.join(":"),
+    PREFLIGHT_CONFIG: undefined,
   };
 }
 

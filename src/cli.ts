@@ -232,7 +232,16 @@ export function createProgram(): Command {
     .option("--no-audit", "Skip dependency audit")
     .option("--no-secrets", "Skip secret detection")
     .action(async (repoPath: string | undefined, opts) => {
-      await runSandbox(repoPath, opts);
+      try {
+        await runSandbox(repoPath, opts);
+      } catch (err) {
+        if (err instanceof ExplicitConfigError) {
+          process.stderr.write(`preflight: ${err.message}\n`);
+          process.exit(1);
+          return;
+        }
+        throw err;
+      }
     });
 
   return prog;

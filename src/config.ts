@@ -163,10 +163,21 @@ export function validateConfig(parsed: unknown): ConfigValidationResult {
 }
 
 export function loadConfig(repoPath: string): PreflightConfig {
+  return readRepoConfig(repoPath).config;
+}
+
+/**
+ * Reads `<repoPath>/.preflight.json` with the long-standing lenient rules
+ * (warn and keep defaults on any problem) and also reports whether the file
+ * was actually used. `loaded` is false when the file is absent, unreadable,
+ * a directory, not valid JSON or not a JSON object, i.e. whenever the
+ * defaults apply instead of the file.
+ */
+function readRepoConfig(repoPath: string): { config: PreflightConfig; loaded: boolean } {
   const configPath = path.join(repoPath, CONFIG_FILENAME);
 
   if (!fs.existsSync(configPath)) {
-    return defaultConfig();
+    return { config: defaultConfig(), loaded: false };
   }
 
   try {
@@ -176,10 +187,10 @@ export function loadConfig(repoPath: string): PreflightConfig {
     for (const warning of warnings) {
       console.warn(`[preflight] Warning: ${configPath}: ${warning}`);
     }
-    return mergeConfig(defaultConfig(), validated);
+    return { config: mergeConfig(defaultConfig(), validated), loaded: isPlainObject(parsed) };
   } catch (err) {
     console.warn(`[preflight] Warning: failed to parse ${configPath}: ${(err as Error).message}`);
-    return defaultConfig();
+    return { config: defaultConfig(), loaded: false };
   }
 }
 
@@ -199,7 +210,8 @@ export class ExplicitConfigError extends Error {
  * failure (missing, unreadable, not a regular file, invalid JSON, top level
  * not an object) throws an `ExplicitConfigError` instead of falling back to
  * defaults. A relative `filePath` is resolved against `process.cwd()`.
- * Field-level validation warnings are printed, same as for the repo file.
+ * Unlike the repo file, every validation warning (wrong field type, dropped
+ * entry, unknown key) is fatal here: the error lists all of them.
  */
 export function loadConfigFromFile(filePath: string): { config: PreflightConfig; path: string } {
   const resolved = path.resolve(process.cwd(), filePath);
@@ -230,8 +242,10 @@ export function loadConfigFromFile(filePath: string): { config: PreflightConfig;
     );
   }
   const { config: validated, warnings } = validateConfig(parsed);
-  for (const warning of warnings) {
-    console.warn(`[preflight] Warning: ${resolved}: ${warning}`);
+  if (warnings.length > 0) {
+    throw new ExplicitConfigError(
+      `config file ${resolved} is invalid:\n${warnings.map((w) => `  - ${w}`).join("\n")}`
+    );
   }
   return { config: mergeConfig(defaultConfig(), validated), path: resolved };
 }
@@ -269,10 +283,9 @@ export function loadConfigWithSource(
     const loaded = loadConfigFromFile(explicit.path);
     return { config: loaded.config, source: { source: explicit.origin, path: loaded.path } };
   }
-  const repoFile = path.join(repoPath, CONFIG_FILENAME);
-  const config = loadConfig(repoPath);
-  return fs.existsSync(repoFile)
-    ? { config, source: { source: "repo", path: repoFile } }
+  const { config, loaded } = readRepoConfig(repoPath);
+  return loaded
+    ? { config, source: { source: "repo", path: path.join(repoPath, CONFIG_FILENAME) } }
     : { config, source: { source: "none", path: null } };
 }
 
