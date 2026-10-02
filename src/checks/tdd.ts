@@ -23,47 +23,84 @@ async function gitLines(cwd: string, args: string[]): Promise<string[] | null> {
   return stdout.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
+const DEFAULT_BRANCHES = ["main", "master"];
+
 /**
- * Nearest merge base of HEAD with a default branch, or null. Candidates are
- * the local refs `<remote>/HEAD`, `<remote>/main` and `<remote>/master` of
- * every remote plus local `main` and `master` (no network). The current
- * branch, its upstream and any symbolic ref pointing at either are skipped,
- * and so is a candidate whose merge base is HEAD itself, since it carries no
- * information. Of the rest, the merge base with the fewest commits up to
- * HEAD wins, so a stale fork or a leftover `master` loses to a nearer base. A
- * pushed branch has its upstream at HEAD, so this keeps the earlier commits
- * of the branch visible.
+ * The base of the changed-file set: the nearest trustworthy merge base of
+ * HEAD, or null. Candidates (local refs only, no network):
+ * - the base diff-scoped secret detection resolves (`resolveDiffBase`),
+ * - `<remote>/HEAD`, `<remote>/main` and `<remote>/master` of every remote,
+ * - local `main` and `master`, only when every commit on them is on a remote.
+ * Refs that carry this branch's own work are never candidates: the current
+ * branch, its upstream, its pushed copies `<remote>/<branch>` (none when the
+ * branch is itself `main` or `master`) and any symbolic ref pointing at one
+ * of them. A pushed copy does not count as "on a remote" for local
+ * `main`/`master`, and when the secret-detection base is the merge base with
+ * a pushed copy it is used only if no other merge base remains. Candidate
+ * refs are deduplicated by commit, a merge base equal to HEAD is ignored,
+ * and the merge base with the fewest commits up to HEAD wins (the first one
+ * on a tie).
  */
-async function defaultBranchMergeBase(repoPath: string): Promise<string | null> {
+async function nearestDiffBase(repoPath: string): Promise<string | null> {
   const head = (await gitLines(repoPath, ["rev-parse", "--verify", "--quiet", "HEAD"]))?.[0];
-  const own = new Set<string>();
+  if (head === undefined) return null;
   const current = (await gitLines(repoPath, ["symbolic-ref", "-q", "HEAD"]))?.[0];
-  if (current !== undefined) own.add(current);
   const upstream = (await gitLines(repoPath, ["rev-parse", "--symbolic-full-name", "@{u}"]))?.[0];
+  const remotes = (await gitLines(repoPath, ["remote"])) ?? [];
+  const branch = current?.replace(/^refs\/heads\//, "");
+  const copies = new Set(
+    branch === undefined || DEFAULT_BRANCHES.includes(branch)
+      ? []
+      : remotes.map((remote) => `refs/remotes/${remote}/${branch}`),
+  );
+  const own = new Set(copies);
+  if (current !== undefined) own.add(current);
   if (upstream !== undefined) own.add(upstream);
 
-  const candidates: string[] = [];
-  for (const remote of (await gitLines(repoPath, ["remote"])) ?? []) {
-    for (const name of ["HEAD", "main", "master"]) candidates.push(`refs/remotes/${remote}/${name}`);
+  const candidates = remotes.flatMap((remote) =>
+    ["HEAD", ...DEFAULT_BRANCHES].map((name) => `refs/remotes/${remote}/${name}`));
+  const local = DEFAULT_BRANCHES.map((name) => `refs/heads/${name}`);
+  const refs = new Map<string, { target: string; commit: string }>();
+  const listed = await gitLines(repoPath, [
+    "for-each-ref", "--format=%(refname) %(symref) %(objectname)", ...candidates, ...local,
+  ]);
+  for (const line of listed ?? []) {
+    const [name, symref, commit] = line.split(" ");
+    refs.set(name, { target: symref || name, commit });
   }
-  candidates.push("refs/heads/main", "refs/heads/master");
-  const existing = new Map<string, string>();
-  for (const line of (await gitLines(repoPath, ["for-each-ref", "--format=%(refname) %(symref)", ...candidates])) ?? []) {
-    const [name, symref] = line.split(" ");
-    existing.set(name, symref || name);
+  // A pushed copy (or a symbolic ref to one) carries this branch's own
+  // commits, so it does not vouch for a local main/master.
+  const excluded = [...copies, ...candidates.filter((name) => copies.has(refs.get(name)?.target ?? ""))]
+    .map((name) => `--exclude=${name.slice("refs/remotes/".length)}`);
+
+  const bases: { mb: string; distance: number }[] = [];
+  const consider = async (mb: string | undefined): Promise<void> => {
+    if (mb === undefined || mb === head || bases.some((b) => b.mb === mb)) return;
+    const count = (await gitLines(repoPath, ["rev-list", "--count", `${mb}..HEAD`]))?.[0];
+    bases.push({ mb, distance: count === undefined ? Number.POSITIVE_INFINITY : Number(count) });
+  };
+  const secretsBase = await resolveDiffBase(repoPath);
+  const fromCopy = upstream !== undefined && copies.has(upstream)
+    && secretsBase === (await gitLines(repoPath, ["merge-base", "HEAD", upstream]))?.[0];
+  if (secretsBase !== null && !fromCopy) await consider(secretsBase);
+  // The base from a pushed copy hides the pushed commits, so it is used only
+  // when nothing else remains; it still covers every unpushed commit.
+  const lastResort = fromCopy && secretsBase !== head ? secretsBase : null;
+  const seen = new Set<string>();
+  for (const name of [...candidates, ...local]) {
+    const ref = refs.get(name);
+    if (ref === undefined || own.has(name) || own.has(ref.target) || seen.has(ref.commit)) continue;
+    if (local.includes(name)) {
+      const unpushed = (await gitLines(repoPath, ["rev-list", "--count", name, "--not", ...excluded, "--remotes"]))?.[0];
+      if (unpushed !== "0") continue;
+    }
+    seen.add(ref.commit);
+    await consider((await gitLines(repoPath, ["merge-base", "HEAD", ref.commit]))?.[0]);
   }
 
   let best: { mb: string; distance: number } | null = null;
-  for (const ref of candidates) {
-    const target = existing.get(ref);
-    if (target === undefined || own.has(ref) || own.has(target)) continue;
-    const mb = (await gitLines(repoPath, ["merge-base", "HEAD", ref]))?.[0];
-    if (mb === undefined || mb === head) continue;
-    const count = (await gitLines(repoPath, ["rev-list", "--count", `${mb}..HEAD`]))?.[0];
-    const distance = count === undefined ? Number.POSITIVE_INFINITY : Number(count);
-    if (distance < (best?.distance ?? Number.POSITIVE_INFINITY)) best = { mb, distance };
-  }
-  return best?.mb ?? null;
+  for (const base of bases) if (best === null || base.distance < best.distance) best = base;
+  return best?.mb ?? lastResort;
 }
 
 interface ChangedFiles {
@@ -73,44 +110,31 @@ interface ChangedFiles {
 }
 
 /**
- * Every file the current work changed, relative to the git root: the branch
- * diff against the merge-base (same base resolution as diff-scoped secret
- * detection) including working-tree edits, unioned with the diff against the
- * nearest default-branch merge-base, plus untracked-and-unignored files. Deleted
- * files are excluded. Without a resolvable base the diff falls back to
- * HEAD~1..HEAD plus working-tree changes against HEAD.
+ * Every file the current work changed, relative to the git root: the diff
+ * against the nearest trustworthy merge base (see nearestDiffBase), which
+ * covers committed and working-tree edits, plus untracked-and-unignored
+ * files. Deleted files are excluded. Without such a base the diff falls back
+ * to HEAD~1..HEAD plus working-tree changes against HEAD; when HEAD has a
+ * commit but no parent in reach (root commit or shallow boundary) that range
+ * is reported as unknown.
  */
 async function getChangedFiles(repoPath: string): Promise<ChangedFiles> {
   const changed = new Set<string>();
   let rangeUnknown = false;
-  const lastCommit = async (): Promise<string[]> => {
-    const last = await gitLines(repoPath, ["diff", "--name-only", "--diff-filter=d", "HEAD~1..HEAD"]);
-    if (last === null && (await gitLines(repoPath, ["rev-parse", "--verify", "--quiet", "HEAD"])) !== null) {
-      rangeUnknown = true;
-    }
-    return last ?? [];
-  };
-  const base = await resolveDiffBase(repoPath);
+  const base = await nearestDiffBase(repoPath);
   const tracked = base !== null
     ? await gitLines(repoPath, ["diff", "--name-only", "--diff-filter=d", base])
     : null;
   if (tracked !== null) {
     tracked.forEach((f) => changed.add(f));
-    // A base equal to HEAD means no divergence (HEAD equals its upstream or
-    // sits on the default branch): the branch diff is empty, so keep the last
-    // commit as a floor. It adds nothing when HEAD has no parent (root
-    // commit or shallow clone).
-    const head = (await gitLines(repoPath, ["rev-parse", "HEAD"]))?.[0];
-    if (head !== undefined && head === base) (await lastCommit()).forEach((f) => changed.add(f));
   } else {
-    (await lastCommit()).forEach((f) => changed.add(f));
+    const last = await gitLines(repoPath, ["diff", "--name-only", "--diff-filter=d", "HEAD~1..HEAD"]);
+    if (last === null && (await gitLines(repoPath, ["rev-parse", "--verify", "--quiet", "HEAD"])) !== null) {
+      rangeUnknown = true;
+    }
+    (last ?? []).forEach((f) => changed.add(f));
     const working = await gitLines(repoPath, ["diff", "--name-only", "--diff-filter=d", "HEAD"]);
     (working ?? []).forEach((f) => changed.add(f));
-  }
-  const defaultBase = await defaultBranchMergeBase(repoPath);
-  if (defaultBase !== null) {
-    const branch = await gitLines(repoPath, ["diff", "--name-only", "--diff-filter=d", defaultBase]);
-    (branch ?? []).forEach((f) => changed.add(f));
   }
   const untracked = await gitLines(repoPath, ["ls-files", "--others", "--exclude-standard"]);
   (untracked ?? []).forEach((f) => changed.add(f));

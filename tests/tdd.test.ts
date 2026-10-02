@@ -541,6 +541,142 @@ describe("runTddCheck", () => {
         fs.rmSync(bare, { recursive: true, force: true });
       }
     });
+
+    it("flags every unpushed commit on main, not only the last one", async () => {
+      const bare = await cloneOfBare();
+      try {
+        await commitFiles({ "src/c.ts": "export const c = 1;" }, "add c");
+        await commitFiles({ "docs/notes.md": "notes" }, "add notes");
+        const result = await runTddCheck(tmpDir, defaultConfig);
+        expect(result.checks[0].status).toBe("warn");
+        expect(result.checks[0].details).toEqual(["src/c.ts"]);
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+      }
+    });
+
+    it("flags every unpushed commit on a default branch named develop", async () => {
+      const bare = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-tdd-bare-"));
+      try {
+        await git(["init", "--bare", "-q", bare], bare);
+        initRepo({});
+        await initGitRepo();
+        await git(["symbolic-ref", "HEAD", "refs/heads/develop"]);
+        await commitFiles({ "README.md": "# x" }, "init");
+        await git(["remote", "add", "origin", bare]);
+        await git(["push", "-q", "-u", "origin", "develop"]);
+        await git(["remote", "set-head", "origin", "develop"]);
+        await commitFiles({ "src/first.ts": "export const first = 1;" }, "add first");
+        await commitFiles({ "docs/notes.md": "notes" }, "add notes");
+        const result = await runTddCheck(tmpDir, defaultConfig);
+        expect(result.checks[0].status).toBe("warn");
+        expect(result.checks[0].details).toEqual(["src/first.ts"]);
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+      }
+    });
+
+    it.each(["pulled into local main", "branched with --no-track from upstream/main"])(
+      "compares a fork clone with a stale origin/HEAD against upstream/main (%s)",
+      async (layout) => {
+        initRepo({});
+        await initGitRepo();
+        await git(["symbolic-ref", "HEAD", "refs/heads/main"]);
+        await commitFiles({ "README.md": "# x" }, "init");
+        const up = `${tmpDir}-up.git`;
+        const fork = `${tmpDir}-fork.git`;
+        try {
+          await git(["clone", "-q", "--bare", tmpDir, up], os.tmpdir());
+          await git(["clone", "-q", "--bare", tmpDir, fork], os.tmpdir());
+          await commitFiles({ "src/other.ts": "export const other = 1;" }, "upstream: other");
+          await git(["push", "-q", up, "main"]);
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+          await git(["clone", "-q", fork, tmpDir], os.tmpdir());
+          await git(["config", "user.email", "test@test.com"]);
+          await git(["config", "user.name", "Test"]);
+          await git(["remote", "add", "upstream", up]);
+          if (layout === "pulled into local main") {
+            await git(["pull", "-q", "--ff-only", "upstream", "main"]);
+            await git(["checkout", "-q", "-b", "feature"]);
+          } else {
+            await git(["fetch", "-q", "upstream"]);
+            await git(["checkout", "-q", "--no-track", "-b", "feature", "upstream/main"]);
+          }
+          expect((await git(["symbolic-ref", "refs/remotes/origin/HEAD"])).stdout).toBe("refs/remotes/origin/main");
+          await commitFiles({ "src/t.ts": "export const t = 1;", "src/t.test.ts": "test('t', () => {});" }, "tested change");
+          const result = await runTddCheck(tmpDir, defaultConfig);
+          expect(result.checks[0].status).toBe("pass");
+          expect(result.checks[0].details).toBeUndefined();
+        } finally {
+          fs.rmSync(up, { recursive: true, force: true });
+          fs.rmSync(fork, { recursive: true, force: true });
+        }
+      },
+    );
+
+    it("does not trust a local main that holds the branch's first commit", async () => {
+      const bare = await cloneOfBare();
+      try {
+        await git(["remote", "set-head", "origin", "main"]);
+        await commitFiles({ "src/first.ts": "export const first = 1;" }, "add first");
+        await git(["checkout", "-q", "-b", "feature"]);
+        await commitFiles({ "docs/notes.md": "notes" }, "add notes");
+        await git(["push", "-q", "-u", "origin", "feature"]);
+        const result = await runTddCheck(tmpDir, defaultConfig);
+        expect(result.checks[0].status).toBe("warn");
+        expect(result.checks[0].details).toEqual(["src/first.ts"]);
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+      }
+    });
+
+    it.each(["main", "master"])("uses a local %s whose commits are all on a remote", async (name) => {
+      const bare = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-tdd-bare-"));
+      try {
+        await git(["init", "--bare", "-q", bare], bare);
+        initRepo({});
+        await initGitRepo();
+        await git(["symbolic-ref", "HEAD", `refs/heads/${name}`]);
+        await commitFiles({ "README.md": "# x" }, "init");
+        await git(["remote", "add", "gh", bare]);
+        await git(["push", "-q", "gh", `${name}:release`]);
+        await twoCommitFeature("gh");
+        const refs = await git(["for-each-ref", "--format=%(refname)", "refs/remotes"]);
+        expect(refs.stdout.split("\n")).toEqual(["refs/remotes/gh/feature", "refs/remotes/gh/release"]);
+        const result = await runTddCheck(tmpDir, defaultConfig);
+        expect(result.checks[0].status).toBe("warn");
+        expect(result.checks[0].details).toEqual(["src/first.ts"]);
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+      }
+    });
+
+    it("uses <remote>/master when the remote has no HEAD and there is no local master", async () => {
+      const bare = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-tdd-bare-"));
+      try {
+        await git(["init", "--bare", "-q", bare], bare);
+        initRepo({});
+        await initGitRepo();
+        await git(["symbolic-ref", "HEAD", "refs/heads/trunk"]);
+        await commitFiles({ "README.md": "# x" }, "init");
+        await git(["remote", "add", "origin", bare]);
+        await git(["push", "-q", "origin", "trunk:master"]);
+        await git(["fetch", "-q", "origin"]);
+        await git(["checkout", "-q", "--detach", "origin/master"]);
+        await git(["branch", "-q", "-D", "trunk"]);
+        await git(["update-ref", "-d", "--no-deref", "refs/remotes/origin/HEAD"]);
+        await twoCommitFeature("origin");
+        const refs = await git(["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"]);
+        expect(refs.stdout.split("\n")).toEqual([
+          "refs/heads/feature", "refs/remotes/origin/feature", "refs/remotes/origin/master",
+        ]);
+        const result = await runTddCheck(tmpDir, defaultConfig);
+        expect(result.checks[0].status).toBe("warn");
+        expect(result.checks[0].details).toEqual(["src/first.ts"]);
+      } finally {
+        fs.rmSync(bare, { recursive: true, force: true });
+      }
+    });
   });
 
   it("warns when source file has no test counterpart", async () => {
