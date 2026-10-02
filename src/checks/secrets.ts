@@ -551,7 +551,7 @@ export async function runSecretDetection(
  * `gitAvailable: false` is reserved for "this is not a git work tree" (or
  * git cannot run): the caller then reports every finding as non-blocking.
  * Inside a confirmed work tree a path git cannot classify (the whole batch
- * fails because of it, for example a path beyond a symbolic link) is never
+ * fails because of it, for example with a corrupt index) is never
  * allowed to downgrade other findings: the batch is retried path by path
  * and each path that still fails is simply not in the ignored set, so it
  * stays eligible to block.
@@ -605,6 +605,17 @@ interface GitContext {
 const GIT_REDIRECT_VARS = ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_PREFIX"];
 
 /**
+ * Pathspec mode switches. They select no repository, but `check-ignore`
+ * rejects every call while one is set, so they are never inherited.
+ */
+const GIT_PATHSPEC_VARS = [
+  "GIT_LITERAL_PATHSPECS",
+  "GIT_GLOB_PATHSPECS",
+  "GIT_NOGLOB_PATHSPECS",
+  "GIT_ICASE_PATHSPECS",
+];
+
+/**
  * Choose the environment for every git call of this run, once.
  *
  * Variables such as `GIT_DIR` and `GIT_WORK_TREE` are not always noise.
@@ -637,6 +648,7 @@ const GIT_REDIRECT_VARS = ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_PR
  */
 async function resolveGitEnv(repoPath: string): Promise<NodeJS.ProcessEnv> {
   const inherited: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of GIT_PATHSPEC_VARS) delete inherited[key];
   if (!GIT_REDIRECT_VARS.some((k) => inherited[k] !== undefined)) return inherited;
 
   const scrubbed: NodeJS.ProcessEnv = { ...inherited };

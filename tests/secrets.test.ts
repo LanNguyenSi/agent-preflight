@@ -2189,6 +2189,75 @@ describe("runSecretDetection — git-enumerated file set", () => {
       expect(result.checks[0]?.status).toBe("pass");
     });
 
+    it("does not read a tracked file through a symlinked grandparent directory", async () => {
+      const outside = makeTempDir("preflight-secrets-symdir-grand-outside-");
+      fs.mkdirSync(path.join(outside, "b"));
+      fs.writeFileSync(path.join(outside, "b", "c.js"), secretLine);
+      const repoPath = makeTempDir("preflight-secrets-symdir-grand-");
+      gitInit(repoPath);
+      fs.mkdirSync(path.join(repoPath, "a", "b"), { recursive: true });
+      fs.writeFileSync(path.join(repoPath, "a", "b", "c.js"), "module.exports = {};\n");
+      gitCommitAll(repoPath);
+      fs.rmSync(path.join(repoPath, "a"), { recursive: true });
+      fs.symlinkSync(outside, path.join(repoPath, "a"), "dir");
+
+      const { result, readPaths } = await scanWithReadSpy(repoPath);
+
+      expect(readPaths.some((p) => p.includes(outside) || p.includes(`${path.sep}a${path.sep}b${path.sep}`))).toBe(false);
+      expect(result.checks[0]?.status).toBe("pass");
+    });
+
+    it("does not read any of several tracked files under one directory replaced by a symlink", async () => {
+      const outside = makeTempDir("preflight-secrets-symdir-multi-outside-");
+      fs.writeFileSync(path.join(outside, "a.js"), secretLine);
+      fs.writeFileSync(path.join(outside, "b.js"), secretLine);
+      const repoPath = makeTempDir("preflight-secrets-symdir-multi-");
+      gitInit(repoPath);
+      fs.mkdirSync(path.join(repoPath, "c"));
+      fs.writeFileSync(path.join(repoPath, "c", "a.js"), "module.exports = {};\n");
+      fs.writeFileSync(path.join(repoPath, "c", "b.js"), "module.exports = {};\n");
+      gitCommitAll(repoPath);
+      fs.rmSync(path.join(repoPath, "c"), { recursive: true });
+      fs.symlinkSync(outside, path.join(repoPath, "c"), "dir");
+
+      const { result, readPaths } = await scanWithReadSpy(repoPath);
+
+      expect(readPaths.some((p) => p.includes(outside) || p.includes(`${path.sep}c${path.sep}`))).toBe(false);
+      expect(result.checks[0]?.status).toBe("pass");
+    });
+
+    it("keeps a bare repository target non-blocking as not a work tree", async () => {
+      const repoPath = makeTempDir("preflight-secrets-bare-");
+      execFileSync("git", ["init", "-q", "--bare", repoPath]);
+      fs.writeFileSync(path.join(repoPath, "description"), secretLine);
+
+      const result = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+
+      expect(result.checks[0]?.status).toBe("warn");
+      expect(result.limitations.some((l) => l.includes("not a git repository"))).toBe(true);
+      expect(result.limitations.some((l) => l.includes("could not classify"))).toBe(false);
+    });
+
+    it("ignores an inherited pathspec mode switch: an ignored tree below a subdirectory target is neither read nor blocking", async () => {
+      const repoPath = makeTempDir("preflight-secrets-pathspec-env-");
+      gitInit(repoPath);
+      fs.mkdirSync(path.join(repoPath, "sub", "ignored"), { recursive: true });
+      fs.writeFileSync(path.join(repoPath, ".gitignore"), "sub/ignored/\n");
+      fs.writeFileSync(path.join(repoPath, "sub", "ok.js"), "module.exports = {};\n");
+      gitCommitAll(repoPath);
+      fs.writeFileSync(path.join(repoPath, "sub", "ignored", "s.js"), secretLine);
+
+      const saved = process.env.GIT_LITERAL_PATHSPECS;
+      process.env.GIT_LITERAL_PATHSPECS = "1";
+      try {
+        const { result, readPaths } = await scanWithReadSpy(path.join(repoPath, "sub"));
+        expect(readPaths.some((p) => p.includes(`${path.sep}ignored${path.sep}`))).toBe(false);
+        expect(result.checks[0]?.status).toBe("pass");
+      } finally {
+        if (saved === undefined) delete process.env.GIT_LITERAL_PATHSPECS; else process.env.GIT_LITERAL_PATHSPECS = saved;
+      }
+    });
+
     it("keeps a new secret blocking when a file is named like pathspec magic", async () => {
       const repoPath = makeTempDir("preflight-secrets-magic-name-");
       gitInit(repoPath);
