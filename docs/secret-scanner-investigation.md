@@ -27,6 +27,13 @@ branch never touched all downgrade to `warn`; everything else is a `fail`.
 The check never shells out and has no external dependency - it fails closed
 by construction, never fails open.
 
+Update (scanned file set): this describes the investigation-time engine. Inside
+a git work tree the in-tree check now scans only the files git lists as
+committable (tracked, plus untracked and not ignored) instead of walking the
+filesystem, so gitignored files are no longer read and no longer produce
+non-blocking warnings; outside git, or if git fails, it still walks the
+tree. See [checks.md](checks.md#secret-detection-scanned-file-set).
+
 Known gaps going in (from the task brief, 2026-05-18 project-forge run): 3
 false positives, two from `.next/` build output (mitigated since by adding
 `.next` etc. to `SKIP_DIRS`); no coverage for AWS keys, GCP service-account

@@ -423,7 +423,17 @@ export async function runSecretDetection(
   const rawFindings: Finding[] = [];
   const limitations: string[] = ["secret detection uses pattern matching; not exhaustive"];
 
-  scanDir(repoPath, repoPath, rawFindings);
+  // Inside a git work tree, scan exactly the committable set that git
+  // reports (tracked plus untracked-not-ignored). That keeps gitignored
+  // dependency trees (CMS webroots, vendored cores, ...) from being read
+  // at all. Outside git, or when git fails, fall back to the filesystem
+  // walk so a git problem never means "scanned nothing".
+  const gitFiles = await listCommittableFiles(repoPath);
+  if (gitFiles !== null) {
+    scanFileList(gitFiles, repoPath, rawFindings);
+  } else {
+    scanDir(repoPath, repoPath, rawFindings);
+  }
 
   const allowlist = config.secretAllowlist ?? [];
   const findings = rawFindings.filter((f) => !matchesAllowlist(f, allowlist));
@@ -547,6 +557,63 @@ async function classifyIgnored(
   } catch {
     // git binary missing (ENOENT) or spawn failure.
     return { gitAvailable: false, ignoredUntracked: new Set() };
+  }
+}
+
+/**
+ * The committable files below `repoPath`: tracked files plus untracked
+ * files that no ignore rule excludes, as `repoPath`-relative,
+ * forward-slash paths (NUL-separated on the wire, so spaces, newlines and
+ * non-ASCII names survive verbatim). Gitignored untracked files are
+ * deliberately absent: they cannot reach the remote, and enumerating
+ * them is what made the filesystem walk read whole dependency trees.
+ *
+ * When `repoPath` is a subdirectory of the git root, git lists only that
+ * subtree, relative to it, which matches `Finding.file` of the walk.
+ * Returns `null` (caller falls back to the walk) when `repoPath` is not
+ * in a git work tree, git is missing, or the command fails for any
+ * reason, including output beyond the buffer limit.
+ */
+async function listCommittableFiles(repoPath: string): Promise<string[] | null> {
+  try {
+    const res = await execa(
+      "git",
+      [
+        "-c", "core.quotePath=false",
+        "ls-files", "-z", "--cached", "--others", "--exclude-standard",
+      ],
+      { cwd: repoPath, reject: false, stripFinalNewline: false, maxBuffer: 512 * 1024 * 1024 },
+    );
+    if (res.exitCode !== 0 || res.failed) return null;
+    // A merge conflict lists a path once per index stage; dedupe.
+    return [...new Set(res.stdout.split("\0").filter((p) => p.length > 0))];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Scan a git-listed file set with the same filters the walk applies: a
+ * path is skipped when any segment (directory or file name) is in
+ * SKIP_DIRS, and file-level filters (`isTextFile`, `IGNORE_FILES`, size
+ * cap) are shared via `scanFile`. Only regular files are read: symlinks
+ * (tracked links are listed by git) are not followed, exactly like the
+ * walk, and gitlink/submodule entries and nested repositories (a
+ * directory, not a file) are skipped, since their contents are not
+ * committable into this repository. A path git lists but that no longer
+ * exists in the work tree (deleted, not yet staged) is skipped.
+ */
+function scanFileList(relPaths: string[], root: string, findings: Finding[]): void {
+  for (const rel of relPaths) {
+    const segments = rel.split("/");
+    if (segments.some((seg) => SKIP_DIRS.has(seg))) continue;
+    const fullPath = path.join(root, ...segments);
+    try {
+      if (!fs.lstatSync(fullPath).isFile()) continue;
+    } catch {
+      continue; // listed by git but missing from the work tree
+    }
+    scanFile(fullPath, segments[segments.length - 1] ?? rel, root, findings);
   }
 }
 
@@ -724,38 +791,44 @@ function scanDir(dir: string, root: string, findings: Finding[]): void {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       scanDir(fullPath, root, findings);
-    } else if (entry.isFile() && isTextFile(entry.name) && !isIgnored(entry.name)) {
-      let content: string;
-      try {
-        if (fs.statSync(fullPath).size > MAX_SCAN_BYTES) continue; // skip large blobs
-        content = fs.readFileSync(fullPath, "utf-8");
-      } catch {
-        continue; // ignore read errors
-      }
-      // forward-slash relative path so it lines up with `git check-ignore`
-      // output and with operator-written allowlist entries.
-      const relPath = path.relative(root, fullPath).split(path.sep).join("/");
-      const lines = content.split(/\r?\n/);
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i] ?? "";
-        // Inline suppression: a line carrying the pragma is skipped.
-        if (ALLOWLIST_PRAGMA.test(line)) continue;
-        for (const pattern of SECRET_PATTERNS) {
-          const match = line.match(pattern);
-          const matchText = match ? match[0] : "";
-          if (match && !PLACEHOLDER_PATTERNS.some((p) => p.test(matchText))) {
-            // A high-confidence credential SHAPE anywhere on the line (see
-            // HIGH_CONFIDENCE_PATTERNS above) always wins over the
-            // test-fixture heuristic, even when the winning SECRET_PATTERNS
-            // entry above was a weaker one, and even when the matched
-            // value also looks test-/dummy-/fake-prefixed.
-            const highConfidence = HIGH_CONFIDENCE_PATTERNS.some((p) => p.test(line));
-            const testFixture =
-              !highConfidence && isTestPath(relPath) && TEST_FIXTURE_VALUE_PATTERN.test(matchText);
-            findings.push({ file: relPath, line: i + 1, testFixture });
-            break; // one finding per line is enough
-          }
-        }
+    } else if (entry.isFile()) {
+      scanFile(fullPath, entry.name, root, findings);
+    }
+  }
+}
+
+/** Scan one file's lines for secret patterns, applying the file-level filters. */
+function scanFile(fullPath: string, name: string, root: string, findings: Finding[]): void {
+  if (!isTextFile(name) || isIgnored(name)) return;
+  let content: string;
+  try {
+    if (fs.statSync(fullPath).size > MAX_SCAN_BYTES) return; // skip large blobs
+    content = fs.readFileSync(fullPath, "utf-8");
+  } catch {
+    return; // ignore read errors
+  }
+  // forward-slash relative path so it lines up with `git check-ignore`
+  // output and with operator-written allowlist entries.
+  const relPath = path.relative(root, fullPath).split(path.sep).join("/");
+  const lines = content.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    // Inline suppression: a line carrying the pragma is skipped.
+    if (ALLOWLIST_PRAGMA.test(line)) continue;
+    for (const pattern of SECRET_PATTERNS) {
+      const match = line.match(pattern);
+      const matchText = match ? match[0] : "";
+      if (match && !PLACEHOLDER_PATTERNS.some((p) => p.test(matchText))) {
+        // A high-confidence credential SHAPE anywhere on the line (see
+        // HIGH_CONFIDENCE_PATTERNS above) always wins over the
+        // test-fixture heuristic, even when the winning SECRET_PATTERNS
+        // entry above was a weaker one, and even when the matched
+        // value also looks test-/dummy-/fake-prefixed.
+        const highConfidence = HIGH_CONFIDENCE_PATTERNS.some((p) => p.test(line));
+        const testFixture =
+          !highConfidence && isTestPath(relPath) && TEST_FIXTURE_VALUE_PATTERN.test(matchText);
+        findings.push({ file: relPath, line: i + 1, testFixture });
+        break; // one finding per line is enough
       }
     }
   }

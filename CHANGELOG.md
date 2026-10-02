@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Secret detection inside a git work tree now enumerates files with `git ls-files -z --cached --others --exclude-standard` (tracked plus untracked-not-ignored) instead of walking the filesystem, so large gitignored directories outside the built-in skip list are no longer read (#98). Gitignored, untracked files are therefore no longer scanned and no longer produce non-blocking warnings; there is no opt-in. Deleted entries are skipped, symlinks are still not followed, the skip-list and file-level filters apply to the listed set, submodules and nested repositories are not scanned. Outside git, or when git fails, the filesystem walk remains the fallback. Patterns, severity rules and diff-scoping are unchanged. See [checks.md](docs/checks.md#secret-detection-scanned-file-set).
+
 ## [0.8.0] - 2026-10-01
 
 ### Added
