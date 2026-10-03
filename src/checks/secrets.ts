@@ -413,6 +413,25 @@ export async function runSecretDetection(
   const rawFindings: Finding[] = [];
   const limitations: string[] = ["secret detection uses pattern matching; not exhaustive"];
 
+  // One physical root for Git and file reads; joining a raw symlink/.. root
+  // would otherwise enumerate one directory and read another.
+  try {
+    repoPath = physicalGitPath(process.cwd(), repoPath, "directory");
+  } catch {
+    const message = "Secret detection could not resolve the scan directory";
+    return {
+      checks: [{
+        name: "secret-detection",
+        kind: "secret-detection",
+        status: "fail",
+        message,
+        durationMs: Date.now() - start,
+        confidenceContribution: 0.1,
+      }],
+      limitations: [...limitations, message],
+    };
+  }
+
   // Inside a git work tree, scan exactly the committable set that git
   // reports (tracked plus untracked-not-ignored). That keeps gitignored
   // dependency trees (CMS webroots, vendored cores, ...) from being read
@@ -619,8 +638,10 @@ const GIT_PATHSPEC_VARS = [
  *     `GIT_PREFIX`), and so is `GIT_INDEX_FILE`: it was exported for the
  *     other repository, so its index says nothing about this one.
  *
- * In the inherited choice `GIT_INDEX_FILE` is kept: a hook running
- * `git commit` points it at the index being committed, and the listing
+ * An inherited `GIT_INDEX_FILE` is kept only when its real path is strictly
+ * inside the selected repository's own git directory (`--git-dir`, not the
+ * shared common directory). A hook running
+ * `git commit` points it at a temporary index there, and the listing
  * should agree with it. A file that is tracked only in the real index and
  * matches an ignore rule is then not listed, which is acceptable because it
  * is not part of the commit being made. Untracked files are unaffected:
@@ -630,17 +651,58 @@ const GIT_PATHSPEC_VARS = [
 async function resolveGitEnv(repoPath: string): Promise<NodeJS.ProcessEnv> {
   const inherited: NodeJS.ProcessEnv = { ...process.env };
   for (const key of GIT_PATHSPEC_VARS) delete inherited[key];
-  if (!GIT_REDIRECT_VARS.some((k) => inherited[k] !== undefined)) return inherited;
-
   const scrubbed: NodeJS.ProcessEnv = { ...inherited };
   for (const key of [...GIT_REDIRECT_VARS, "GIT_INDEX_FILE"]) delete scrubbed[key];
 
-  const inheritedCtx: GitContext = { repoPath, env: inherited };
-  if ((await worktreeRelativePath(inheritedCtx)) === null) return scrubbed;
-  const discovered = await gitCommonDir({ repoPath, env: scrubbed });
-  if (discovered === null) return inherited; // env-only repository
-  const selected = await gitCommonDir(inheritedCtx);
-  return selected !== null && selected === discovered ? inherited : scrubbed;
+  let selected = inherited;
+  if (GIT_REDIRECT_VARS.some((k) => inherited[k] !== undefined)) {
+    const inheritedCtx: GitContext = { repoPath, env: inherited };
+    if ((await worktreeRelativePath(inheritedCtx)) === null) {
+      selected = scrubbed;
+    } else {
+      const discovered = await gitCommonDir({ repoPath, env: scrubbed });
+      const commonDir = await gitCommonDir(inheritedCtx);
+      if (discovered !== null && commonDir !== discovered) selected = scrubbed;
+    }
+  }
+
+  // An index alone can redirect the listing even with no GIT_DIR override.
+  // Resolve both paths physically so an in-tree symlink cannot import an
+  // unrelated index, and compare against this worktree's own git directory.
+  const index = selected["GIT_INDEX_FILE"];
+  if (index !== undefined) {
+    try {
+      const withoutIndex = { ...selected };
+      delete withoutIndex["GIT_INDEX_FILE"];
+      const dir = await gitExec({ repoPath, env: withoutIndex }, ["rev-parse", "--git-dir"], { raw: true });
+      if (dir.exitCode !== 0 || dir.failed) throw new Error("Cannot resolve git directory");
+      const gitDir = physicalGitPath(repoPath, dir.stdout.replace(/\r?\n$/, ""), "directory");
+      const indexPath = physicalGitPath(repoPath, index, "file");
+      const relative = path.relative(gitDir, indexPath);
+      if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        delete selected["GIT_INDEX_FILE"];
+      } else {
+        selected["GIT_INDEX_FILE"] = indexPath;
+      }
+    } catch {
+      // Unresolvable paths cannot establish ownership of the index.
+      delete selected["GIT_INDEX_FILE"];
+    }
+  }
+  return selected;
+}
+
+// Keep symlink/parent traversal intact until the filesystem resolves it.
+// path.join/path.resolve and the non-native realpath normalize too early.
+function physicalGitPath(repoPath: string, value: string, expectedKind: "directory" | "file"): string {
+  const cwd = path.isAbsolute(repoPath) ? repoPath : `${process.cwd()}${path.sep}${repoPath}`;
+  const absolute = path.isAbsolute(value) ? value : `${cwd}${path.sep}${value}`;
+  // Native realpath can erase invalid file/.. or file/ syntax on some systems.
+  // Validate the exact traversal and required kind before canonicalizing it.
+  const stat = fs.statSync(absolute);
+  if (expectedKind === "directory" && !stat.isDirectory()) throw new Error("Expected a directory");
+  if (expectedKind === "file" && !stat.isFile()) throw new Error("Expected a regular file");
+  return fs.realpathSync.native(absolute);
 }
 
 /** Real path of the common git directory selected by `git.env` from `git.repoPath`, or null. */
@@ -648,7 +710,7 @@ async function gitCommonDir(git: GitContext): Promise<string | null> {
   try {
     const res = await gitExec(git, ["rev-parse", "--git-common-dir"], { raw: true });
     if (res.exitCode !== 0 || res.failed) return null;
-    return fs.realpathSync(path.resolve(git.repoPath, res.stdout.replace(/\r?\n$/, "")));
+    return physicalGitPath(git.repoPath, res.stdout.replace(/\r?\n$/, ""), "directory");
   } catch {
     return null;
   }
@@ -663,8 +725,8 @@ async function worktreeRelativePath(git: GitContext): Promise<string | null> {
   try {
     const top = await gitExec(git, ["rev-parse", "--show-toplevel"], { raw: true });
     if (top.exitCode !== 0 || top.failed) return null;
-    const realTop = fs.realpathSync(top.stdout.replace(/\r?\n$/, ""));
-    const realRepo = fs.realpathSync(git.repoPath);
+    const realTop = physicalGitPath(git.repoPath, top.stdout.replace(/\r?\n$/, ""), "directory");
+    const realRepo = physicalGitPath(process.cwd(), git.repoPath, "directory");
     const rel = path.relative(realTop, realRepo);
     if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
     return rel;
