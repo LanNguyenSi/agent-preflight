@@ -906,8 +906,9 @@ the scanned directory). Everything else is not read:
   repository (discovery finds none), that repository's ignore rules decide
   what is listed, so its excludes can leave files unscanned.
 
-  The scan root is resolved once using native filesystem traversal before
-  either Git or file enumeration. A root alias containing a symlink followed
+  The scan root's exact, unnormalized traversal is first checked as a directory,
+  then resolved once using native filesystem traversal before either Git or
+  file enumeration. A root alias containing a symlink followed
   by `..` therefore uses the same physical directory for Git listing, the
   filesystem-walk fallback, file reads and relative finding paths. An
   unresolvable root or a root that is not a directory is a blocking failure,
@@ -921,8 +922,14 @@ the scanned directory). Everything else is not read:
   be resolved is discarded. Relative paths resolve from the scanned directory;
   an internal symlink to an owned index is accepted. Symlink traversal is
   resolved before a following `..`, matching filesystem traversal rather than
-  lexical path normalization. Git receives the validated canonical index path.
-  This preserves a hook's
+  lexical path normalization. The exact raw path must also resolve to a regular
+  file before canonicalization: file-parent traversal such as `file/../index`,
+  trailing directory syntax on a file, missing paths and symlink loops discard
+  the override. Git directory, common-directory and worktree metadata are
+  checked as directories before canonicalization. Git receives the validated
+  canonical index path. These checks describe a static filesystem; they do not
+  make validation, Git execution and file reads atomic against concurrent path
+  replacement. This preserves a hook's
   temporary partial-commit index inside its git directory: a file tracked only
   in the ordinary index that matches an ignore rule is not listed when it is
   excluded from that partial commit. Linked worktrees use their own per-worktree
