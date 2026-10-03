@@ -4,6 +4,7 @@
   "description": "CI preflight validation tool for AI agents",
   "main": "dist/index.js",
   "bin": {
+    "agent-preflight": "dist/cli.js",
     "preflight": "dist/cli.js",
     "preflight-mcp": "dist/mcp.js"
   },
