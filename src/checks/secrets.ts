@@ -12,8 +12,7 @@ interface CheckSetResult { checks: CheckResult[]; limitations: string[]; }
 // PLACEHOLDER_PATTERNS check against the *matched text* in scanDir, plus
 // the diff-scoped / `.md` / gitignored severity tiering.
 const SECRET_PATTERNS = [
-  // Quoted-key blind spot (fix-round, agent-tasks 9ef05069, mirrors the
-  // AWS assignment pattern's F1 fix below): an optional `["']?` sits
+  // Quoted-key support: an optional `["']?` sits
   // directly after the identifier, on all three of these, so a
   // quoted-key serialization — `"api_key": "<value>"` in JSON, or
   // `'token': '<value>'` in quoted YAML/Python — is detected too.
@@ -23,8 +22,7 @@ const SECRET_PATTERNS = [
   // without an adjacent quote character are unaffected: the `["']?` is
   // optional and matches zero characters there.
   //
-  // Known false-positive class from this fix (round 2 review, agent-tasks
-  // 9ef05069): the same quoted-key shape is extremely common in non-secret
+  // Known false-positive class: the same quoted-key shape is extremely common in non-secret
   // JSON — OpenAPI/Swagger specs (`"api_key": {"type": "apiKey", ...}`-
   // adjacent example values), Postman collections, and recorded HTTP
   // fixture files that happen to name a header/field `api_key`/`token`/
@@ -46,7 +44,7 @@ const SECRET_PATTERNS = [
   // AWS access key ID: a fixed, unambiguous shape (`AKIA` + 16 uppercase
   // alphanumeric chars) — no surrounding keyword needed, same rationale
   // as the bare `ghp_...` entry above. Also listed in
-  // HIGH_CONFIDENCE_PATTERNS below (agent-tasks 211f559c): the AWS docs'
+  // HIGH_CONFIDENCE_PATTERNS below: the AWS docs'
   // own canonical example access-key-id ALSO matches this shape (see
   // tests/secrets.test.ts) and is deliberately NOT exempted — same
   // hard-line, no-exemption treatment as a `ghp_...`/PEM match. A
@@ -60,8 +58,7 @@ const SECRET_PATTERNS = [
   // spelled out in this comment: it matches the pattern below and would
   // trip this very check when this file is self-scanned.)
   //
-  // Boundary-anchored (fix-round, agent-tasks 211f559c review, finding
-  // F2): a bare `(?<![A-Z0-9])`/`(?![A-Z0-9])` lookbehind/lookahead
+  // Boundary-anchored: a bare `(?<![A-Z0-9])`/`(?![A-Z0-9])` lookbehind/lookahead
   // stops this high-confidence, non-downgradable pattern from firing on
   // `AKIA...` merely embedded inside a longer uppercase/digit run (e.g.
   // a base32-style build hash or checksum) where it is not actually a
@@ -72,8 +69,7 @@ const SECRET_PATTERNS = [
   // character on both sides already, so this narrows nothing real; see
   // tests/secrets.test.ts.
   //
-  // Prefix alternation widened (round 2, agent-tasks 9ef05069, R1
-  // reviewer probe of 211f559c): AKIA alone missed AWS's other 20-char
+  // Prefix coverage: AKIA alone excludes AWS's other 20-char
   // access-key-ID-shaped credential prefixes. Decision per prefix
   // (matches the well-known gitleaks/detect-secrets AWS-key regex,
   // which uses this same four-prefix-plus-A3T set):
@@ -112,7 +108,7 @@ const SECRET_PATTERNS = [
   // (aws/secret/access/key in order, any `_`/`-`/camelCase separator,
   // case-insensitive) assigned a 40-char base64-ish value, with an
   // optional closing quote allowed directly on the identifier itself
-  // (fix-round, agent-tasks 211f559c review, finding F1) so a
+  // so a
   // quoted-key serialization — `"aws_secret_access_key": "<value>"` in
   // JSON or quoted YAML — is detected too; without it, the identifier
   // had to be followed immediately by `\s*[:=]` with nothing in
@@ -123,9 +119,8 @@ const SECRET_PATTERNS = [
   // prefix, a 40-char base64-ish value has no shape of its own that is
   // unambiguously AWS-specific.
   //
-  // End-anchored (round 2, agent-tasks 9ef05069, R1 reviewer probe of
-  // 211f559c, brought in line with the trailing `(?![A-Za-z0-9/+=])` added
-  // to the sibling identifier-variant pattern below): without it, `{40}`
+  // End-anchored, like the sibling identifier-variant pattern below:
+  // without the trailing `(?![A-Za-z0-9/+=])`, `{40}`
   // finds any 40-char run as a PREFIX of a longer base64-ish value too -- a
   // 200-char JWT or session token beginning with 40 charset-compatible
   // characters would false-positive as a 40-char AWS secret key under this
@@ -135,7 +130,7 @@ const SECRET_PATTERNS = [
   // lookahead requires the value to actually END at 40 characters; see
   // tests/secrets.test.ts for the 41+-char pass and the 40-char control.
   //
-  // NOTE (fix-round, agent-tasks 211f559c review, finding F3): despite
+  // Despite
   // the framing above, this pattern does NOT actually reach the
   // test-fixture downgrade in practice. TEST_FIXTURE_VALUE_PATTERN
   // requires `test`/`dummy`/`fake` immediately followed by `-`/`_`
@@ -148,8 +143,7 @@ const SECRET_PATTERNS = [
   // or `_` would make it reachable again — do that deliberately, not by
   // accident.
   /aws[_-]?secret[_-]?access[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])["']?/i,
-  // AWS secret access key, round 2 (agent-tasks 9ef05069, R1 reviewer
-  // probe of 211f559c): the pattern above requires the literal word
+  // AWS secret access key identifier variants: the pattern above requires the word
   // "aws" in the identifier and misses the same credential under the
   // identifier names real AWS SDKs/tools actually emit without it —
   // `secretAccessKey` (AWS JS SDK's own field name, e.g. in an
@@ -169,22 +163,20 @@ const SECRET_PATTERNS = [
   // remove that eligibility) — see the block comment above
   // HIGH_CONFIDENCE_PATTERNS below.
   //
-  // Adds `(?![A-Za-z0-9/+=])` right after the 40-char
-  // value (a value-shape tightening this round-2 pattern introduces
-  // fresh, not present on the pattern above): without it, `{40}` finds
+  // Requires `(?![A-Za-z0-9/+=])` right after the 40-char
+  // value: without it, `{40}` finds
   // any 40-char run as a PREFIX of a longer base64-ish value too — a
   // 200-char JWT or session token beginning with 40 charset-compatible
   // characters would false-positive as a 40-char AWS secret key. The
   // lookahead requires the value to actually END at 40 characters.
   /(?:aws[_-]?)?secret[_-]?access[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])["']?/i,
-  // AWS secret key, "no access" identifier variants (agent-tasks
-  // 9ef05069): `aws_secret_key` (Ansible's `aws_secret_key` module
+  // AWS secret key, "no access" identifier variants: `aws_secret_key` (Ansible's `aws_secret_key` module
   // parameter) and bare `secret_key` (Terraform's conventional variable
   // name for this same credential) both drop the word "access" from the
   // identifier entirely. `secret[_-]?key` alone (no "access", no "aws")
   // is a BROAD identifier — Django's `SECRET_KEY`, a Stripe
   // `secret_key`/API key, a generic app signing key, etc. all use it —
-  // so per review-round constraint this is deliberately gated on the
+  // so this is deliberately gated on the
   // exact same 40-char-base64-ish, exactly-bounded value shape as the
   // two patterns above (not added as a bare keyword match, and not
   // added to HIGH_CONFIDENCE_PATTERNS). As with the pattern above, NOT
@@ -205,8 +197,7 @@ const SECRET_PATTERNS = [
   // `secret_access_key`, not a new one; see
   // tests/secrets.test.ts for the Django-shaped negative control.
   //
-  // Leading identifier boundary (round-2 fix, agent-tasks 9ef05069, R2
-  // review): `secret[_-]?key` alone, with no boundary in front of it, also
+  // Leading identifier boundary: `secret[_-]?key` alone, with no boundary in front of it, also
   // matched as a SUFFIX of a longer identifier — `MY_SECRET_KEY`,
   // `jwt_secret_key`, `app_secret_key`, etc. That is a much broader,
   // much less AWS-specific identifier family than this pattern is meant
@@ -238,14 +229,13 @@ const SECRET_PATTERNS = [
   /(?<![A-Za-z0-9_])(?:aws[_-]?)?secret[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])["']?/i,
 ];
 
-// High-confidence secret SHAPES (review finding 2, fix-round on agent-tasks
-// b31065cc): a match against either of these anywhere on the line means the
+// High-confidence secret shapes: a match against either of these anywhere on the line means the
 // line unambiguously carries a real credential format, not just a
 // name-looks-like-a-secret heuristic. SECRET_PATTERNS above is checked in
 // order and scanDir stops at the FIRST pattern that matches a given line
 // (see the `break` there), so a line such as
 // `TOKEN = "test-ghp_<36 chars>"` trips the earlier, weaker
-// `(?:secret|token)\s*[:=]...` pattern first and — pre-fix — the genuinely
+// `(?:secret|token)\s*[:=]...` pattern first; without the full-line re-check, the genuinely
 // high-confidence `ghp_...` pattern a few lines below it was never even
 // consulted for that line. scanDir re-tests the full line (not just the
 // winning pattern's matched text) against this subset after a match is
@@ -260,12 +250,12 @@ const SECRET_PATTERNS = [
 const HIGH_CONFIDENCE_PATTERNS = [
   /ghp_[a-zA-Z0-9]{36}/,
   /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/,
-  // AWS access key ID (agent-tasks 211f559c): see the SECRET_PATTERNS
+  // AWS access key ID: see the SECRET_PATTERNS
   // entry above for the full rationale, including the deliberate
   // no-exemption decision for AWS's canonical example access-key-id and
-  // the boundary-anchoring rationale (fix-round review, finding F2).
+  // the boundary-anchoring rationale.
   // Prefix alternation (AKIA/ASIA/ABIA/ACCA/A3T) widened in lockstep
-  // with the SECRET_PATTERNS entry, round 2, agent-tasks 9ef05069 — see
+  // with the SECRET_PATTERNS entry — see
   // that entry for the per-prefix decision. Kept in
   // HIGH_CONFIDENCE_PATTERNS too: every one of these prefixes shares
   // AKIA's fixed, unambiguous 20-char shape, so the same
@@ -282,7 +272,7 @@ const PLACEHOLDER_PATTERNS = [
   /<your[_\s]/i,
 ];
 
-// Test-fixture value heuristic (agent-tasks b31065cc): a secret-shaped
+// Test-fixture value heuristic: a secret-shaped
 // finding whose VALUE (the text immediately after the `:`/`=` and an
 // optional opening quote) starts with `test-`/`test_`/`dummy-`/`dummy_`/
 // `fake-`/`fake_`, AND whose file lives under a directory literally named
@@ -304,8 +294,7 @@ const PLACEHOLDER_PATTERNS = [
 // test/tests directory) still blocks exactly as before — see
 // tests/secrets.test.ts's negative-control cases.
 //
-// Anchored to the FIRST `:`/`=` on the matched text (review finding 1,
-// fix-round on agent-tasks b31065cc): `^[^:=]*[:=]` consumes everything up
+// Anchored to the FIRST `:`/`=` on the matched text: `^[^:=]*[:=]` consumes everything up
 // to and including that first separator (the key name), and the
 // test-/dummy-/fake- prefix must sit immediately after it. The prior
 // unanchored `/[:=]\s*.../ ` searched the ENTIRE matched text (which can be
@@ -319,8 +308,7 @@ const PLACEHOLDER_PATTERNS = [
 // assignment").
 const TEST_FIXTURE_VALUE_PATTERN = /^[^:=]*[:=]\s*["']?(?:test|dummy|fake)[-_]/i;
 
-// Only DIRECTORY segments count (review finding, fix-round on agent-tasks
-// b31065cc): `.slice(0, -1)` drops the last segment, which is always the
+// Only DIRECTORY segments count: `.slice(0, -1)` drops the last segment, which is always the
 // file's own basename, before checking for an exact "test"/"tests"
 // segment. Without the slice, a FILE literally named `tests` (e.g.
 // `bin/tests`, an extensionless script) counted as being "under a test
@@ -376,8 +364,7 @@ interface Finding {
 }
 
 /**
- * Secret detection with git-aware, diff-scoped severity (agent-tasks
- * 6c717d8d + 1b93636a). A finding is a hard blocker (`fail`) only when
+ * Secret detection with git-aware, diff-scoped severity. A finding is a hard blocker (`fail`) only when
  * the secret can actually reach the remote AND belongs to the change
  * being pushed:
  *
@@ -869,7 +856,7 @@ interface DiffBaseCandidate {
  *     branch with nothing committed beyond it, so the SHA (== HEAD) is
  *     returned as the base. `resolveChangedFiles` then diffs HEAD against
  *     the working tree, which correctly yields an empty set unless there
- *     are uncommitted edits (agent-tasks 1ba4a4d1: a freshly cloned repo
+ *     are uncommitted edits (a freshly cloned repo
  *     sitting untouched on its default branch must not be scored as
  *     "diff base unresolvable").
  *   - An untrusted candidate (the bare local-branch-name fallback `main`
