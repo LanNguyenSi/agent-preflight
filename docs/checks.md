@@ -906,6 +906,13 @@ the scanned directory). Everything else is not read:
   repository (discovery finds none), that repository's ignore rules decide
   what is listed, so its excludes can leave files unscanned.
 
+  The scan root is resolved once using native filesystem traversal before
+  either Git or file enumeration. A root alias containing a symlink followed
+  by `..` therefore uses the same physical directory for Git listing, the
+  filesystem-walk fallback, file reads and relative finding paths. An
+  unresolvable root or a root that is not a directory is a blocking failure,
+  rather than an empty successful scan.
+
   `GIT_INDEX_FILE` is checked independently, including when no repository
   redirect variable is set. Its real path must be strictly inside the chosen
   worktree's own git directory (`git rev-parse --git-dir`, not the shared

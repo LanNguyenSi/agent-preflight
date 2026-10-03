@@ -2236,6 +2236,80 @@ process.exit(result.status ?? 1);
     expect(indexes.every((index) => index === hookIndex)).toBe(true);
   });
 
+  async function withFailingGitListing<T>(fn: () => Promise<T>): Promise<T> {
+    const bin = makeTempDir("preflight-secrets-list-error-shim-");
+    const realGit = (process.env.PATH ?? "").split(path.delimiter).map((dir) => path.join(dir, "git")).find((file) => fs.existsSync(file));
+    expect(realGit).toBeDefined();
+    const shim = path.join(bin, "git");
+    fs.writeFileSync(shim, `#!${process.execPath}
+const cp = require("child_process"), args = process.argv.slice(2);
+if (args.includes("ls-files")) process.exit(128);
+const result = cp.spawnSync(${JSON.stringify(realGit)}, args, { stdio: "inherit", env: process.env });
+process.exit(result.status ?? 1);
+`);
+    fs.chmodSync(shim, 0o755);
+    return withEnv({ PATH: `${bin}${path.delimiter}${process.env.PATH}` }, fn);
+  }
+
+  it.each(["absolute", "relative"])("uses one physical root for a symlink/parent alias and its partial index: %s", async (shape) => {
+    const { root, repoPath, hookIndex } = makeIndexViewFixture();
+    fs.mkdirSync(path.join(repoPath, "sub"));
+    const outside = path.join(root, "outside");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, "common.txt"), "benign lexical decoy\n");
+    fs.symlinkSync(path.join(repoPath, "sub"), path.join(outside, "hop"), "dir");
+    const raw = `${outside}/hop/..`;
+    const scanRoot = shape === "relative" ? `${path.relative(process.cwd(), outside)}/hop/..` : raw;
+    expect(fs.realpathSync.native(raw)).toBe(repoPath);
+    expect(path.resolve(scanRoot)).toBe(outside);
+    expect(fs.existsSync(path.join(scanRoot, "included.env"))).toBe(false);
+    expect(indexFiles(scanRoot)).toEqual(ordinaryIndexFiles);
+    for (const index of [hookIndex, ".git/hook"]) {
+      expect(indexFiles(scanRoot, index)).toEqual(partialIndexFiles);
+      const canonical = await withEnv({ GIT_INDEX_FILE: index }, () => runSecretDetection(repoPath, { secretDetectionStrict: true }));
+      const aliased = await withEnv({ GIT_INDEX_FILE: index }, () => runSecretDetection(scanRoot, { secretDetectionStrict: true }));
+      expect(canonical.checks[0]?.status).toBe("fail");
+      expect(canonical.checks[0]?.details).toEqual(["included.env:1"]);
+      expect(aliased.checks[0]?.status).toBe("fail");
+      expect(aliased.checks[0]?.details).toEqual(canonical.checks[0]?.details);
+    }
+  });
+
+  it.each(["absolute", "relative"])("uses the same physical root on the filesystem-walk fallback: %s", async (shape) => {
+    const { root, repoPath, hookIndex } = makeIndexViewFixture();
+    fs.mkdirSync(path.join(repoPath, "sub"));
+    const outside = path.join(root, "walk-outside");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, "common.txt"), "benign lexical decoy\n");
+    fs.symlinkSync(path.join(repoPath, "sub"), path.join(outside, "hop"), "dir");
+    const raw = `${outside}/hop/..`;
+    const scanRoot = shape === "relative" ? `${path.relative(process.cwd(), outside)}/hop/..` : raw;
+    expect(fs.realpathSync.native(raw)).toBe(repoPath);
+    expect(path.resolve(scanRoot)).toBe(outside);
+    expect(indexFiles(scanRoot)).toEqual(ordinaryIndexFiles);
+    expect(indexFiles(scanRoot, hookIndex)).toEqual(partialIndexFiles);
+    await withEnv({ GIT_INDEX_FILE: hookIndex }, () => withFailingGitListing(async () => {
+      const canonical = await runSecretDetection(repoPath, { secretDetectionStrict: true });
+      const aliased = await runSecretDetection(scanRoot, { secretDetectionStrict: true });
+      const expected = ["included.env:1", "excluded.env:1 (non-blocking)"];
+      expect(canonical.checks[0]?.status).toBe("fail");
+      expect(canonical.checks[0]?.details).toEqual(expected);
+      expect(aliased.checks[0]?.status).toBe("fail");
+      expect(aliased.checks[0]?.details).toEqual(expected);
+    }));
+  });
+
+  it.each(["missing", "dangling", "file"])("reports an unavailable scan root as a blocking failure: %s", async (shape) => {
+    const parent = makeTempDir("preflight-secrets-invalid-root-");
+    const scanRoot = path.join(parent, "root");
+    if (shape === "dangling") fs.symlinkSync(path.join(parent, "missing"), scanRoot);
+    if (shape === "file") fs.writeFileSync(scanRoot, "benign\n");
+    const result = await runSecretDetection(scanRoot);
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.message).toBe("Secret detection could not resolve the scan directory");
+    expect(result.limitations).toContain("Secret detection could not resolve the scan directory");
+  });
+
   it.each(["missing", "dangling"])("drops an unresolvable inherited index: %s", async (shape) => {
     const { repoPath } = makeIndexViewFixture();
     const missing = path.join(repoPath, ".git", "missing");

@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- Secret detection validates an inherited `GIT_INDEX_FILE` independently of repository redirect variables. It keeps only an index whose real path is inside the selected worktree's own git directory; foreign indexes, symlink escapes and unresolvable paths are dropped. Physical resolution preserves symlink followed by `..` traversal, and Git uses the validated canonical index path; owned partial indexes reached through those aliases retain their selected file set. Owned temporary indexes used by partial-commit hooks and linked worktrees remain supported. Tests now distinguish ignored files from unclassifiable paths after a failed ignore batch and pin the filesystem-walk fallback when the target-directory ignore query fails.
+- Secret detection validates an inherited `GIT_INDEX_FILE` independently of repository redirect variables. It keeps only an index whose real path is inside the selected worktree's own git directory; foreign indexes, symlink escapes and unresolvable paths are dropped. The scan root is canonicalized before Git and filesystem consumers, including walk fallback; an unresolvable or non-directory root fails instead of reporting an empty pass. Physical resolution preserves symlink followed by `..` traversal, and Git uses the validated canonical index path; owned partial indexes reached through those aliases retain their selected file set. Owned temporary indexes used by partial-commit hooks and linked worktrees remain supported. Tests now distinguish ignored files from unclassifiable paths after a failed ignore batch and pin the filesystem-walk fallback when the target-directory ignore query fails.
 
 ## [0.9.0] - 2026-10-02
 

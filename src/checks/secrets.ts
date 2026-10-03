@@ -413,6 +413,26 @@ export async function runSecretDetection(
   const rawFindings: Finding[] = [];
   const limitations: string[] = ["secret detection uses pattern matching; not exhaustive"];
 
+  // One physical root for Git and file reads; joining a raw symlink/.. root
+  // would otherwise enumerate one directory and read another.
+  try {
+    repoPath = physicalGitPath(process.cwd(), repoPath);
+    if (!fs.statSync(repoPath).isDirectory()) throw new Error("Scan root is not a directory");
+  } catch {
+    const message = "Secret detection could not resolve the scan directory";
+    return {
+      checks: [{
+        name: "secret-detection",
+        kind: "secret-detection",
+        status: "fail",
+        message,
+        durationMs: Date.now() - start,
+        confidenceContribution: 0.1,
+      }],
+      limitations: [...limitations, message],
+    };
+  }
+
   // Inside a git work tree, scan exactly the committable set that git
   // reports (tracked plus untracked-not-ignored). That keeps gitignored
   // dependency trees (CMS webroots, vendored cores, ...) from being read
