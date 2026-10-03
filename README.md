@@ -32,7 +32,20 @@ source ~/.bashrc
 preflight run .
 ```
 
-Or install via npm (the published package is scoped, `@lannguyensi/agent-preflight`, but the binary is still `preflight`):
+Or run the scoped npm package directly:
+
+```bash
+npx -y @lannguyensi/agent-preflight run .
+```
+
+To select the `preflight` executable explicitly, use the package flag:
+
+```bash
+npx -y -p @lannguyensi/agent-preflight preflight run .
+```
+
+The package exposes `agent-preflight` and `preflight` for the same CLI,
+plus `preflight-mcp` for the MCP server. To install via npm:
 
 ```bash
 npm install -g @lannguyensi/agent-preflight
