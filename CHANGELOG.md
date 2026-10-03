@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Publish workflows now install npm with `npm install -g npm@^11.5.1` (the documented trusted-publishing floor) instead of the floating `npm@11`, and the retry loop's "reached the registry despite a non-zero publish exit" branch now probes `npm view <pkg>@<version> dist.attestations` and fails with an error when the attestation is empty, so a partially completed publish is no longer announced green. CI only; no package code change.
+
 ### Added
 
 - `preflight run --config <path>` and the `PREFLIGHT_CONFIG` environment variable load the config from a file outside the target repository (#100). Precedence is `--config`, then `PREFLIGHT_CONFIG`, then `<repoPath>/.preflight.json`; the sources are not merged. A relative path is resolved against the current working directory, while `workingDir`, `cwd` and `logDir` in the file stay relative to the target repository. A missing, unreadable or invalid explicit file is an error with a non-zero exit, never a silent fallback, and every validation warning (wrong field type, dropped entry, unknown key) is fatal for it, while the repo file keeps warning and applying defaults; an empty `PREFLIGHT_CONFIG` counts as unset. The result gains `config: { source: "option" | "env" | "repo" | "none", path }`, and the MCP `preflight_run` tool gains `configPath`. `batch` does not support an explicit file and `sandbox` rejects it with a one-line error and exit 1. `PREFLIGHT_CONFIG` is removed by the shared command runner (`runShellCheck`) from the environment of configured checks and other commands routed through it. Direct subprocess paths, including the built-in npm audit runner and `act` CI simulation, currently inherit it; other direct children are outside this filter. This is a command-runner boundary, not a guarantee that every child process lacks the selector. The reported source is `none` when a broken repo file made defaults apply. An explicit file can define shell commands like `.preflight.json`, so only use trusted files.
