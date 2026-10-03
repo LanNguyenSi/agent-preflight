@@ -8,6 +8,7 @@ import { runAuditChecks } from "../src/checks/audit.js";
 import { runLintChecks } from "../src/checks/lint.js";
 import { runTestChecks } from "../src/checks/test.js";
 import { runTypecheckChecks } from "../src/checks/typecheck.js";
+import * as shared from "../src/checks/shared.js";
 import { shouldSkipRecursiveNodeTest } from "../src/checks/shared.js";
 import { runPreflight } from "../src/runner.js";
 import type { ConfiguredCheckKind, PreflightConfig } from "../src/types.js";
@@ -298,7 +299,7 @@ describe.each(kinds)("configured %s commands", (kind) => {
     expect(result.checks.map((check) => check.status)).toEqual(["fail", "fail", "fail"]);
   });
 
-  it("keeps the existing status and message for commands without predicates", async () => {
+  it("reports timeouts without predicates and preserves other exit-code behavior", async () => {
     const execa = vi.mocked(execaModule.execa);
     execa.mockResolvedValueOnce({ exitCode: 0, all: "OK", timedOut: true, isCanceled: false } as never);
     execa.mockResolvedValueOnce({ exitCode: 0, all: "OK", timedOut: false, signal: "SIGTERM", isCanceled: false } as never);
@@ -306,7 +307,7 @@ describe.each(kinds)("configured %s commands", (kind) => {
       logDir, commands: { [kind]: ["echo OK", { run: "echo OK" }] },
     });
     expect(result.checks.map((check) => [check.status, check.message])).toEqual([
-      ["pass", undefined], ["pass", undefined],
+      ["fail", `${kind} command failed: timed out after ${kind === "test" ? 300_000 : 120_000} ms`], ["pass", undefined],
     ]);
   });
 
@@ -455,5 +456,34 @@ describe("configured test recursion protection", () => {
     vi.stubEnv("VITEST", "true");
     const result = await runTestChecks(process.cwd(), { logDir, commands: { test: ["npm run test", "true"] } });
     expect(result.checks).toMatchObject([{ name: "test:1", status: "skip" }, { name: "test:2", status: "pass" }]);
+  });
+});
+
+
+describe("test command timeouts", () => {
+  it("reports the configured timeout for a sleeping command", async () => {
+    const result = await runTestChecks(repoPath, {
+      logDir, commands: { test: [{ run: "exec sleep 1", timeoutMs: 20 }] },
+    });
+    expect(result.checks[0]).toMatchObject({ status: "fail" });
+    expect(result.checks[0].message).toContain("timed out after 20 ms");
+    expect(result.checks[0].message).not.toContain("build artifact");
+  });
+
+  it("does not classify incomplete default test output as a missing build", async () => {
+    fs.writeFileSync(path.join(repoPath, "package.json"), JSON.stringify({
+      main: "dist/index.js", scripts: { build: "tsc", test: "node test.js" },
+    }));
+    vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0 } as Awaited<ReturnType<typeof execaModule.execa>>).mockResolvedValueOnce({
+      exitCode: undefined, timedOut: true, signal: "SIGTERM", isCanceled: false,
+      all: "Error: Cannot find module './dist/index.js'",
+    } as Awaited<ReturnType<typeof execaModule.execa>>);
+    const classifier = vi.spyOn(shared, "evaluateBuildRequiredTestFailure");
+    const result = await runTestChecks(repoPath, { logDir });
+    expect(result.checks[0]).toMatchObject({ status: "fail" });
+    expect(result.checks[0].message).toContain("timed out after 300000 ms");
+    expect(result.checks[0].message).not.toContain("build artifact");
+    expect(classifier).not.toHaveBeenCalled();
+    expect(result.limitations).toEqual([]);
   });
 });

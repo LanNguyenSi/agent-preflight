@@ -426,8 +426,12 @@ export async function startMcpServer(): Promise<void> {
 // (node dist/mcp.js / the `preflight-mcp` bin), false when imported by
 // tests or other modules.
 if (require.main === module) {
-  startMcpServer().catch((err) => {
-    console.error("agent-preflight MCP server failed:", err);
-    process.exit(1);
-  });
+  if (process.argv.slice(2).includes("--version")) {
+    console.log(VERSION);
+  } else {
+    startMcpServer().catch((err) => {
+      console.error("agent-preflight MCP server failed:", err);
+      process.exit(1);
+    });
+  }
 }

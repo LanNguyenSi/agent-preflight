@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Timed-out tests remain failures with the timeout duration in their message; incomplete output is not classified as a missing build artifact (#105). Removed the nonexistent library `main` entry and added `--version` to `preflight-mcp`.
+
 - `passRegex` and `failRegex` now search the first and the last 65536 UTF-16
   code units of long combined output (the whole output up to 131072), so
   verdict lines printed at the end of long runner output are no longer missed
