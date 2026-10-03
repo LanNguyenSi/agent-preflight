@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { CheckResult, PreflightConfig } from "../types.js";
 import { CheckSetResult } from "./shared.js";
-import { resolveDiffBase } from "./secrets.js";
+import { resolveDiffBase, type GitContext } from "./git-common.js";
 
 const DEFAULT_EXCEPTIONS = ["index.ts", "index.js", "types.ts", "types.js", "constants.ts", "constants.js"];
 
@@ -74,7 +74,8 @@ async function nearestDiffBase(repoPath: string): Promise<string | null> {
     const count = (await gitLines(repoPath, ["rev-list", "--count", `${mb}..HEAD`]))?.[0];
     bases.push({ mb, distance: count === undefined ? Number.POSITIVE_INFINITY : Number(count) });
   };
-  const secretsBase = await resolveDiffBase({ repoPath, env: process.env });
+  const git: GitContext = { repoPath, env: process.env };
+  const secretsBase = await resolveDiffBase(git);
   const fromCopy = upstream !== undefined && copies.has(upstream)
     && secretsBase === (await gitLines(repoPath, ["merge-base", "HEAD", upstream]))?.[0];
   if (secretsBase !== null && !fromCopy) await consider(secretsBase);
