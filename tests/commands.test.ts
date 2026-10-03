@@ -474,10 +474,10 @@ describe("test command timeouts", () => {
     fs.writeFileSync(path.join(repoPath, "package.json"), JSON.stringify({
       main: "dist/index.js", scripts: { build: "tsc", test: "node test.js" },
     }));
-    vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0 } as Awaited<ReturnType<typeof execaModule.execa>>).mockResolvedValueOnce({
+    vi.mocked(execaModule.execa).mockResolvedValueOnce({ exitCode: 0 } as never).mockResolvedValueOnce({
       exitCode: undefined, timedOut: true, signal: "SIGTERM", isCanceled: false,
       all: "Error: Cannot find module './dist/index.js'",
-    } as Awaited<ReturnType<typeof execaModule.execa>>);
+    } as never);
     const classifier = vi.spyOn(shared, "evaluateBuildRequiredTestFailure");
     const result = await runTestChecks(repoPath, { logDir });
     expect(result.checks[0]).toMatchObject({ status: "fail" });
