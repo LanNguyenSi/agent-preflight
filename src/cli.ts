@@ -108,7 +108,7 @@ export function createProgram(): Command {
       } catch (err) {
         if (err instanceof ExplicitConfigError) {
           process.stderr.write(`preflight: ${err.message}\n`);
-          process.exit(1);
+          process.exitCode = 1;
           return;
         }
         throw err;
@@ -237,7 +237,7 @@ export function createProgram(): Command {
       } catch (err) {
         if (err instanceof ExplicitConfigError) {
           process.stderr.write(`preflight: ${err.message}\n`);
-          process.exit(1);
+          process.exitCode = 1;
           return;
         }
         throw err;
