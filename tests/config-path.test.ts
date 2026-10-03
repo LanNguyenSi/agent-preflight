@@ -6,6 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "fs";
+import { spawn } from "child_process";
 import os from "os";
 import path from "path";
 import {
@@ -65,11 +66,16 @@ async function runCli(args: string[]): Promise<{
   json: PreflightResult | undefined;
   stdout: string;
   stderr: string;
+  immediateExit: boolean;
 }> {
   let exitCode: number | undefined;
+  let immediateExit = false;
+  const previousExitCode = process.exitCode;
+  process.exitCode = undefined;
   let out = "";
   let err = "";
   const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+    immediateExit = true;
     if (exitCode === undefined) exitCode = code;
     return undefined as never;
   }) as typeof process.exit);
@@ -99,6 +105,8 @@ async function runCli(args: string[]): Promise<{
     logSpy.mockRestore();
     stdoutSpy.mockRestore();
     stderrSpy.mockRestore();
+    exitCode ??= process.exitCode as number | undefined;
+    process.exitCode = previousExitCode;
   }
   let json: PreflightResult | undefined;
   try {
@@ -106,7 +114,7 @@ async function runCli(args: string[]): Promise<{
   } catch {
     json = undefined;
   }
-  return { exitCode, json, stdout: out, stderr: err };
+  return { exitCode, json, stdout: out, stderr: err, immediateExit };
 }
 
 beforeEach(() => {
@@ -276,6 +284,34 @@ describe("loadConfigWithSource", () => {
     const loaded = loadConfigWithSource(repo);
     expect(loaded.source.source).toBe("repo");
     expect(loaded.config.protectedBranches).toEqual(["x"]);
+  });
+});
+
+describe("explicit config diagnostics in a spawned CLI", () => {
+  it("reports every validation problem before exiting nonzero", async () => {
+    const repo = makeRepo();
+    const problems = Array.from({ length: 6000 }, (_, i) => ({ name: `problem-${i}`, command: i }));
+    const external = writeFile(makeTempDir("preflight-cfgpath-ext-"), "large.json", JSON.stringify({ customChecks: problems }));
+    const expected = `preflight: config file ${external} is invalid:\n${problems.map((_, i) =>
+      `  - customChecks[${i}]: "name" and "command" must be strings; dropping this entry`
+    ).join("\n")}\n`;
+    const result = await new Promise<{ code: number | null; signal: string | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(process.execPath, [path.resolve("dist/cli.js"), "run", repo, "--json", "--config", external], {
+        env: { ...process.env, PREFLIGHT_CONFIG: "" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
+      child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+      child.on("error", reject);
+      child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+    });
+    expect(result.code).toBe(1);
+    expect(result.signal).toBeNull();
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain('customChecks[5999]: "name" and "command" must be strings; dropping this entry');
+    expect(result.stderr).toBe(expected);
   });
 });
 
@@ -460,7 +496,8 @@ describe("batch ignores an explicit config", () => {
 describe("sandbox rejects an explicit config", () => {
   it("exits 1 with a one-line message and no stack trace at the CLI", async () => {
     vi.stubEnv("PREFLIGHT_CONFIG", "/some/shared.json");
-    const { exitCode, stderr } = await runCli(["sandbox", makeRepo(), "--print"]);
+    const { exitCode, stderr, immediateExit } = await runCli(["sandbox", makeRepo(), "--print"]);
+    expect(immediateExit).toBe(false);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("preflight: sandbox does not support an explicit config file");
     expect(stderr).not.toContain("    at ");

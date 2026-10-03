@@ -96,6 +96,8 @@ function makeNotReadyResult(): PreflightResult {
  */
 async function runCommand(args: string[]): Promise<{ exitCode: number | undefined; stdout: string }> {
   let capturedCode: number | undefined;
+  const previousExitCode = process.exitCode;
+  process.exitCode = undefined;
   const logLines: string[] = [];
 
   const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -127,6 +129,8 @@ async function runCommand(args: string[]): Promise<{ exitCode: number | undefine
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
+    capturedCode ??= process.exitCode as number | undefined;
+    process.exitCode = previousExitCode;
     exitSpy.mockRestore();
     consoleSpy.mockRestore();
     stdoutWriteSpy.mockRestore();
