@@ -369,8 +369,8 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
 // answers "could a build change this outcome at all"; the corroboration
 // answers "is THIS failure about the missing artifact". Without the
 // precondition, any output line could downgrade a genuine failure (the
-// round-2 defect). Without the corroboration, every failure in an unbuilt
-// checkout would be downgraded, including one that has nothing to do with
+// missing-artifact false-positive case). Without the corroboration, every
+// failure in an unbuilt checkout would be downgraded, including one unrelated to
 // the build -- a package that compiles to `dist/` but runs its tests from
 // source (this very repo) would report `ready: true` for a genuinely broken
 // suite.
@@ -1759,7 +1759,7 @@ function outputLines(output: string | undefined): string[] | undefined {
 // `runner.ts`'s `configuredLogDir`/`effectiveConfig` handling around its own
 // `runPreflight` entry point).
 //
-// Precedence (task 2e8bcc7e): `.preflight.json` `logDir` > `PREFLIGHT_LOG_DIR`
+// Precedence: `.preflight.json` `logDir` > `PREFLIGHT_LOG_DIR`
 // env var > `~/.agent-preflight/logs`. The env var exists so a CLI run
 // against a scratch fixture, or a parallel worktree sharing `$HOME` with
 // other agent-preflight checkouts, can be pointed at an isolated log
@@ -1777,15 +1777,14 @@ function outputLines(output: string | undefined): string[] | undefined {
 // `PREFLIGHT_LOG_DIR="   "`) warns the same way and falls back, rather than
 // being treated as unset: a variable that is SET but blank is more likely a
 // misconfigured shell/`.env` export than a deliberate no-op, and the
-// frozen acceptance criterion for this task requires a warning here (see
-// review finding F1, task 2e8bcc7e).
+// warning makes a misconfigured override visible to the operator.
 //
 // `runner.ts` calls this at most once per `runPreflight` invocation (see
 // its `resolvedLogDir` handling), threading the result through
 // `effectiveConfig.logDir` instead of leaving `logDir` undefined for every
 // check runner to resolve independently; without that, a run with several
 // failing checks called this function, and printed its warning, once per
-// failing check (review finding F5, task 2e8bcc7e). A direct `runShellCheck`
+// failing check. A direct `runShellCheck`
 // call that omits `logDir` (as some unit tests do) still calls this
 // function itself, once per call, through `persistFailureOutput` below.
 //
@@ -1827,7 +1826,7 @@ export function defaultLogDir(): string {
 // this pattern intentionally stays narrow rather than trying to detect every
 // possible test-runner output style.
 //
-// Precision decision (fail-log hardening review, task 016425e6): these bare
+// Failure-line precision: these bare
 // glyphs (×, ✗, ❯, ●) are not exclusive to vitest/jest — a lint tool's own
 // output, a captured shell prompt fragment (❯ is a common custom-prompt
 // character), or an unrelated bullet list could contain them too, and would
@@ -1913,7 +1912,7 @@ function sanitizeLogFileName(name: string): string {
 // double as the deterministic sort key `rotateLogFiles` uses below (see
 // `parseRotationKey`).
 //
-// Precision decision (fail-log hardening review, task 016425e6): a
+// Log-filename precision: a
 // width-unbounded `\d+` for the first (epoch-ms) group matches any
 // dash-number-count shape, not just an actual timestamp; an nginx-style
 // dated log (`nginx-2026-08-17.log`, three dash-separated groups: year,
@@ -1928,11 +1927,11 @@ function sanitizeLogFileName(name: string): string {
 // the file-naming shape.
 const OWN_LOG_FILE_PATTERN = /-(\d{13,})-(\d+)-(\d+)\.log$/;
 
-// Filenames written by the pre-0.4.0 fail-log feature (task 6691dd56 / PR
-// #45), before `persistFailureOutput` started embedding `process.pid`:
+// Filenames written by the pre-0.4.0 fail-log feature, before
+// `persistFailureOutput` started embedding `process.pid`:
 // `<check>-<epoch-ms>-<sequence>.log` — two number groups instead of three.
 // `OWN_LOG_FILE_PATTERN` stopped matching these the moment the pid segment
-// was added (task 016425e6), which orphaned any log file already on disk
+// was added, which orphaned any log file already on disk
 // from a prior install: `rotateLogFiles` no longer counted them, so they
 // could never be picked for deletion and would sit in the directory forever
 // alongside the current 20-file cap instead of draining through it. This
