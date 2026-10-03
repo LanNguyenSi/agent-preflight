@@ -2128,6 +2128,169 @@ describe("runSecretDetection — git-enumerated file set", () => {
     }
   });
 
+  function makeIndexViewFixture(): { root: string; repoPath: string; foreign: string; hookIndex: string } {
+    const root = fs.realpathSync.native(makeTempDir("preflight-secrets-index-traversal-"));
+    const repoPath = path.join(root, "repo");
+    const foreign = path.join(root, "foreign");
+    for (const dir of [repoPath, foreign]) {
+      fs.mkdirSync(dir);
+      gitInit(dir);
+      fs.writeFileSync(path.join(dir, "common.txt"), "benign\n");
+      git(dir, "add", "common.txt");
+    }
+    fs.writeFileSync(path.join(repoPath, ".gitignore"), "*.env\n");
+    for (const name of ["included.env", "excluded.env"]) fs.writeFileSync(path.join(repoPath, name), secretLine);
+    git(repoPath, "add", "-f", "included.env", "excluded.env", ".gitignore");
+    const hookIndex = path.join(repoPath, ".git", "hook");
+    fs.copyFileSync(path.join(repoPath, ".git", "index"), hookIndex);
+    execFileSync("git", ["update-index", "--force-remove", "excluded.env"], {
+      cwd: repoPath, env: { ...process.env, GIT_INDEX_FILE: hookIndex }, stdio: "ignore",
+    });
+    return { root, repoPath, foreign, hookIndex };
+  }
+
+  function indexFiles(repoPath: string, index?: string): string[] {
+    return execFileSync("git", ["ls-files", "-z"], {
+      cwd: repoPath, env: { ...process.env, GIT_INDEX_FILE: index }, encoding: "utf8",
+    }).split("\0").filter(Boolean).sort();
+  }
+
+  const ordinaryIndexFiles = [".gitignore", "common.txt", "excluded.env", "included.env"];
+  const partialIndexFiles = [".gitignore", "common.txt", "included.env"];
+
+  it.each(["absolute", "relative"])("rejects a physically foreign index reached through a symlink and parent traversal: %s", async (shape) => {
+    const { repoPath, foreign, hookIndex } = makeIndexViewFixture();
+    fs.mkdirSync(path.join(foreign, ".git", "sub"));
+    fs.symlinkSync(path.join(foreign, ".git", "sub"), path.join(repoPath, ".git", "hop"), "dir");
+    const foreignHook = path.join(foreign, ".git", "hook");
+    fs.copyFileSync(path.join(foreign, ".git", "index"), foreignHook);
+    const raw = `${repoPath}/.git/hop/../hook`;
+    const index = shape === "relative" ? ".git/hop/../hook" : raw;
+    expect(fs.realpathSync.native(raw)).toBe(foreignHook);
+    expect(path.resolve(raw)).toBe(hookIndex);
+    expect(indexFiles(repoPath)).toEqual(ordinaryIndexFiles);
+    expect(indexFiles(repoPath, index)).toEqual(["common.txt"]);
+    const result = await withEnv({ GIT_INDEX_FILE: index }, () => runSecretDetection(repoPath, { secretDetectionStrict: true }));
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["excluded.env:1", "included.env:1"]);
+  });
+
+  it.each(["absolute", "relative"])("preserves a physically owned partial index reached through outside symlink traversal: %s", async (shape) => {
+    const { root, repoPath, hookIndex } = makeIndexViewFixture();
+    fs.mkdirSync(path.join(repoPath, ".git", "sub"));
+    const outside = path.join(root, "outside");
+    fs.mkdirSync(outside);
+    fs.symlinkSync(path.join(repoPath, ".git", "sub"), path.join(outside, "hop"), "dir");
+    const raw = `${outside}/hop/../hook`;
+    const index = shape === "relative" ? "../outside/hop/../hook" : raw;
+    expect(fs.realpathSync.native(raw)).toBe(hookIndex);
+    expect(fs.existsSync(path.resolve(raw))).toBe(false);
+    expect(indexFiles(repoPath)).toEqual(ordinaryIndexFiles);
+    expect(indexFiles(repoPath, index)).toEqual(partialIndexFiles);
+    const result = await withEnv({ GIT_INDEX_FILE: index }, () => runSecretDetection(repoPath, { secretDetectionStrict: true }));
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["included.env:1"]);
+  });
+
+  it("preserves the physical selected git directory through symlink and parent traversal", async () => {
+    const { root, repoPath, hookIndex } = makeIndexViewFixture();
+    fs.mkdirSync(path.join(repoPath, ".git", "sub"));
+    const outside = path.join(root, "git-alias");
+    fs.mkdirSync(outside);
+    fs.symlinkSync(path.join(repoPath, ".git", "sub"), path.join(outside, "hop"), "dir");
+    const gitDir = `${outside}/hop/..`;
+    expect(fs.realpathSync.native(gitDir)).toBe(path.join(repoPath, ".git"));
+    expect(path.resolve(gitDir)).toBe(outside);
+    const result = await withEnv({ GIT_DIR: gitDir, GIT_INDEX_FILE: hookIndex }, async () => {
+      expect(indexFiles(repoPath)).toEqual(ordinaryIndexFiles);
+      expect(indexFiles(repoPath, hookIndex)).toEqual(partialIndexFiles);
+      return runSecretDetection(repoPath, { secretDetectionStrict: true });
+    });
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["included.env:1"]);
+  });
+
+  it("passes the validated canonical index path to subsequent Git commands", async () => {
+    const { repoPath, hookIndex } = makeIndexViewFixture();
+    const link = path.join(repoPath, ".git", "index-alias");
+    fs.symlinkSync(hookIndex, link);
+    const bin = makeTempDir("preflight-secrets-index-env-shim-");
+    const realGit = (process.env.PATH ?? "").split(path.delimiter).map((dir) => path.join(dir, "git")).find((file) => fs.existsSync(file));
+    expect(realGit).toBeDefined();
+    const log = path.join(bin, "indexes.jsonl");
+    const shim = path.join(bin, "git");
+    fs.writeFileSync(shim, `#!${process.execPath}
+const fs = require("fs"), cp = require("child_process");
+const args = process.argv.slice(2);
+if (args.includes("ls-files")) fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.env.GIT_INDEX_FILE) + "\\n");
+const result = cp.spawnSync(${JSON.stringify(realGit)}, args, { stdio: "inherit", env: process.env });
+process.exit(result.status ?? 1);
+`);
+    fs.chmodSync(shim, 0o755);
+    const result = await withEnv({ PATH: `${bin}${path.delimiter}${process.env.PATH}`, GIT_INDEX_FILE: link }, () =>
+      runSecretDetection(repoPath, { secretDetectionStrict: true }));
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["included.env:1"]);
+    const indexes = fs.readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(indexes.length).toBeGreaterThan(0);
+    expect(indexes.every((index) => index === hookIndex)).toBe(true);
+  });
+
+  it.each(["missing", "dangling"])("drops an unresolvable inherited index: %s", async (shape) => {
+    const { repoPath } = makeIndexViewFixture();
+    const missing = path.join(repoPath, ".git", "missing");
+    const index = shape === "dangling" ? path.join(repoPath, ".git", "dangling") : missing;
+    if (shape === "dangling") fs.symlinkSync(missing, index);
+    expect(indexFiles(repoPath)).toEqual(ordinaryIndexFiles);
+    const result = await withEnv({ GIT_INDEX_FILE: index }, () => runSecretDetection(repoPath, { secretDetectionStrict: true }));
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["excluded.env:1", "included.env:1"]);
+  });
+
+  it("canonicalizes a temporary-root alias while retaining its owned partial index", async () => {
+    const { root, repoPath, hookIndex } = makeIndexViewFixture();
+    const alias = path.join(root, "alias");
+    fs.symlinkSync(repoPath, alias, "dir");
+    const index = `${alias}/.git/hook`;
+    expect(indexFiles(alias)).toEqual(ordinaryIndexFiles);
+    expect(indexFiles(alias, index)).toEqual(partialIndexFiles);
+    const result = await withEnv({ GIT_INDEX_FILE: index }, () => runSecretDetection(alias, { secretDetectionStrict: true }));
+    expect(result.checks[0]?.status).toBe("fail");
+    expect(result.checks[0]?.details).toEqual(["included.env:1"]);
+    expect(fs.realpathSync.native(index)).toBe(hookIndex);
+  });
+
+  it("rejects a linked worktree common-directory index and retains its own partial index", async () => {
+    const root = fs.realpathSync.native(makeTempDir("preflight-secrets-linked-index-"));
+    const main = path.join(root, "main");
+    fs.mkdirSync(main);
+    gitInit(main);
+    fs.writeFileSync(path.join(main, ".gitignore"), "*.env\n");
+    fs.writeFileSync(path.join(main, "common.txt"), "benign\n");
+    gitCommitAll(main);
+    const linked = path.join(root, "linked");
+    git(main, "worktree", "add", "-q", "-b", "linked", linked);
+    for (const name of ["included.env", "excluded.env"]) fs.writeFileSync(path.join(linked, name), secretLine);
+    git(linked, "add", "-f", "included.env", "excluded.env");
+    const ownDir = execFileSync("git", ["rev-parse", "--git-dir"], { cwd: linked, encoding: "utf8" }).trim();
+    const hookIndex = path.join(ownDir, "hook");
+    fs.copyFileSync(path.join(ownDir, "index"), hookIndex);
+    execFileSync("git", ["update-index", "--force-remove", "excluded.env"], {
+      cwd: linked, env: { ...process.env, GIT_INDEX_FILE: hookIndex }, stdio: "ignore",
+    });
+    expect(indexFiles(linked)).toEqual(ordinaryIndexFiles);
+    expect(indexFiles(linked, path.join(main, ".git", "index"))).toEqual([".gitignore", "common.txt"]);
+    expect(indexFiles(linked, hookIndex)).toEqual(partialIndexFiles);
+    for (const [index, expected] of [
+      [path.join(main, ".git", "index"), ["excluded.env:1", "included.env:1"]],
+      [hookIndex, ["included.env:1"]],
+    ] as const) {
+      const result = await withEnv({ GIT_INDEX_FILE: index }, () => runSecretDetection(linked, { secretDetectionStrict: true }));
+      expect(result.checks[0]?.status).toBe("fail");
+      expect(result.checks[0]?.details).toEqual(expected);
+    }
+  });
+
   it("still blocks a committable secret when GIT_WORK_TREE alone points at an unrelated directory", async () => {
     const repoPath = makeTempDir("preflight-secrets-worktree-only-");
     gitInit(repoPath);

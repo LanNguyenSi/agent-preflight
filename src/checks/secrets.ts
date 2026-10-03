@@ -657,11 +657,13 @@ async function resolveGitEnv(repoPath: string): Promise<NodeJS.ProcessEnv> {
       delete withoutIndex["GIT_INDEX_FILE"];
       const dir = await gitExec({ repoPath, env: withoutIndex }, ["rev-parse", "--git-dir"], { raw: true });
       if (dir.exitCode !== 0 || dir.failed) throw new Error("Cannot resolve git directory");
-      const gitDir = fs.realpathSync(path.resolve(repoPath, dir.stdout.replace(/\r?\n$/, "")));
-      const indexPath = fs.realpathSync(path.resolve(repoPath, index));
+      const gitDir = physicalGitPath(repoPath, dir.stdout.replace(/\r?\n$/, ""));
+      const indexPath = physicalGitPath(repoPath, index);
       const relative = path.relative(gitDir, indexPath);
       if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
         delete selected["GIT_INDEX_FILE"];
+      } else {
+        selected["GIT_INDEX_FILE"] = indexPath;
       }
     } catch {
       // Unresolvable paths cannot establish ownership of the index.
@@ -671,12 +673,20 @@ async function resolveGitEnv(repoPath: string): Promise<NodeJS.ProcessEnv> {
   return selected;
 }
 
+// Keep symlink/parent traversal intact until the filesystem resolves it.
+// path.join/path.resolve and the non-native realpath normalize too early.
+function physicalGitPath(repoPath: string, value: string): string {
+  const cwd = path.isAbsolute(repoPath) ? repoPath : `${process.cwd()}${path.sep}${repoPath}`;
+  const absolute = path.isAbsolute(value) ? value : `${cwd}${path.sep}${value}`;
+  return fs.realpathSync.native(absolute);
+}
+
 /** Real path of the common git directory selected by `git.env` from `git.repoPath`, or null. */
 async function gitCommonDir(git: GitContext): Promise<string | null> {
   try {
     const res = await gitExec(git, ["rev-parse", "--git-common-dir"], { raw: true });
     if (res.exitCode !== 0 || res.failed) return null;
-    return fs.realpathSync(path.resolve(git.repoPath, res.stdout.replace(/\r?\n$/, "")));
+    return physicalGitPath(git.repoPath, res.stdout.replace(/\r?\n$/, ""));
   } catch {
     return null;
   }
@@ -691,8 +701,8 @@ async function worktreeRelativePath(git: GitContext): Promise<string | null> {
   try {
     const top = await gitExec(git, ["rev-parse", "--show-toplevel"], { raw: true });
     if (top.exitCode !== 0 || top.failed) return null;
-    const realTop = fs.realpathSync(top.stdout.replace(/\r?\n$/, ""));
-    const realRepo = fs.realpathSync(git.repoPath);
+    const realTop = physicalGitPath(git.repoPath, top.stdout.replace(/\r?\n$/, ""));
+    const realRepo = physicalGitPath(process.cwd(), git.repoPath);
     const rel = path.relative(realTop, realRepo);
     if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
     return rel;

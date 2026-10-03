@@ -912,7 +912,10 @@ the scanned directory). Everything else is not read:
   common directory). An outside index, a symlink leading outside, an index
   under a sibling directory with the same path prefix, or a path that cannot
   be resolved is discarded. Relative paths resolve from the scanned directory;
-  an internal symlink to an owned index is accepted. This preserves a hook's
+  an internal symlink to an owned index is accepted. Symlink traversal is
+  resolved before a following `..`, matching filesystem traversal rather than
+  lexical path normalization. Git receives the validated canonical index path.
+  This preserves a hook's
   temporary partial-commit index inside its git directory: a file tracked only
   in the ordinary index that matches an ignore rule is not listed when it is
   excluded from that partial commit. Linked worktrees use their own per-worktree
