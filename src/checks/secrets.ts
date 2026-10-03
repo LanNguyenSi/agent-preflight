@@ -619,8 +619,10 @@ const GIT_PATHSPEC_VARS = [
  *     `GIT_PREFIX`), and so is `GIT_INDEX_FILE`: it was exported for the
  *     other repository, so its index says nothing about this one.
  *
- * In the inherited choice `GIT_INDEX_FILE` is kept: a hook running
- * `git commit` points it at the index being committed, and the listing
+ * An inherited `GIT_INDEX_FILE` is kept only when its real path is strictly
+ * inside the selected repository's own git directory (`--git-dir`, not the
+ * shared common directory). A hook running
+ * `git commit` points it at a temporary index there, and the listing
  * should agree with it. A file that is tracked only in the real index and
  * matches an ignore rule is then not listed, which is acceptable because it
  * is not part of the commit being made. Untracked files are unaffected:
@@ -630,17 +632,43 @@ const GIT_PATHSPEC_VARS = [
 async function resolveGitEnv(repoPath: string): Promise<NodeJS.ProcessEnv> {
   const inherited: NodeJS.ProcessEnv = { ...process.env };
   for (const key of GIT_PATHSPEC_VARS) delete inherited[key];
-  if (!GIT_REDIRECT_VARS.some((k) => inherited[k] !== undefined)) return inherited;
-
   const scrubbed: NodeJS.ProcessEnv = { ...inherited };
   for (const key of [...GIT_REDIRECT_VARS, "GIT_INDEX_FILE"]) delete scrubbed[key];
 
-  const inheritedCtx: GitContext = { repoPath, env: inherited };
-  if ((await worktreeRelativePath(inheritedCtx)) === null) return scrubbed;
-  const discovered = await gitCommonDir({ repoPath, env: scrubbed });
-  if (discovered === null) return inherited; // env-only repository
-  const selected = await gitCommonDir(inheritedCtx);
-  return selected !== null && selected === discovered ? inherited : scrubbed;
+  let selected = inherited;
+  if (GIT_REDIRECT_VARS.some((k) => inherited[k] !== undefined)) {
+    const inheritedCtx: GitContext = { repoPath, env: inherited };
+    if ((await worktreeRelativePath(inheritedCtx)) === null) {
+      selected = scrubbed;
+    } else {
+      const discovered = await gitCommonDir({ repoPath, env: scrubbed });
+      const commonDir = await gitCommonDir(inheritedCtx);
+      if (discovered !== null && commonDir !== discovered) selected = scrubbed;
+    }
+  }
+
+  // An index alone can redirect the listing even with no GIT_DIR override.
+  // Resolve both paths physically so an in-tree symlink cannot import an
+  // unrelated index, and compare against this worktree's own git directory.
+  const index = selected["GIT_INDEX_FILE"];
+  if (index !== undefined) {
+    try {
+      const withoutIndex = { ...selected };
+      delete withoutIndex["GIT_INDEX_FILE"];
+      const dir = await gitExec({ repoPath, env: withoutIndex }, ["rev-parse", "--git-dir"], { raw: true });
+      if (dir.exitCode !== 0 || dir.failed) throw new Error("Cannot resolve git directory");
+      const gitDir = fs.realpathSync(path.resolve(repoPath, dir.stdout.replace(/\r?\n$/, "")));
+      const indexPath = fs.realpathSync(path.resolve(repoPath, index));
+      const relative = path.relative(gitDir, indexPath);
+      if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        delete selected["GIT_INDEX_FILE"];
+      }
+    } catch {
+      // Unresolvable paths cannot establish ownership of the index.
+      delete selected["GIT_INDEX_FILE"];
+    }
+  }
+  return selected;
 }
 
 /** Real path of the common git directory selected by `git.env` from `git.repoPath`, or null. */

@@ -1562,6 +1562,25 @@ describe("runSecretDetection — git-enumerated file set", () => {
     );
   }
 
+  async function withFailingTargetIgnore<T>(fn: () => Promise<T>): Promise<T> {
+    const bin = makeTempDir("preflight-secrets-git-query-shim-");
+    const realGit = (process.env.PATH ?? "").split(path.delimiter).map((dir) => path.join(dir, "git")).find((file) => fs.existsSync(file));
+    expect(realGit).toBeDefined();
+    // Inject one command failure; every other call, including per-file
+    // ignore classification, runs the real git binary against the fixture.
+    const shim = path.join(bin, "git");
+    fs.writeFileSync(shim, [
+      `#!${process.execPath}`,
+      "const args = process.argv.slice(2);",
+      "if (args.join(' ') === 'check-ignore -q -- .') process.exit(128);",
+      `const child = require('node:child_process').spawnSync(${JSON.stringify(realGit)}, args, { stdio: 'inherit' });`,
+      "process.exit(child.status ?? 128);",
+      "",
+    ].join("\n"));
+    fs.chmodSync(shim, 0o755);
+    return withEnv({ PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` }, fn);
+  }
+
   it("never reads files inside a large gitignored directory outside SKIP_DIRS", async () => {
     const repoPath = makeTempDir("preflight-secrets-big-ignored-");
     gitInit(repoPath);
@@ -1774,7 +1793,7 @@ describe("runSecretDetection — git-enumerated file set", () => {
     fs.writeFileSync(path.join(repoPath, "tracked.js"), secretLine);
     git(repoPath, "add", "tracked.js");
     fs.writeFileSync(path.join(repoPath, "new.js"), secretLine);
-    const indexCopy = path.join(makeTempDir("preflight-secrets-index-copy-"), "index");
+    const indexCopy = path.join(repoPath, ".git", "index.hook");
     fs.copyFileSync(path.join(repoPath, ".git", "index"), indexCopy);
 
     const saved = process.env.GIT_INDEX_FILE;
@@ -1860,11 +1879,11 @@ describe("runSecretDetection — git-enumerated file set", () => {
   });
 
   /** Run `fn` with the given environment variables set, restoring them afterwards. */
-  async function withEnv<T>(vars: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+  async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
     const saved: Record<string, string | undefined> = {};
     for (const [k, v] of Object.entries(vars)) {
       saved[k] = process.env[k];
-      process.env[k] = v;
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
     try {
       return await fn();
@@ -2055,6 +2074,58 @@ describe("runSecretDetection — git-enumerated file set", () => {
 
     expect(result.checks[0]?.status).toBe("fail");
     expect(result.checks[0]?.details).toContain(".env:1");
+  });
+
+  it.each(["index only", "index and prefix", "symlink inside git dir", "sibling git-dir prefix"])(
+    "drops a foreign hook index while scanning another repository: %s",
+    async (shape) => {
+      const a = makeTempDir("preflight-secrets-index-owner-");
+      gitInit(a);
+      fs.writeFileSync(path.join(a, "common.txt"), "benign\n");
+      git(a, "add", "common.txt");
+      const b = makeTempDir("preflight-secrets-index-target-");
+      gitInit(b);
+      fs.writeFileSync(path.join(b, "common.txt"), "benign\n");
+      fs.writeFileSync(path.join(b, ".gitignore"), ".env\n");
+      fs.writeFileSync(path.join(b, ".env"), `API_KEY="${REAL_SECRET}"\n`);
+      git(b, "add", "-f", ".env", ".gitignore", "common.txt");
+      let index = path.join(a, ".git", "index");
+      if (shape === "symlink inside git dir") {
+        const link = path.join(b, ".git", "index.hook");
+        fs.symlinkSync(index, link);
+        index = link;
+      } else if (shape === "sibling git-dir prefix") {
+        const sibling = path.join(b, ".git-foreign");
+        fs.mkdirSync(sibling);
+        fs.copyFileSync(index, path.join(sibling, "index"));
+        index = path.join(sibling, "index");
+      }
+      const result = await withEnv(
+        { GIT_INDEX_FILE: index, GIT_PREFIX: shape === "index and prefix" ? "" : undefined },
+        () => runSecretDetection(b, { secretDetectionStrict: true }),
+      );
+      expect(result.checks[0]?.status).toBe("fail");
+      expect(result.checks[0]?.details).toEqual([".env:1"]);
+    },
+  );
+
+  it("keeps an owned partial-commit index, including a relative path and an internal symlink", async () => {
+    const repoPath = makeTempDir("preflight-secrets-partial-index-");
+    gitInit(repoPath);
+    fs.writeFileSync(path.join(repoPath, ".gitignore"), "*.env\n");
+    for (const name of ["included.env", "excluded.env"]) fs.writeFileSync(path.join(repoPath, name), secretLine);
+    git(repoPath, "add", "-f", "included.env", "excluded.env", ".gitignore");
+    const hookIndex = path.join(repoPath, ".git", "index.hook");
+    fs.copyFileSync(path.join(repoPath, ".git", "index"), hookIndex);
+    await withEnv({ GIT_INDEX_FILE: hookIndex }, async () => { git(repoPath, "update-index", "--force-remove", "excluded.env"); });
+    const link = path.join(repoPath, ".git", "index.link");
+    fs.symlinkSync(hookIndex, link);
+    for (const index of [".git/index.hook", link]) {
+      const result = await withEnv({ GIT_INDEX_FILE: index }, () => runSecretDetection(repoPath, { secretDetectionStrict: true }));
+      expect(result.checks[0]?.status).toBe("fail");
+      // Using the ordinary index instead would incorrectly scan excluded.env.
+      expect(result.checks[0]?.details).toEqual(["included.env:1"]);
+    }
   });
 
   it("still blocks a committable secret when GIT_WORK_TREE alone points at an unrelated directory", async () => {
@@ -2297,6 +2368,48 @@ describe("runSecretDetection — git-enumerated file set", () => {
       expect(result.checks[0]?.details).toEqual(["new-leak.js:1"]);
       expect(result.limitations.some((l) => l.includes("not a git repository"))).toBe(false);
       expect(result.limitations.some((l) => l.includes("could not classify 1 path(s)"))).toBe(true);
+    });
+
+    it("retries a poisoned walk-fallback batch and keeps its ignored path non-blocking", async () => {
+      const parent = makeTempDir("preflight-secrets-retry-parent-");
+      gitInit(parent);
+      fs.writeFileSync(path.join(parent, ".gitignore"), "build/\n");
+      gitCommitAll(parent);
+      const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: parent, encoding: "utf8" }).trim();
+      const repoPath = path.join(parent, "build", "proj");
+      fs.mkdirSync(path.join(repoPath, "module"), { recursive: true });
+      // A gitlink makes check-ignore reject paths inside it. A failed
+      // target-directory query forces a walk, so both paths reach the batch.
+      git(parent, "update-index", "--add", "--cacheinfo", `160000,${head},build/proj/module`);
+      fs.writeFileSync(path.join(repoPath, "module", "poison.js"), secretLine);
+      fs.writeFileSync(path.join(repoPath, "ignored.js"), secretLine);
+
+      const result = await withFailingTargetIgnore(() =>
+        runSecretDetection(repoPath, { secretDetectionStrict: true }),
+      );
+
+      expect(result.checks[0]?.status).toBe("fail");
+      expect(result.checks[0]?.details).toEqual([
+        "module/poison.js:1", "ignored.js:1 (non-blocking)",
+      ]);
+      expect(result.limitations.some((l) => l.includes("could not classify 1 path(s)"))).toBe(true);
+      expect(result.limitations.some((l) => l.includes("not a git repository"))).toBe(false);
+    });
+
+    it("walks an ignored subtree when the target-directory ignore query returns a git error", async () => {
+      const repoPath = makeTempDir("preflight-secrets-query-error-");
+      gitInit(repoPath);
+      fs.mkdirSync(path.join(repoPath, "sub", "ignored"), { recursive: true });
+      fs.writeFileSync(path.join(repoPath, ".gitignore"), "sub/ignored/\n");
+      fs.writeFileSync(path.join(repoPath, "sub", "ok.js"), "module.exports = {};\n");
+      gitCommitAll(repoPath);
+      fs.writeFileSync(path.join(repoPath, "sub", "ignored", "found.js"), secretLine);
+      const result = await withFailingTargetIgnore(() =>
+        runSecretDetection(path.join(repoPath, "sub"), { secretDetectionStrict: true }),
+      );
+      expect(result.checks[0]?.status).toBe("warn");
+      expect(result.checks[0]?.details).toEqual(["ignored/found.js:1 (non-blocking)"]);
+      expect(result.limitations.some((l) => l.includes("not a git repository"))).toBe(false);
     });
   });
 });

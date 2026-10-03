@@ -904,12 +904,21 @@ the scanned directory). Everything else is not read:
   environment of one linked worktree is also accepted when a sibling worktree
   of the same repository is scanned; and when only the environment defines the
   repository (discovery finds none), that repository's ignore rules decide
-  what is listed, so its excludes can leave files unscanned. `GIT_INDEX_FILE` is kept
-  together with the inherited variables (a hook running `git commit` lists the
-  tracked files of the index being committed; a file tracked only in the real
-  index that matches an ignore rule is then not listed, as it is not part of
-  that commit) and removed together with the others when they are removed,
-  because it was exported for the other repository. `GIT_INDEX_FILE` is not checked on its own: when it is the only inherited variable that belongs to another repository (for example a hook of repository A scanning repository B), that index is used, and an ignored file force-added in B but not tracked by that index is then not listed. Inherited
+  what is listed, so its excludes can leave files unscanned.
+
+  `GIT_INDEX_FILE` is checked independently, including when no repository
+  redirect variable is set. Its real path must be strictly inside the chosen
+  worktree's own git directory (`git rev-parse --git-dir`, not the shared
+  common directory). An outside index, a symlink leading outside, an index
+  under a sibling directory with the same path prefix, or a path that cannot
+  be resolved is discarded. Relative paths resolve from the scanned directory;
+  an internal symlink to an owned index is accepted. This preserves a hook's
+  temporary partial-commit index inside its git directory: a file tracked only
+  in the ordinary index that matches an ignore rule is not listed when it is
+  excluded from that partial commit. Linked worktrees use their own per-worktree
+  git directory for this check. An index inherited from another repository
+  can no longer hide a force-added ignored file in the scanned repository.
+  Inherited
   `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` and
   `GIT_ICASE_PATHSPECS` are always removed for secret detection: they select no
   repository, and while one of them is set `git check-ignore` fails on every call.
