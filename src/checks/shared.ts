@@ -212,6 +212,7 @@ interface ShellCheckOptions {
 }
 
 interface ShellCheckRunResult {
+  timedOut?: boolean;
   check?: CheckResult;
   limitation?: string;
   // Full stdout+stderr of the command, when it actually ran (not set on the
@@ -265,6 +266,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
     );
 
     if (
+      !timedOut &&
       exitCode !== 0 &&
       options.treatToolNotFoundAsLimitation &&
       options.missingLimitation &&
@@ -301,9 +303,11 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
     const passMatched = passRe === undefined || windows.pass.some((part) => passRe.test(part));
     const failMatched = failRe !== undefined && windows.fail.some((part) => failRe.test(part));
     const passed = options.passRegex === undefined
-      ? exitCode === 0
+      ? !timedOut && exitCode === 0
       : completed && passMatched && !failMatched;
-    const failureMessage = options.passRegex !== undefined && completed
+    const failureMessage = timedOut
+      ? `${options.failureMessage}: timed out after ${options.timeoutMs ?? 120_000} ms`
+      : options.passRegex !== undefined && completed
       ? `${options.failureMessage}: ${failMatched ? "failRegex matched" : "passRegex did not match"}`
       : options.failureMessage;
 
@@ -318,6 +322,7 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
         confidenceContribution: options.weight,
       },
       rawOutput: all,
+      timedOut,
     };
   } catch (err: unknown) {
     const error = err as NodeJS.ErrnoException & { all?: string };

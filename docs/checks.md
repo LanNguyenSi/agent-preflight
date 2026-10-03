@@ -319,6 +319,8 @@ The setup phase is intentionally conservative. It only runs when the project fil
 
 ## Build-required test classification: an unbuilt package is not a broken one
 
+A test command that exceeds its timeout remains a blocking failure. Its message names the timeout in milliseconds. Incomplete output from that command is not evaluated by the build-required classifier, even when it mentions a missing artifact.
+
 Some Node packages only pass their own tests after a build: a test that
 loads its package's `dist/` output fails loudly in a fresh checkout that has
 not been built yet, even though the repo's own CI always runs a build step

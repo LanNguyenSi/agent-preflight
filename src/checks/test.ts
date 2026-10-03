@@ -91,7 +91,7 @@ export async function runTestChecks(
           // check: a configured `commands.test` override (the branch at the
           // top of this function) is never classified.
           const evaluation =
-            result.check.status === "fail"
+            result.check.status === "fail" && !result.timedOut
               ? evaluateBuildRequiredTestFailure({
                   repoPath,
                   output: result.rawOutput,
