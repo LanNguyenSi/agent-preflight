@@ -4,9 +4,9 @@
  * reported config source, and the sandbox rejection. The CLI cases run the
  * real runner against throwaway fixture repos with only custom checks on.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "fs";
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import os from "os";
 import path from "path";
 import {
@@ -288,6 +288,13 @@ describe("loadConfigWithSource", () => {
 });
 
 describe("explicit config diagnostics in a spawned CLI", () => {
+  beforeAll(() => {
+    execFileSync(process.execPath, [require.resolve("typescript/bin/tsc")], {
+      cwd: path.resolve(__dirname, ".."),
+      stdio: "pipe",
+    });
+  }, 60000);
+
   it("reports every validation problem before exiting nonzero", async () => {
     const repo = makeRepo();
     const problems = Array.from({ length: 6000 }, (_, i) => ({ name: `problem-${i}`, command: i }));
