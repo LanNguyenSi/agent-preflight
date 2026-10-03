@@ -1,10 +1,14 @@
 import fs from "fs";
 import path from "path";
-import { spawnSync } from "child_process";
-import { describe, expect, it } from "vitest";
+import { execSync, spawnSync } from "child_process";
+import { beforeAll, describe, expect, it } from "vitest";
 import { VERSION } from "../src/version.js";
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"));
+
+beforeAll(() => {
+  execSync("npm run build", { cwd: process.cwd(), stdio: "pipe" });
+}, 30_000);
 
 describe("published executable entrypoints", () => {
   it("declares executable bins without a library main", () => {
