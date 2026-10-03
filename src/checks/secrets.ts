@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { execa } from "execa";
 import { CheckResult, PreflightConfig } from "../types.js";
+import { gitExec, runGit, resolveDiffBase, type GitContext } from "./git-common.js";
 
 interface CheckSetResult { checks: CheckResult[]; limitations: string[]; }
 
@@ -583,12 +583,6 @@ async function classifyIgnored(
   }
 }
 
-/** Where and with which environment every git call of one secret-detection run executes. */
-export interface GitContext {
-  repoPath: string;
-  env: NodeJS.ProcessEnv;
-}
-
 const GIT_REDIRECT_VARS = ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_PREFIX"];
 
 /**
@@ -677,22 +671,6 @@ async function worktreeRelativePath(git: GitContext): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-/** Run git in `git.repoPath` with the chosen environment; never rejects on a non-zero exit. */
-function gitExec(
-  git: GitContext,
-  args: string[],
-  options: { input?: string; raw?: boolean } = {},
-) {
-  return execa("git", args, {
-    cwd: git.repoPath,
-    env: git.env,
-    extendEnv: false,
-    reject: false,
-    input: options.input,
-    ...(options.raw ? { stripFinalNewline: false, maxBuffer: 512 * 1024 * 1024 } : {}),
-  });
 }
 
 /**
@@ -802,98 +780,6 @@ function scanFileList(relPaths: string[], root: string, findings: Finding[]): vo
     }
     scanFile(fullPath, segments[segments.length - 1] ?? rel, root, findings);
   }
-}
-
-/** Run a git command; return stdout on a clean exit, `null` on any failure. */
-async function runGit(git: GitContext, args: string[]): Promise<string | null> {
-  try {
-    const res = await gitExec(git, args);
-    return res.exitCode === 0 ? res.stdout : null;
-  } catch {
-    return null;
-  }
-}
-
-interface DiffBaseCandidate {
-  ref: string;
-  /**
-   * Whether `ref` is backed by actual remote-tracking configuration
-   * (upstream, `origin/HEAD`, or a resolved `origin/*` branch) rather
-   * than a blind local-branch-name guess. See the "not diverged" handling
-   * below for why this distinction matters.
-   *
-   * Accepted residual: the upstream candidate (`@{u}`) is trusted on the
-   * assumption that it normally reflects real remote state: a tracking
-   * branch configured against `origin/...`. Git also allows `@{u}` to
-   * resolve to a purely LOCAL branch (e.g. `branch.<name>.remote = "."`,
-   * tracking a sibling local branch with no remote involved at all). In
-   * that exotic configuration a secret committed to the tracked local
-   * branch but never pushed anywhere could be downgraded from `fail` to
-   * `warn` here, same as the "not diverged from the real default branch"
-   * case this trust model is designed for. This is a known, accepted gap
-   * rather than a defect: it requires a deliberately unusual tracking
-   * setup, and `secretDetectionStrict` remains available to opt out of
-   * diff-scoping entirely when that setup is in play.
-   */
-  trusted: boolean;
-}
-
-/**
- * Resolve the commit to diff the current branch against: the merge-base
- * with the upstream tracking branch, else `origin/HEAD`'s target, else a
- * common default branch. Returns the merge-base SHA, or `null` when none
- * resolves (orphan/detached branch, no upstream, no default branch) so
- * the caller can fail safe instead of scoping against nothing.
- *
- * A candidate whose merge-base equals HEAD means the branch has not
- * diverged from the ref (you are on the ref itself, or strictly behind
- * it). What that implies differs by candidate:
- *
- *   - A `trusted` candidate (upstream, `origin/HEAD`, or a resolved
- *     `origin/main`/`origin/master`) confirms, via actual remote-tracking
- *     state rather than a guess, that this really is the repo's default
- *     branch. No divergence there is meaningful: HEAD sits on the default
- *     branch with nothing committed beyond it, so the SHA (== HEAD) is
- *     returned as the base. `resolveChangedFiles` then diffs HEAD against
- *     the working tree, which correctly yields an empty set unless there
- *     are uncommitted edits (a freshly cloned repo
- *     sitting untouched on its default branch must not be scored as
- *     "diff base unresolvable").
- *   - An untrusted candidate (the bare local-branch-name fallback `main`
- *     or `master`) is skipped instead: with no remote-tracking
- *     confirmation, `mb === headSha` just as plausibly means "this branch
- *     happens to be named main/master and IS the ref" with no evidence it
- *     is actually anyone's default branch, e.g. a secret committed
- *     straight onto a local `main` with no upstream and no origin remote
- *     must stay a hard blocker, not be waved through as "unchanged".
- *
- * If every candidate is either unresolvable or an untrusted non-diverged
- * guess, `null` is returned so the caller fails safe.
- */
-export async function resolveDiffBase(git: GitContext): Promise<string | null> {
-  const headSha = (await runGit(git, ["rev-parse", "HEAD"]))?.trim() ?? null;
-  const candidates: DiffBaseCandidate[] = [];
-  const upstream = await runGit(git, [
-    "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}",
-  ]);
-  if (upstream) candidates.push({ ref: upstream.trim(), trusted: true });
-  const originHead = await runGit(git, ["rev-parse", "--abbrev-ref", "origin/HEAD"]);
-  if (originHead) candidates.push({ ref: originHead.trim(), trusted: true });
-  candidates.push(
-    { ref: "origin/main", trusted: true },
-    { ref: "origin/master", trusted: true },
-    { ref: "main", trusted: false },
-    { ref: "master", trusted: false },
-  );
-
-  for (const { ref, trusted } of candidates) {
-    if (!ref) continue;
-    const mb = (await runGit(git, ["merge-base", "HEAD", ref]))?.trim();
-    if (!mb) continue;
-    if (headSha !== null && mb === headSha && !trusted) continue; // unconfirmed guess: not real divergence signal
-    return mb;
-  }
-  return null;
 }
 
 /**
