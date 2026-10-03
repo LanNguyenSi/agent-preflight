@@ -2,6 +2,8 @@
 
 Use the repository's `.preflight.json` and intended verification scope when choosing commands. See the [configuration reference](https://github.com/LanNguyenSi/agent-preflight/blob/main/docs/checks.md) for the full contract.
 
+If the config lives outside the repo (shared team config, many worktrees), use `preflight run --config <path>` or `PREFLIGHT_CONFIG=<path>`: precedence is `--config` > `PREFLIGHT_CONFIG` > `<repo>/.preflight.json`, with no merging. A relative path is resolved against the current directory, not the repo; `workingDir` and `cwd` in the file stay relative to the target repo. A missing or invalid explicit file is an error, not a fallback, any validation warning in it is fatal (unlike the lenient repo file), and `sandbox` rejects the option. The result's `config` field names the source (`option`, `env`, `repo`, `none`; `none` also when a broken repo file made defaults apply). The explicit file can define shell commands like `.preflight.json`: only use files you trust.
+
 ## Monorepo subdirectory and command objects
 
 ```json

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { CHECK_KINDS, CheckKind, CheckToggle, ConfiguredCheckKind, CustomCheck, PreflightConfig, SandboxConfig } from "./types.js";
+import { CHECK_KINDS, CheckKind, CheckToggle, ConfigSource, ConfiguredCheckKind, CustomCheck, PreflightConfig, SandboxConfig } from "./types.js";
 
 const CONFIG_FILENAME = ".preflight.json";
 const DEFAULT_ACT_FLAGS = ["--platform", "ubuntu-latest=catthehacker/ubuntu:act-latest"];
@@ -163,10 +163,21 @@ export function validateConfig(parsed: unknown): ConfigValidationResult {
 }
 
 export function loadConfig(repoPath: string): PreflightConfig {
+  return readRepoConfig(repoPath).config;
+}
+
+/**
+ * Reads `<repoPath>/.preflight.json` with the long-standing lenient rules
+ * (warn and keep defaults on any problem) and also reports whether the file
+ * was actually used. `loaded` is false when the file is absent, unreadable,
+ * a directory, not valid JSON or not a JSON object, i.e. whenever the
+ * defaults apply instead of the file.
+ */
+function readRepoConfig(repoPath: string): { config: PreflightConfig; loaded: boolean } {
   const configPath = path.join(repoPath, CONFIG_FILENAME);
 
   if (!fs.existsSync(configPath)) {
-    return defaultConfig();
+    return { config: defaultConfig(), loaded: false };
   }
 
   try {
@@ -176,11 +187,106 @@ export function loadConfig(repoPath: string): PreflightConfig {
     for (const warning of warnings) {
       console.warn(`[preflight] Warning: ${configPath}: ${warning}`);
     }
-    return mergeConfig(defaultConfig(), validated);
+    return { config: mergeConfig(defaultConfig(), validated), loaded: isPlainObject(parsed) };
   } catch (err) {
     console.warn(`[preflight] Warning: failed to parse ${configPath}: ${(err as Error).message}`);
-    return defaultConfig();
+    return { config: defaultConfig(), loaded: false };
   }
+}
+
+/** Environment variable naming an explicit config file (lower precedence than `--config`). */
+export const CONFIG_ENV_VAR = "PREFLIGHT_CONFIG";
+
+/** Raised when an explicitly requested config file cannot be used. */
+export class ExplicitConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExplicitConfigError";
+  }
+}
+
+/**
+ * Loads a config from an explicitly named file. Unlike `loadConfig`, every
+ * failure (missing, unreadable, not a regular file, invalid JSON, top level
+ * not an object) throws an `ExplicitConfigError` instead of falling back to
+ * defaults. A relative `filePath` is resolved against `process.cwd()`.
+ * Unlike the repo file, every validation warning (wrong field type, dropped
+ * entry, unknown key) is fatal here: the error lists all of them.
+ */
+export function loadConfigFromFile(filePath: string): { config: PreflightConfig; path: string } {
+  const resolved = path.resolve(process.cwd(), filePath);
+  let stat: fs.Stats | undefined;
+  try {
+    stat = fs.statSync(resolved, { throwIfNoEntry: false });
+  } catch (err) {
+    throw new ExplicitConfigError(`cannot access config file ${resolved}: ${(err as Error).message}`);
+  }
+  if (!stat) throw new ExplicitConfigError(`config file not found: ${resolved}`);
+  if (!stat.isFile()) throw new ExplicitConfigError(`config path is not a file: ${resolved}`);
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(resolved, "utf-8");
+  } catch (err) {
+    throw new ExplicitConfigError(`cannot read config file ${resolved}: ${(err as Error).message}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch (err) {
+    throw new ExplicitConfigError(`config file ${resolved} is not valid JSON: ${(err as Error).message}`);
+  }
+  if (!isPlainObject(parsed)) {
+    throw new ExplicitConfigError(
+      `config file ${resolved}: expected an object at the top level, got ${describeType(parsed)}`
+    );
+  }
+  const { config: validated, warnings } = validateConfig(parsed);
+  if (warnings.length > 0) {
+    throw new ExplicitConfigError(
+      `config file ${resolved} is invalid:\n${warnings.map((w) => `  - ${w}`).join("\n")}`
+    );
+  }
+  return { config: mergeConfig(defaultConfig(), validated), path: resolved };
+}
+
+/**
+ * Picks the explicit config path: `optionPath` (`--config` / MCP `configPath`)
+ * wins over `PREFLIGHT_CONFIG`. An empty or whitespace-only environment
+ * variable counts as unset; an empty option value is an error.
+ */
+export function resolveExplicitConfig(
+  optionPath: string | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): { path: string; origin: "option" | "env" } | undefined {
+  if (optionPath !== undefined) {
+    if (optionPath.trim() === "") throw new ExplicitConfigError("config path must not be empty");
+    return { path: optionPath, origin: "option" };
+  }
+  const fromEnv = env[CONFIG_ENV_VAR];
+  if (fromEnv !== undefined && fromEnv.trim() !== "") return { path: fromEnv, origin: "env" };
+  return undefined;
+}
+
+/**
+ * Loads the config for a run and reports where it came from. Precedence:
+ * explicit option, then `PREFLIGHT_CONFIG`, then `<repoPath>/.preflight.json`
+ * (no merging between sources). Throws `ExplicitConfigError` when an
+ * explicit source is unusable.
+ */
+export function loadConfigWithSource(
+  repoPath: string,
+  optionPath?: string
+): { config: PreflightConfig; source: ConfigSource } {
+  const explicit = resolveExplicitConfig(optionPath);
+  if (explicit) {
+    const loaded = loadConfigFromFile(explicit.path);
+    return { config: loaded.config, source: { source: explicit.origin, path: loaded.path } };
+  }
+  const { config, loaded } = readRepoConfig(repoPath);
+  return loaded
+    ? { config, source: { source: "repo", path: path.join(repoPath, CONFIG_FILENAME) } }
+    : { config, source: { source: "none", path: null } };
 }
 
 export function defaultConfig(): PreflightConfig {

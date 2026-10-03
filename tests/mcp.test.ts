@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -86,6 +86,15 @@ function makeFixtureRepo(
   return repoPath;
 }
 
+// An ambient PREFLIGHT_CONFIG would change which config every preflight_run
+// call below loads; start each test from an unset variable.
+beforeEach(() => {
+  vi.stubEnv("PREFLIGHT_CONFIG", "");
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("MCP tool schema / registration", () => {
   it("lists preflight_run and preflight_batch with the ready:false and shell-surface warnings pinned in both descriptions", async () => {
     const { client, close } = await connectedClient();
@@ -115,7 +124,7 @@ describe("MCP tool schema / registration", () => {
       expect(batch.description).toContain(shellSurfaceWarning);
 
       expect(Object.keys(run.inputSchema.properties ?? {}).sort()).toEqual(
-        ["ciSimulation", "noAudit", "noSecrets", "repoPath"].sort()
+        ["ciSimulation", "configPath", "noAudit", "noSecrets", "repoPath"].sort()
       );
       expect(Object.keys(batch.inputSchema.properties ?? {}).sort()).toEqual(
         ["exclude", "noAudit", "noSecrets", "only", "root"].sort()
@@ -626,3 +635,149 @@ describe.skipIf(!fs.existsSync(path.resolve(__dirname, "..", "dist", "mcp.js")))
     }, 15_000);
   }
 );
+
+describe("preflight_run configPath", () => {
+  let repoPath: string;
+  let extDir: string;
+  let externalConfig: string;
+
+  beforeAll(() => {
+    repoPath = makeFixtureRepo("exit 0");
+    extDir = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-mcp-extcfg-"));
+    externalConfig = path.join(extDir, "shared.json");
+    fs.writeFileSync(
+      externalConfig,
+      JSON.stringify({
+        checks: {
+          gitState: false, lint: false, typecheck: false, test: false, audit: false,
+          ciSimulation: false, commitConvention: false, secretDetection: false, tdd: false,
+        },
+        customChecks: [{ name: "external-check", command: "exit 0" }],
+        logDir: path.join(extDir, "logs"),
+      })
+    );
+  });
+
+  afterAll(() => {
+    fs.rmSync(repoPath, { recursive: true, force: true });
+    fs.rmSync(extDir, { recursive: true, force: true });
+  });
+
+  it("applies the external config instead of the repo file and reports its source", async () => {
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({
+        name: "preflight_run",
+        arguments: { repoPath, configPath: externalConfig },
+      });
+      expect(response.isError).toBeFalsy();
+      const structured = response.structuredContent as {
+        checks: Array<{ name: string }>;
+        config: { source: string; path: string };
+      };
+      expect(structured.checks.map((c) => c.name)).toEqual(["external-check"]);
+      expect(structured.config).toEqual({ source: "option", path: externalConfig });
+    } finally {
+      await close();
+    }
+  });
+
+  it("resolves a relative configPath against the server's working directory", async () => {
+    const { client, close } = await connectedClient();
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(extDir);
+    try {
+      const response = await client.callTool({
+        name: "preflight_run",
+        arguments: { repoPath, configPath: "shared.json" },
+      });
+      expect(response.isError).toBeFalsy();
+      const structured = response.structuredContent as { config: { path: string } };
+      expect(structured.config.path).toBe(externalConfig);
+    } finally {
+      cwdSpy.mockRestore();
+      await close();
+    }
+  });
+
+  it("returns a tool error and runs no check when the config file is missing", async () => {
+    const { client, close } = await connectedClient();
+    try {
+      const missing = path.join(extDir, "missing.json");
+      const response = await client.callTool({
+        name: "preflight_run",
+        arguments: { repoPath, configPath: missing },
+      });
+      expect(response.isError).toBe(true);
+      expect((response.content as Array<{ text: string }>)[0].text).toContain(missing);
+      expect(response.structuredContent).toBeUndefined();
+    } finally {
+      await close();
+    }
+  });
+
+  it("uses PREFLIGHT_CONFIG as source env, and configPath beats it", async () => {
+    const otherConfig = path.join(extDir, "other.json");
+    fs.writeFileSync(
+      otherConfig,
+      JSON.stringify({
+        checks: {
+          gitState: false, lint: false, typecheck: false, test: false, audit: false,
+          ciSimulation: false, commitConvention: false, secretDetection: false, tdd: false,
+        },
+        customChecks: [{ name: "other-check", command: "exit 0" }],
+        logDir: path.join(extDir, "logs"),
+      })
+    );
+    vi.stubEnv("PREFLIGHT_CONFIG", otherConfig);
+    const { client, close } = await connectedClient();
+    try {
+      const viaEnv = await client.callTool({ name: "preflight_run", arguments: { repoPath } });
+      const envResult = viaEnv.structuredContent as { checks: Array<{ name: string }>; config: unknown };
+      expect(envResult.checks.map((c) => c.name)).toEqual(["other-check"]);
+      expect(envResult.config).toEqual({ source: "env", path: otherConfig });
+
+      const viaOption = await client.callTool({
+        name: "preflight_run",
+        arguments: { repoPath, configPath: externalConfig },
+      });
+      const optionResult = viaOption.structuredContent as { checks: Array<{ name: string }>; config: unknown };
+      expect(optionResult.checks.map((c) => c.name)).toEqual(["external-check"]);
+      expect(optionResult.config).toEqual({ source: "option", path: externalConfig });
+    } finally {
+      await close();
+    }
+  });
+
+  it("returns a tool error listing every problem for an explicit file with field warnings", async () => {
+    const bad = path.join(extDir, "bad-fields.json");
+    fs.writeFileSync(
+      bad,
+      JSON.stringify({
+        checks: { secretDetection: "yes" },
+        customChecks: [{ name: "must-run", comand: "exit 1" }],
+      })
+    );
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({ name: "preflight_run", arguments: { repoPath, configPath: bad } });
+      expect(response.isError).toBe(true);
+      const text = (response.content as Array<{ text: string }>)[0].text;
+      expect(text).toContain("checks.secretDetection");
+      expect(text).toContain("customChecks[0]");
+      expect(response.structuredContent).toBeUndefined();
+    } finally {
+      await close();
+    }
+  });
+
+  it("reports the repo source when no configPath is given", async () => {
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({ name: "preflight_run", arguments: { repoPath } });
+      const structured = response.structuredContent as { config: { source: string } };
+      expect(structured.config.source).toBe("repo");
+    } finally {
+      await close();
+    }
+  });
+});

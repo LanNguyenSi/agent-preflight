@@ -45,6 +45,7 @@ preflight run .
 preflight run                              # current dir
 preflight run ./my-project --json          # machine-readable
 preflight run --ci-simulation              # add act --dryrun CI plan validation
+preflight run . --config ../shared/preflight.json   # config file outside the repo
 preflight batch ~/git                      # every repo under a root
 preflight sandbox                          # run inside a docker image
 ```
@@ -64,13 +65,13 @@ Limitations (not validated locally):
 Checks: 9 | Duration: 20544ms
 ```
 
-`--json` prints the same result as a structured object (`ready`, `confidence`, `checks`, `blockers`, `warnings`, `limitations`, `durationMs`, `timestamp`) for an agent to parse. `run --json` and `batch --json` both write their full JSON envelope before exiting; a consumer piping either command's output must read stdout concurrently with the process, not wait for exit.
+`--json` prints the same result as a structured object (`ready`, `confidence`, `checks`, `blockers`, `warnings`, `limitations`, `durationMs`, `timestamp`, and for `run` also `config`, the config source) for an agent to parse. `run --json` and `batch --json` both write their full JSON envelope before exiting; a consumer piping either command's output must read stdout concurrently with the process, not wait for exit.
 
 Security: a target repo's `.preflight.json` can define shell commands that run on your machine, so only run `preflight batch` (or `run`/`sandbox`/the MCP server) against repositories you trust; see [docs/checks.md](docs/checks.md#custom-checks) for the full note.
 
 ## Configuration
 
-Use `.preflight.json` for project-specific command strings or objects with `run`, `name`, `cwd` and `timeoutMs`. Opt in to `"requiredChecks": ["lint", "typecheck", "test"]` when missing or non-passing results must block readiness. Without that policy, the existing gate is unchanged. PHP test execution requires an explicit command or a Composer `test` script; bare PHPUnit is no longer auto-run. See the [checks and configuration reference](docs/checks.md) for examples, PHP discovery and migration details.
+Use `.preflight.json` for project-specific command strings or objects with `run`, `name`, `cwd` and `timeoutMs`. Opt in to `"requiredChecks": ["lint", "typecheck", "test"]` when missing or non-passing results must block readiness. Without that policy, the existing gate is unchanged. PHP test execution requires an explicit command or a Composer `test` script; bare PHPUnit is no longer auto-run. `preflight run` can read a config file outside the repo with `--config <path>` or the `PREFLIGHT_CONFIG` environment variable (precedence `--config` > `PREFLIGHT_CONFIG` > `.preflight.json`, no merging; a relative path is resolved against the current directory, not the repo; a missing or invalid explicit file is an error, not a fallback, and any validation warning in it is fatal). The result names the source in `config` (`option`, `env`, `repo` or `none`, with the path; `none` also when a broken repo file made defaults apply). The MCP `preflight_run` tool takes the same as `configPath`; `batch` and `sandbox` do not support it (`sandbox` rejects it). Like `.preflight.json`, an explicit file can define shell commands, so only use files you trust. See the [checks and configuration reference](docs/checks.md) for examples, PHP discovery and migration details.
 
 ## Documentation
 

@@ -9,7 +9,7 @@ Read this file before changing the codebase.
 - Language: TypeScript
 - CLI framework: Commander
 - Distribution: Node CLI / npm package
-- Config format: `.preflight.json` in the repo root
+- Config format: `.preflight.json` in the repo root; `preflight run` can instead load an explicit file via `--config <path>` or `PREFLIGHT_CONFIG` (precedence `--config` > env > repo file, no merging; relative paths resolve against the current directory; an unusable explicit file is an error, never a fallback, and any validation warning in it is fatal; the result reports `config: { source, path }`, `none` also when a broken repo file made defaults apply; the variable is removed from check subprocess environments). `batch` ignores it, `sandbox` rejects it, MCP `preflight_run` takes `configPath`. The explicit file can define shell commands like the repo file, so it must be trusted.
 - Main entrypoint: `src/cli.ts`
 - Secondary entrypoint: `src/mcp.ts` (MCP stdio server, `preflight-mcp` binary)
 
@@ -35,7 +35,7 @@ Consumers must still scan `checks[]` to see every waived failure.
 
 ## Current Command Surface
 
-- `preflight run [repoPath]`
+- `preflight run [repoPath] [--config <path>]`
 - `preflight batch [root]`
 - `preflight sandbox [repoPath]`
 - `preflight-mcp` (MCP stdio server; exposes `preflight_run`/`preflight_batch` — see `src/mcp.ts` and README "MCP server". The target repo's `.preflight.json` can define shell commands these tools execute, same as the CLI checks; only point it at trusted repositories.)

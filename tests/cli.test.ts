@@ -27,7 +27,10 @@ const mockLoadConfig = vi.hoisted(() => vi.fn());
 vi.mock("../src/runner.js", () => ({ runPreflight: mockRunPreflight }));
 vi.mock("../src/batch.js", () => ({ runBatch: mockRunBatch }));
 vi.mock("../src/sandbox.js", () => ({ runSandbox: mockRunSandbox }));
-vi.mock("../src/config.js", () => ({ loadConfig: mockLoadConfig }));
+vi.mock("../src/config.js", async () => ({
+  ...(await vi.importActual<typeof import("../src/config.js")>("../src/config.js")),
+  loadConfigWithSource: mockLoadConfig,
+}));
 
 // ── Import after mocks are registered ────────────────────────────────────────
 import { createProgram, writeJsonAndExit } from "../src/cli.js";
@@ -139,17 +142,21 @@ async function runCommand(args: string[]): Promise<{ exitCode: number | undefine
 let localProgram: ReturnType<typeof createProgram>;
 
 beforeEach(() => {
+  vi.stubEnv("PREFLIGHT_CONFIG", "");
   localProgram = createProgram();
 
   mockLoadConfig.mockReturnValue({
-    checks: {
-      gitState: true,
-      lint: true,
-      audit: true,
-      secretDetection: true,
-      ciSimulation: false,
+    config: {
+      checks: {
+        gitState: true,
+        lint: true,
+        audit: true,
+        secretDetection: true,
+        ciSimulation: false,
+      },
+      setup: { enabled: false },
     },
-    setup: { enabled: false },
+    source: { source: "none", path: null },
   });
   mockRunPreflight.mockResolvedValue(makeResult());
   mockRunBatch.mockResolvedValue({
@@ -163,6 +170,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.clearAllMocks();
 });
 
@@ -601,5 +609,53 @@ describe("writeJsonAndExit: write-outcome handling", () => {
       writeSpy.mockRestore();
       exitSpy.mockRestore();
     }
+  });
+});
+
+// ── --config OPTION ───────────────────────────────────────────────────────────
+
+describe("run command — --config", () => {
+  it("passes the --config value and the resolved repo path to the config loader", async () => {
+    await runCommand(["run", "--json", "--config", "../shared/preflight.json", "."]);
+    expect(mockLoadConfig).toHaveBeenCalledWith(expect.any(String), "../shared/preflight.json");
+  });
+
+  it("passes undefined when --config is not given", async () => {
+    await runCommand(["run", "--json", "."]);
+    expect(mockLoadConfig).toHaveBeenCalledWith(expect.any(String), undefined);
+  });
+
+  it("hands the reported config source to the runner", async () => {
+    const source = { source: "option", path: "/shared/preflight.json" };
+    mockLoadConfig.mockReturnValue({ config: { checks: {} }, source });
+    await runCommand(["run", "--json", "--config", "/shared/preflight.json", "."]);
+    expect(mockRunPreflight).toHaveBeenCalledWith(expect.any(String), expect.anything(), source);
+  });
+
+  it("exits 1 without running any check when the explicit config is unusable", async () => {
+    const { ExplicitConfigError } = await vi.importActual<typeof import("../src/config.js")>(
+      "../src/config.js"
+    );
+    mockLoadConfig.mockImplementation(() => {
+      throw new ExplicitConfigError("config file not found: /nope.json");
+    });
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation((() => true) as typeof process.stderr.write);
+    try {
+      const { exitCode } = await runCommand(["run", "--json", "--config", "/nope.json", "."]);
+      expect(exitCode).toBe(1);
+      expect(mockRunPreflight).not.toHaveBeenCalled();
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("config file not found: /nope.json"));
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("prints the config source in the pretty summary", async () => {
+    mockLoadConfig.mockReturnValue({
+      config: { checks: {} },
+      source: { source: "env", path: "/shared/preflight.json" },
+    });
+    const { stdout } = await runCommand(["run", "."]);
+    expect(stdout).toContain("Config: /shared/preflight.json (env)");
   });
 });
