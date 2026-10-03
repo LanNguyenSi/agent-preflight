@@ -259,14 +259,9 @@ describe("runSecretDetection — test-fixture heuristic", () => {
   });
 
   it("NEGATIVE CONTROL: still fails on a genuine ghp_ token under tests/ even when the value is 'test-' prefixed", async () => {
-    // Reviewer-measured false negative: SECRET_PATTERNS is checked in order
-    // and scanDir stops at the first match per line. `TOKEN = "test-ghp_..."`
-    // trips the earlier, weaker `(?:secret|token)\s*[:=]...` pattern first,
-    // so the high-confidence ghp_ pattern a few entries later was never
-    // even consulted, and the test-fixture heuristic downgraded a real
-    // GitHub token dressed up with a "test-" prefix to a non-blocking warn.
-    // A high-confidence credential SHAPE anywhere on the line must now
-    // force testFixture:false regardless of which pattern actually won.
+    // A high-confidence credential shape anywhere on the line prevents
+    // the fixture downgrade, even when an earlier assignment pattern
+    // matches the same line and the token value starts with "test-".
     const repoPath = makeTempDir("preflight-secrets-fixture-negctrl-ghp-");
     gitInit(repoPath);
     fs.mkdirSync(path.join(repoPath, "tests"));
@@ -281,7 +276,7 @@ describe("runSecretDetection — test-fixture heuristic", () => {
     expect(result.checks[0]?.details).toContain("tests/leak.py:1");
   });
 
-  it("NEGATIVE CONTROL: a file merely NAMED 'tests' (not a directory) does not get the test-fixture downgrade (isTestPath LOW finding)", async () => {
+  it("NEGATIVE CONTROL: a file merely NAMED 'tests' (not a directory) does not get the test-fixture downgrade", async () => {
     // isTestPath() previously checked every path segment, including the
     // file's own basename — so an extensionless file literally named
     // `tests` (e.g. `bin/tests`) counted as "under a test directory" purely
@@ -417,10 +412,8 @@ describe("runSecretDetection — AWS credential pattern hardening", () => {
   // --- quoted-key identifier (assignment pattern) ---------------------
 
   it("detects a quoted-key JSON serialization of the AWS secret access key assignment (`\"aws_secret_access_key\": \"<40 chars>\"`)", async () => {
-    // Reviewer-measured miss: the identifier previously had to be
-    // followed immediately by `\s*[:=]`, so a JSON/quoted-YAML
-    // serialization — where a closing quote sits between the identifier
-    // and the separator — produced zero findings.
+    // JSON and quoted YAML place a closing quote between the identifier
+    // and assignment separator; the secret pattern accepts that quote.
     const repoPath = makeTempDir("preflight-secrets-aws-json-");
     gitInit(repoPath);
     fs.mkdirSync(path.join(repoPath, "src"));
@@ -453,11 +446,8 @@ describe("runSecretDetection — AWS credential pattern hardening", () => {
   // --- AKIA boundary-anchoring ------------------------------------------
 
   it("does NOT flag AKIA merely embedded inside a longer uppercase/digit run (e.g. a base32-style build hash)", async () => {
-    // Reviewer-measured false positive: the previously unanchored
-    // AKIA[0-9A-Z]{16} pattern matched anywhere `AKIA` + 16 [0-9A-Z]
-    // chars occurred, even mid-run inside a longer blob with no
-    // standalone AWS access-key-id shape — and because AKIA is
-    // high-confidence, such a hit was a hard, non-downgradable block.
+    // The high-confidence AKIA pattern requires a standalone key shape;
+    // the same substring inside a longer uppercase/digit run is not a key.
     const repoPath = makeTempDir("preflight-secrets-aws-akia-embedded-");
     gitInit(repoPath);
     fs.mkdirSync(path.join(repoPath, "src"));
