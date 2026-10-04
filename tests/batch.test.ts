@@ -1,4 +1,4 @@
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, it, expect, vi, type MockInstance } from "vitest";
 import { discoverRepos, runBatch } from "../src/batch.js";
 import fs from "fs";
 import path from "path";
@@ -166,5 +166,83 @@ describe("runBatch warning count with an invalid PREFLIGHT_LOG_DIR (missing test
       fs.rmSync(tmp, { recursive: true, force: true });
       fs.rmSync(fakeHome, { recursive: true, force: true });
     }
+  });
+});
+
+describe("runBatch config warnings in limitations", () => {
+  const ALL_CHECKS_OFF = {
+    gitState: false,
+    lint: false,
+    typecheck: false,
+    test: false,
+    audit: false,
+    ciSimulation: false,
+    commitConvention: false,
+    secretDetection: false,
+    tdd: false,
+  };
+
+  let root: string;
+  let warnedRepo: string;
+  let cleanRepo: string;
+  let warnSpy: MockInstance;
+
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "batch-config-warnings-"));
+    warnedRepo = makeTempRepo(root, "warned");
+    cleanRepo = makeTempRepo(root, "clean");
+    const repos: Array<[string, Record<string, unknown>]> = [
+      [warnedRepo, { surpriseKey: true }],
+      [cleanRepo, {}],
+    ];
+    for (const [repoPath, extra] of repos) {
+      fs.writeFileSync(
+        path.join(repoPath, "package.json"),
+        JSON.stringify({ name: "fixture", version: "1.0.0" })
+      );
+      fs.writeFileSync(
+        path.join(repoPath, ".preflight.json"),
+        JSON.stringify({ checks: ALL_CHECKS_OFF, ...extra })
+      );
+    }
+  });
+
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it("carries the config warning only in the warned repo's limitations", async () => {
+    const batch = await runBatch(root);
+    const warned = batch.results.find((r) => r.repo === "warned");
+    const clean = batch.results.find((r) => r.repo === "clean");
+    expect(warned).toBeDefined();
+    expect(clean).toBeDefined();
+
+    const warnedEntries = (warned?.result?.limitations ?? []).filter((l) => l.startsWith("config "));
+    expect(warnedEntries).toHaveLength(1);
+    expect(warnedEntries[0]).toContain(path.join(warnedRepo, ".preflight.json"));
+    expect(warnedEntries[0]).toContain('"surpriseKey"');
+
+    const cleanEntries = (clean?.result?.limitations ?? []).filter((l) => l.startsWith("config "));
+    expect(cleanEntries).toHaveLength(0);
+  });
+
+  it("keeps the warning on the configOverride merge path", async () => {
+    const batch = await runBatch(root, {}, { checks: { audit: false } });
+    const warned = batch.results.find((r) => r.repo === "warned");
+    expect(warned).toBeDefined();
+
+    const entries = (warned?.result?.limitations ?? []).filter((l) => l.startsWith("config "));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toContain(path.join(warnedRepo, ".preflight.json"));
+    expect(entries[0]).toContain('"surpriseKey"');
   });
 });

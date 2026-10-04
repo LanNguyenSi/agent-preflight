@@ -198,7 +198,7 @@ Since the log directory can be set from the process environment as well as from 
 
 `workingDir` (default `.`) is the directory checks run against, relative to the repo root; it does not change where `logDir` resolves (see above). `tddExceptions` is a list of glob patterns excluded from the TDD signal check's changed-source scan. `actFlags` and `sandbox.aptPackages`/`sandbox.pipPackages` are covered in [architecture.md](./architecture.md#act-integration) and [architecture.md#sandbox](./architecture.md#sandbox). `setup` is covered in "Setup phase"; command overrides and required checks are described below.
 
-Repo-config validation problems stay lenient (the field is ignored, defaults apply, a warning is printed on stderr), and every such warning also appears in the result's `limitations` with a `config <path>:` prefix, so `preflight run --json` and the MCP `preflight_run` tool show them to structured consumers. Unknown keys warn at the top level, in `checks`/`setup`/`sandbox` and inside `customChecks[]` entries (the entry itself is kept; only the unknown key is ignored).
+Repo-config validation problems stay lenient (the field is ignored, defaults apply, a warning is printed on stderr), and every such warning also appears in the result's `limitations` with a `config <path>:` prefix, so `preflight run --json`, `preflight batch --json` and the MCP `preflight_run` and `preflight_batch` tools show them to structured consumers. Unknown keys warn at the top level, in `checks`/`setup`/`sandbox` and inside `customChecks[]` entries (the entry itself is kept; only the unknown key is ignored).
 
 ### Config file outside the repository (`--config`, `PREFLIGHT_CONFIG`)
 

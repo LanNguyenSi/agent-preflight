@@ -457,6 +457,50 @@ describe("preflight_batch", () => {
   });
 });
 
+describe("preflight_batch config warnings in limitations", () => {
+  // Same contract as preflight_run's config warnings (see the
+  // "preflight_run config warnings in limitations" describe): a repo config
+  // validation warning must reach the per-repo result's limitations
+  // (prefixed `config <path>:`), not just the server's console.warn.
+  let batchRoot: string;
+  let repoPath: string;
+
+  beforeAll(() => {
+    batchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-mcp-batch-warnings-"));
+    const fixture = makeFixtureRepo("exit 0", { extra: { surpriseKey: true } });
+    repoPath = path.join(batchRoot, path.basename(fixture));
+    fs.renameSync(fixture, repoPath);
+  });
+
+  afterAll(() => {
+    fs.rmSync(batchRoot, { recursive: true, force: true });
+  });
+
+  it("surfaces the repo config validation warning in the repo result's limitations", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({
+        name: "preflight_batch",
+        arguments: { root: batchRoot, noAudit: true, noSecrets: true },
+      });
+      expect(response.isError).toBeFalsy();
+      const structured = response.structuredContent as {
+        results: Array<{ repo: string; result: { limitations: string[] } | null }>;
+      };
+      expect(structured.results[0].repo).toBe(path.basename(repoPath));
+      const limitations = structured.results[0].result?.limitations ?? [];
+      const entry = limitations.find((l) => l.startsWith("config "));
+      expect(entry).toBeDefined();
+      expect(entry).toContain(path.join(repoPath, ".preflight.json"));
+      expect(entry).toContain('"surpriseKey"');
+    } finally {
+      await close();
+      warnSpy.mockRestore();
+    }
+  });
+});
+
 describe("preflight_batch only/exclude", () => {
   // Two repos in one root: `only`/`exclude` filtering has real signal only
   // when there's something to filter OUT. The single-repo batchRoot above

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The `preflight batch` CLI and the MCP `preflight_batch` tool now carry each repository's `.preflight.json` validation warnings in that repo's `limitations` as `config <path>: <warning>` entries, matching `preflight run --json` and the MCP `preflight_run` tool (batch has no explicit config file support, so only repo-file warnings can appear); as there, each entry lowers that repo's `confidence` slightly.
+- A compile-time guard in `src/config.ts` fails `tsc` when a `PreflightConfig` field, or one of its `checks`, `setup`, `sandbox` or `commands` sub-fields or a `customChecks[]` entry field, is missing from the matching `*_KEYS` list that drives the unknown-key warnings.
+
 ## [0.10.0] - 2026-10-04
 
 ### Changed

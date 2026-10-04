@@ -67,6 +67,21 @@ const TOP_LEVEL_KEYS = [
   "customChecks",
 ] as const;
 
+// Compile-time guard: a PreflightConfig field missing from its *_KEYS list fails tsc here.
+type MissingKeys<K extends string, L extends readonly string[]> = Exclude<K, L[number]>;
+const topLevelKeysComplete: [MissingKeys<keyof PreflightConfig, typeof TOP_LEVEL_KEYS>] extends [never] ? true : false = true;
+void topLevelKeysComplete;
+const checkToggleKeysComplete: [MissingKeys<keyof NonNullable<PreflightConfig["checks"]>, typeof CHECK_TOGGLE_KEYS>] extends [never] ? true : false = true;
+void checkToggleKeysComplete;
+const setupKeysComplete: [MissingKeys<keyof NonNullable<PreflightConfig["setup"]>, typeof SETUP_KEYS>] extends [never] ? true : false = true;
+void setupKeysComplete;
+const sandboxKeysComplete: [MissingKeys<keyof NonNullable<PreflightConfig["sandbox"]>, typeof SANDBOX_KEYS>] extends [never] ? true : false = true;
+void sandboxKeysComplete;
+const commandKeysComplete: [MissingKeys<keyof NonNullable<PreflightConfig["commands"]>, typeof COMMAND_KEYS>] extends [never] ? true : false = true;
+void commandKeysComplete;
+const customCheckKeysComplete: [MissingKeys<keyof CustomCheck, typeof CUSTOM_CHECK_KEYS>] extends [never] ? true : false = true;
+void customCheckKeysComplete;
+
 const COMMIT_CONVENTION_VALUES = ["conventional", "none"] as const;
 
 export interface ConfigValidationResult {
@@ -297,6 +312,18 @@ export function loadConfigWithSource(
     const loaded = loadConfigFromFile(explicit.path);
     return { config: loaded.config, source: { source: explicit.origin, path: loaded.path }, warnings: [] };
   }
+  return loadRepoConfigWithSource(repoPath);
+}
+
+/**
+ * The repo-file half of `loadConfigWithSource`: reads only
+ * `<repoPath>/.preflight.json` (lenient rules) and never consults
+ * `--config` or `PREFLIGHT_CONFIG`. `preflight batch` uses it because it has
+ * no explicit-config support.
+ */
+export function loadRepoConfigWithSource(
+  repoPath: string
+): { config: PreflightConfig; source: ConfigSource; warnings: string[] } {
   const { config, loaded, warnings } = readRepoConfig(repoPath);
   return loaded
     ? { config, source: { source: "repo", path: path.join(repoPath, CONFIG_FILENAME) }, warnings }
