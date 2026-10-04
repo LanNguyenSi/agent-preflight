@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { PreflightConfig, PreflightResult } from "./types.js";
-import { loadConfig, mergeConfig } from "./config.js";
+import { loadRepoConfigWithSource, mergeConfig } from "./config.js";
 import { runPreflight } from "./runner.js";
 
 export interface BatchOptions {
@@ -50,10 +50,16 @@ export async function runBatch(
   for (const repoPath of repos) {
     const name = path.basename(repoPath);
     try {
-      const config = configOverride
-        ? mergeConfig(loadConfig(repoPath), configOverride)
-        : loadConfig(repoPath);
-      const result = await runPreflight(repoPath, config);
+      const { config: loadedConfig, warnings } = loadRepoConfigWithSource(repoPath);
+      const config = configOverride ? mergeConfig(loadedConfig, configOverride) : loadedConfig;
+      // No `configSource`: batch results keep `config` undefined (batch has
+      // no explicit-config support), and the `config <path>: ...`
+      // limitation falls back to the repo file path, the only file batch
+      // reads.
+      const result =
+        warnings.length > 0
+          ? await runPreflight(repoPath, config, undefined, warnings)
+          : await runPreflight(repoPath, config);
       results.push({ repo: name, path: repoPath, result });
     } catch (err) {
       results.push({
