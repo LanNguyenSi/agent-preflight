@@ -79,6 +79,8 @@ const sandboxKeysComplete: [MissingKeys<keyof NonNullable<PreflightConfig["sandb
 void sandboxKeysComplete;
 const commandKeysComplete: [MissingKeys<keyof NonNullable<PreflightConfig["commands"]>, typeof COMMAND_KEYS>] extends [never] ? true : false = true;
 void commandKeysComplete;
+const customCheckKeysComplete: [MissingKeys<keyof CustomCheck, typeof CUSTOM_CHECK_KEYS>] extends [never] ? true : false = true;
+void customCheckKeysComplete;
 
 const COMMIT_CONVENTION_VALUES = ["conventional", "none"] as const;
 

@@ -152,7 +152,8 @@ function checkSecretDetectionAcknowledgeIgnored(config: PreflightConfig): string
 
 /**
  * `configWarnings` carries the validation warnings `loadConfigWithSource`
- * collected for a leniently loaded repo config (an explicit config throws
+ * (or, for `preflight batch`, `loadRepoConfigWithSource`) collected for a
+ * leniently loaded repo config (an explicit config throws
  * on any warning, so it never reaches this parameter). Each one is reported
  * as a `limitations` entry, so structured consumers (`--json`, MCP) see the
  * same problems the `console.warn` output does; like every other limitation
@@ -170,6 +171,8 @@ export async function runPreflight(
 
   // A repo file that failed to parse reports source "none" with no path, but
   // its warning still names that file, so fall back to the repo file path.
+  // `preflight batch` passes warnings without a source at all and relies on
+  // the same fallback (the repo file is the only file batch reads).
   const configPath = configSource?.path ?? path.join(repoPath, CONFIG_FILENAME);
   for (const warning of configWarnings ?? []) {
     limitations.push(`config ${configPath}: ${warning}`);
