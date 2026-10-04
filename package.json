@@ -1,6 +1,6 @@
 {
   "name": "@lannguyensi/agent-preflight",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "CI preflight validation tool for AI agents",
   "bin": {
     "agent-preflight": "dist/cli.js",

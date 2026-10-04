@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-04
+
 ### Changed
 
 - The publish workflow now installs npm with `npm install -g npm@^11.5.1` (the documented trusted-publishing floor) instead of the floating `npm@11`, and the publish step's two success-on-registry exits (the "already on the registry" idempotency check before the retry loop and the loop's "reached the registry despite a non-zero publish exit" branch) now probe `npm view <pkg>@<version> dist.attestations` and fail with an error when the attestation is empty (or when the probe itself fails), so a partially completed publish is no longer announced green. CI only; no package code change.
@@ -23,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Timed-out tests remain failures with the timeout duration in their message; incomplete output is not classified as a missing build artifact (#105). Removed the nonexistent library `main` entry and added `--version` to `preflight-mcp`.
+
 - Upgrade the TypeScript-ESLint parser and plugin to 8.71.0, removing the development dependency path through globby, fast-glob and micromatch to vulnerable braces (CVE-2026-93687). ESLint 8.57 and the legacy ESLint configuration remain in use. The parser and plugin declare Node.js `^18.18.0 || ^20.9.0 || >=21.1.0`; their resolved eslint-visitor-keys 5.0.1 dependency requires `^20.19.0 || ^22.13.0 || >=24`.
 
 - Explicit config errors let stderr drain before exiting with code 1, including large validation diagnostics and sandbox rejection messages.
@@ -36,8 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Secret detection inside a git work tree now enumerates files with `git ls-files -z --cached --others --exclude-standard` (tracked plus untracked-not-ignored) instead of walking the filesystem, so large gitignored directories outside the built-in skip list are no longer read (#98). Gitignored, untracked files are therefore no longer scanned and no longer produce non-blocking warnings; there is no opt-in. Deleted entries are skipped, symlinks are still not followed (neither a listed link nor a link standing in for any parent directory of a listed path: a path is read only when every directory on the way is a real directory), the skip-list and file-level filters apply to the listed set, submodules and nested repositories are not scanned (scan them from inside, also when pushes recurse into submodules). The ignore classification passes NUL-separated `./`-prefixed paths to `git check-ignore`, so a file name that looks like pathspec magic is classified as itself, and a path git cannot classify inside a work tree stays eligible to block instead of turning every finding into a non-blocking warning; only a directory that is not a git work tree keeps the "not a git repository" downgrade. Outside git, when git fails, when the listing cannot be trusted (the scanned directory is ignored by a parent repository, the work tree's top level does not contain it, or no listed entry exists on disk), the filesystem walk remains the fallback; every git call made by secret detection (listing, ignore classification, diff base and changed files) runs in one environment chosen once per run. Inherited `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_PREFIX` and `GIT_INDEX_FILE` are kept when they select the repository that contains the scanned directory (hooks of linked worktrees and of bare repositories with a separate work tree) and removed when the redirect variables point at another repository (`GIT_INDEX_FILE` follows that decision and is not checked on its own), so a redirect to an unrelated repository cannot replace the scanned set or its classification. Inherited `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` and `GIT_ICASE_PATHSPECS` are always removed for secret detection: they select no repository and make `git check-ignore` fail. Two limits remain: "same repository" compares the common git directory, so the hook environment of one linked worktree is also accepted when a sibling worktree is scanned; and when only the environment defines the repository (no repository is discoverable without it), that repository's ignore rules decide what is listed. A side effect of not walking submodules: a finding inside one no longer makes `git check-ignore` fail and downgrade every finding to a non-blocking warning. Patterns, severity rules and diff-scoping are unchanged. See [checks.md](docs/checks.md#secret-detection-scanned-file-set).
 
 ### Fixed
-
-- Timed-out tests remain failures with the timeout duration in their message; incomplete output is not classified as a missing build artifact (#105). Removed the nonexistent library `main` entry and added `--version` to `preflight-mcp`.
 
 - `passRegex` and `failRegex` now search the first and the last 65536 UTF-16
   code units of long combined output (the whole output up to 131072), so
