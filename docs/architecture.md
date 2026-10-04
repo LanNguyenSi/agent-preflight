@@ -12,7 +12,7 @@ src/
   batch.ts            # walks a root directory, runs runner per repo
   sandbox.ts          # builds the docker plan, runs preflight in a container
   types.ts            # PreflightConfig, PreflightResult, CheckResult, CheckKind
-  version.ts          # injected at build time
+  version.ts          # reads the version from package.json at load time
   checks/
     git.ts            # clean-worktree, protected-branch
     lint.ts

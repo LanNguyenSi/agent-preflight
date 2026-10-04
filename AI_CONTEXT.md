@@ -85,12 +85,20 @@ When adding a check:
 
 Supported override areas in config:
 
+- `logDir`
 - `workingDir`
+- `requiredChecks`
+- `tddExceptions`
+- `secretAllowlist`
+- `protectedBranches`
+- `actFlags`
+- `secretDetectionStrict`
+- `commitConvention`
 - `checks`
+- `setup`
 - `commands`
 - `sandbox`
 - `customChecks`
-- `actFlags`
 
 ## Working Rules
 
