@@ -26,7 +26,7 @@ Requires Node.js 18+; [act](https://github.com/nektos/act) and Docker are only n
 git clone https://github.com/LanNguyenSi/agent-preflight
 cd agent-preflight
 ./install.sh
-source ~/.bashrc
+# reload your shell rc file; install.sh prints which one it edited (~/.zshrc, ~/.bashrc or ~/.profile)
 
 # run against any local repo (or the current directory)
 preflight run .
