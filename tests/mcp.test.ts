@@ -49,11 +49,17 @@ async function connectedClient(
 // `enableAudit` wires a deterministic `commands.audit` override (a bare
 // `true`) instead of relying on the real `npm audit`, which would be slow
 // and network-dependent for an empty fixture package.json.
+// `extra` is merged into the fixture's own `.preflight.json` top level, e.g.
+// to add a key `validateConfig` warns about.
 function makeFixtureRepo(
   customCommand: string,
-  overrides: { enableAudit?: boolean; enableSecretDetection?: boolean } = {}
+  overrides: {
+    enableAudit?: boolean;
+    enableSecretDetection?: boolean;
+    extra?: Record<string, unknown>;
+  } = {}
 ): string {
-  const { enableAudit = false, enableSecretDetection = false } = overrides;
+  const { enableAudit = false, enableSecretDetection = false, extra = {} } = overrides;
   const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-mcp-fixture-"));
   fs.writeFileSync(
     path.join(repoPath, "package.json"),
@@ -76,6 +82,7 @@ function makeFixtureRepo(
       ...(enableAudit ? { commands: { audit: ["true"] } } : {}),
       customChecks: [{ name: "fixture-check", command: customCommand }],
       logDir: "custom-logs",
+      ...extra,
     })
   );
   execSync("git init", { cwd: repoPath });
@@ -230,6 +237,42 @@ describe("preflight_run", () => {
       }
     } finally {
       await close();
+    }
+  });
+});
+
+describe("preflight_run config warnings in limitations", () => {
+  // The fixture config carries a top-level key `validateConfig` warns about;
+  // the warning must reach structuredContent.limitations (prefixed
+  // `config <path>:`), not just the server's console.warn.
+  let repoPath: string;
+
+  beforeAll(() => {
+    repoPath = makeFixtureRepo("exit 0", { extra: { surpriseKey: true } });
+  });
+
+  afterAll(() => {
+    fs.rmSync(repoPath, { recursive: true, force: true });
+  });
+
+  it("surfaces the repo config validation warning in structuredContent.limitations", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({
+        name: "preflight_run",
+        arguments: { repoPath, noAudit: true, noSecrets: true },
+      });
+      expect(response.isError).toBeFalsy();
+      const structured = response.structuredContent as Record<string, unknown>;
+      const limitations = structured.limitations as string[];
+      const entry = limitations.find((l) => l.startsWith("config "));
+      expect(entry).toBeDefined();
+      expect(entry).toContain(path.join(repoPath, ".preflight.json"));
+      expect(entry).toContain('"surpriseKey"');
+    } finally {
+      await close();
+      warnSpy.mockRestore();
     }
   });
 });

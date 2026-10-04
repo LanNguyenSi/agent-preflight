@@ -333,7 +333,10 @@ export function createMcpServer(options: { progressIntervalMs?: number } = {}): 
 
       const result = await withProgressPings(
         extra,
-        () => runPreflight(resolvedPath, config, loaded.source),
+        () =>
+          loaded.warnings.length > 0
+            ? runPreflight(resolvedPath, config, loaded.source, loaded.warnings)
+            : runPreflight(resolvedPath, config, loaded.source),
         progressIntervalMs
       );
 

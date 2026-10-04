@@ -3,7 +3,7 @@ import path from "path";
 import { CheckKind, CheckResult, CheckToggle, ConfigSource, PreflightConfig, PreflightResult } from "./types.js";
 import { defaultLogDir, ensureProjectSetup, getWorkingDirHint, SetupBuildOutcome } from "./checks/shared.js";
 import { expandLeadingTilde } from "./pathUtils.js";
-import { requiredChecksConfigurationError } from "./config.js";
+import { CONFIG_FILENAME, requiredChecksConfigurationError } from "./config.js";
 import type { WorktreeSnapshot } from "./checks/git.js";
 
 // Maps a CheckResult's `kind` back to the `.preflight.json` `checks.<key>`
@@ -150,14 +150,30 @@ function checkSecretDetectionAcknowledgeIgnored(config: PreflightConfig): string
   ];
 }
 
+/**
+ * `configWarnings` carries the validation warnings `loadConfigWithSource`
+ * collected for a leniently loaded repo config (an explicit config throws
+ * on any warning, so it never reaches this parameter). Each one is reported
+ * as a `limitations` entry, so structured consumers (`--json`, MCP) see the
+ * same problems the `console.warn` output does; like every other limitation
+ * this slightly lowers `confidence`.
+ */
 export async function runPreflight(
   repoPath: string,
   config: PreflightConfig,
-  configSource?: ConfigSource
+  configSource?: ConfigSource,
+  configWarnings?: string[]
 ): Promise<PreflightResult> {
   const start = Date.now();
   const checks: CheckResult[] = [];
   const { targetPath, limitations } = resolveTargetPath(repoPath, config.workingDir);
+
+  // A repo file that failed to parse reports source "none" with no path, but
+  // its warning still names that file, so fall back to the repo file path.
+  const configPath = configSource?.path ?? path.join(repoPath, CONFIG_FILENAME);
+  for (const warning of configWarnings ?? []) {
+    limitations.push(`config ${configPath}: ${warning}`);
+  }
 
   // `logDir` is resolved against `repoPath` (not `targetPath`/`workingDir`,
   // and not `process.cwd()`) so a monorepo's `workingDir` override doesn't
