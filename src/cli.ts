@@ -113,14 +113,17 @@ export function createProgram(): Command {
         }
         throw err;
       }
-      const { config, source } = loaded;
+      const { config, source, warnings } = loaded;
 
       if (opts.setup) config.setup = { ...config.setup, enabled: true };
       if (opts.ciSimulation) config.checks = { ...config.checks, ciSimulation: true };
       if (!opts.audit) config.checks = { ...config.checks, audit: false };
       if (!opts.secrets) config.checks = { ...config.checks, secretDetection: false };
 
-      const result = await runPreflight(resolvedPath, config, source);
+      const result =
+        warnings && warnings.length > 0
+          ? await runPreflight(resolvedPath, config, source, warnings)
+          : await runPreflight(resolvedPath, config, source);
 
       if (opts.json) {
         writeJsonAndExit(result, result.ready ? 0 : 1);

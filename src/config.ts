@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { CHECK_KINDS, CheckKind, CheckToggle, ConfigSource, ConfiguredCheckKind, CustomCheck, PreflightConfig, SandboxConfig } from "./types.js";
 
-const CONFIG_FILENAME = ".preflight.json";
+export const CONFIG_FILENAME = ".preflight.json";
 const DEFAULT_ACT_FLAGS = ["--platform", "ubuntu-latest=catthehacker/ubuntu:act-latest"];
 
 // `checks.*` keys whose value can be `true`/`false` OR `{ acknowledge: "..." }`
@@ -41,6 +41,10 @@ const COMMAND_KEYS = ["lint", "typecheck", "test", "audit"] as const;
 const SANDBOX_KEYS = ["aptPackages", "pipPackages"] as const;
 
 const SETUP_KEYS = ["enabled", "buildTimeoutMs"] as const;
+
+// Keys `pickCustomChecks` reads from a `customChecks[]` entry; anything else
+// in a plain-object entry warns (and is ignored), same as every other level.
+const CUSTOM_CHECK_KEYS = ["name", "command", "failOnError"] as const;
 
 // Every field `validateConfig()` recognizes at the top level of
 // `.preflight.json`, kept in sync with `PreflightConfig`'s own field list.
@@ -171,13 +175,17 @@ export function loadConfig(repoPath: string): PreflightConfig {
  * (warn and keep defaults on any problem) and also reports whether the file
  * was actually used. `loaded` is false when the file is absent, unreadable,
  * a directory, not valid JSON or not a JSON object, i.e. whenever the
- * defaults apply instead of the file.
+ * defaults apply instead of the file. `warnings` carries the validation
+ * warnings (and the parse-failure message) alongside the `console.warn`
+ * output, so structured consumers can surface them too.
  */
-function readRepoConfig(repoPath: string): { config: PreflightConfig; loaded: boolean } {
+function readRepoConfig(
+  repoPath: string
+): { config: PreflightConfig; loaded: boolean; warnings: string[] } {
   const configPath = path.join(repoPath, CONFIG_FILENAME);
 
   if (!fs.existsSync(configPath)) {
-    return { config: defaultConfig(), loaded: false };
+    return { config: defaultConfig(), loaded: false, warnings: [] };
   }
 
   try {
@@ -187,10 +195,14 @@ function readRepoConfig(repoPath: string): { config: PreflightConfig; loaded: bo
     for (const warning of warnings) {
       console.warn(`[preflight] Warning: ${configPath}: ${warning}`);
     }
-    return { config: mergeConfig(defaultConfig(), validated), loaded: isPlainObject(parsed) };
+    return { config: mergeConfig(defaultConfig(), validated), loaded: isPlainObject(parsed), warnings };
   } catch (err) {
     console.warn(`[preflight] Warning: failed to parse ${configPath}: ${(err as Error).message}`);
-    return { config: defaultConfig(), loaded: false };
+    return {
+      config: defaultConfig(),
+      loaded: false,
+      warnings: [`failed to parse: ${(err as Error).message}`],
+    };
   }
 }
 
@@ -272,21 +284,23 @@ export function resolveExplicitConfig(
  * Loads the config for a run and reports where it came from. Precedence:
  * explicit option, then `PREFLIGHT_CONFIG`, then `<repoPath>/.preflight.json`
  * (no merging between sources). Throws `ExplicitConfigError` when an
- * explicit source is unusable.
+ * explicit source is unusable. `warnings` holds the repo file's validation
+ * warnings (an empty list for an explicit config, which throws on any
+ * warning, and when no repo file exists).
  */
 export function loadConfigWithSource(
   repoPath: string,
   optionPath?: string
-): { config: PreflightConfig; source: ConfigSource } {
+): { config: PreflightConfig; source: ConfigSource; warnings: string[] } {
   const explicit = resolveExplicitConfig(optionPath);
   if (explicit) {
     const loaded = loadConfigFromFile(explicit.path);
-    return { config: loaded.config, source: { source: explicit.origin, path: loaded.path } };
+    return { config: loaded.config, source: { source: explicit.origin, path: loaded.path }, warnings: [] };
   }
-  const { config, loaded } = readRepoConfig(repoPath);
+  const { config, loaded, warnings } = readRepoConfig(repoPath);
   return loaded
-    ? { config, source: { source: "repo", path: path.join(repoPath, CONFIG_FILENAME) } }
-    : { config, source: { source: "none", path: null } };
+    ? { config, source: { source: "repo", path: path.join(repoPath, CONFIG_FILENAME) }, warnings }
+    : { config, source: { source: "none", path: null }, warnings };
 }
 
 export function defaultConfig(): PreflightConfig {
@@ -469,9 +483,9 @@ function pickEnum<T extends string>(
 // `.preflight.json` written for a future version of this field set should
 // still load under an older one, with a warning instead of every other
 // field silently vanishing along with the typo). Applied at the top level
-// of `.preflight.json` and to the `checks`/`commands`/`sandbox`/`setup`
-// sub-objects; not applied inside `customChecks[]` entries (out of scope
-// for this pass).
+// of `.preflight.json`, to the `checks`/`commands`/`sandbox`/`setup`
+// sub-objects, and to every plain-object `customChecks[]` entry (the entry
+// itself is kept; only the unrecognized key is ignored).
 function warnUnknownKeys(
   source: Record<string, unknown>,
   known: readonly string[],
@@ -658,6 +672,7 @@ function pickCustomChecks(
         );
       }
     }
+    warnUnknownKeys(item, CUSTOM_CHECK_KEYS, `customChecks[${index}]`, warnings);
     customChecks.push(entry);
   });
 

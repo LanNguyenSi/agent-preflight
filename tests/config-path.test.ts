@@ -285,6 +285,22 @@ describe("loadConfigWithSource", () => {
     expect(loaded.source.source).toBe("repo");
     expect(loaded.config.protectedBranches).toEqual(["x"]);
   });
+
+  it("returns the repo file's validation warnings, [] for an explicit or missing config", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warningRepo = makeRepo(JSON.stringify({ checks: { secretDetection: "yes" } }));
+    const warningMessages = loadConfigWithSource(warningRepo).warnings;
+    expect(warningMessages.length).toBeGreaterThan(0);
+    expect(warningMessages.some((w) => w.includes("checks.secretDetection"))).toBe(true);
+
+    const clean = writeFile(
+      makeTempDir("preflight-cfgpath-ext-"),
+      "clean.json",
+      JSON.stringify({ protectedBranches: ["x"] })
+    );
+    expect(loadConfigWithSource(makeRepo("{}"), clean).warnings).toEqual([]);
+    expect(loadConfigWithSource(makeRepo()).warnings).toEqual([]);
+  });
 });
 
 describe("explicit config diagnostics in a spawned CLI", () => {
@@ -476,6 +492,37 @@ describe("preflight run --config (real runner)", () => {
     vi.stubEnv("PREFLIGHT_CONFIG", "");
     const { json } = await runCli(["run", repo, "--json"]);
     expect(json?.config?.source).toBe("repo");
+  });
+
+  it("lists repo config warnings in limitations and still prints the warning", async () => {
+    const repo = makeRepo(configWithCheck("repo-check", "true", { surprise: true }));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const { exitCode, json } = await runCli(["run", repo, "--json"]);
+    expect(exitCode).toBe(0);
+    const entry = (json?.limitations ?? []).find((l) => l.startsWith("config "));
+    expect(entry).toBeDefined();
+    expect(entry).toContain(path.join(repo, ".preflight.json"));
+    expect(entry).toContain('"surprise"');
+    expect(warnSpy.mock.calls.some((call) => String(call[0]).includes("[preflight] Warning:"))).toBe(true);
+  });
+
+  it("lists a repo config parse failure with the file path in limitations", async () => {
+    const repo = makeRepo("{ not json");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const { json } = await runCli(["run", repo, "--json"]);
+    expect(json?.config?.source).toBe("none");
+    const entry = (json?.limitations ?? []).find((l) => l.startsWith("config "));
+    expect(entry).toBeDefined();
+    expect(entry).toContain(path.join(repo, ".preflight.json"));
+    expect(entry).toContain("failed to parse");
+  });
+
+  it("adds no config limitation for a repo file without warnings", async () => {
+    const repo = makeRepo(configWithCheck("repo-check", "true"));
+    const { json } = await runCli(["run", repo, "--json"]);
+    expect((json?.limitations ?? []).some((l) => l.startsWith("config "))).toBe(false);
   });
 });
 

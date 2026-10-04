@@ -313,6 +313,16 @@ describe("validateConfig", () => {
     expect(warnings.some((w) => w.startsWith("setup:") && w.includes('"enalbed"'))).toBe(true);
   });
 
+  it("warns about an unrecognized key inside a customChecks[] entry but keeps the entry", () => {
+    const { config, warnings } = validateConfig({
+      customChecks: [{ name: "x", command: "true", faliOnError: false }],
+    });
+    expect(config.customChecks).toEqual([{ name: "x", command: "true" }]);
+    expect(warnings).toEqual([
+      'customChecks[0]: unrecognized field "faliOnError"; ignoring (unknown fields are forward-compatible, not an error)',
+    ]);
+  });
+
   it("leaves a fully valid config untouched with no warnings (out of scope: no behavior change for valid configs)", () => {
     const valid = {
       checks: { lint: false, audit: { acknowledge: "flaky in this repo" }, ciSimulation: true },
