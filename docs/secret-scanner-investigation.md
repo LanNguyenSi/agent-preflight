@@ -68,9 +68,9 @@ gitignored-and-untracked, the finding is a test fixture
 `secretDetectionStrict`), or the file is committable but the current branch
 never touched it. Everything else is a `fail`. With `secretDetectionStrict`
 (`src/checks/secrets.ts:471`) the diff scope is switched off, so every
-committable, non-fixture finding blocks. The check never shells out for
-detection and has no external dependency: it fails closed by construction,
-never fails open. [checks.md](checks.md) describes the same severity rules
+committable, non-fixture finding blocks. Detection itself is regex-only with
+no external scanner dependency (only the file discovery below calls git), so
+it fails closed by construction, never fails open. [checks.md](checks.md) describes the same severity rules
 for operators.
 
 **Scanned file set (#104).** Inside a git work tree the in-tree check scans
