@@ -7,13 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-05
+
+### Breaking
+
+- **BEHAVIOR CHANGE for MCP users:** MCP: `customChecks` and `commands.*` from the repo config are now skipped by default in `preflight_run` and `preflight_batch`; set `PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1` in the MCP server environment to restore the previous behavior. Only the exact value `1` enables it (`true`, `yes`, `01`, `1 ` and unset all stay off). Each skipped entry is still reported as a check with status `skip` whose message names the variable, one `limitations` line counts them, and a `requiredChecks` kind that was skipped blocks readiness. The CLI is unchanged. A kind whose configured commands were skipped is also switched off for that run, so it does not fall back to the repo's autodetected script (for example `npm run lint`); it reports only its `skip` entries. A malformed top-level `commands` value (for example `null` or a number) is left as is, so each kind keeps failing with its `<kind>:configuration` result instead of autodetecting. Not covered by the gate: built-in checks that run repo-controlled scripts (for example `npm run lint` or `npm test` from the target's `package.json`), `setup.enabled`, and CI simulation (`checks.ciSimulation` or the `ciSimulation` argument runs `act` with repo-supplied `actFlags`), so keep pointing the tools at trusted repositories. Both tool descriptions now carry a note about the gate after the existing trusted-repositories warning.
+
 ### Docs
 
 - `docs/secret-scanner-investigation.md` now opens with the current secret-detection engine (nine `SECRET_PATTERNS`, the high-confidence recheck, the test-fixture heuristic, severity including `secretDetectionStrict`, the git-listed file set) with `src/checks/secrets.ts` line citations; the investigation-time five-regex description and its known-gaps list stay as marked history, and the option paragraphs no longer present AWS keys as a current gap.
-
-### Changed
-
-- **BEHAVIOR CHANGE for MCP users:** MCP: `customChecks` and `commands.*` from the repo config are now skipped by default in `preflight_run` and `preflight_batch`; set `PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1` in the MCP server environment to restore the previous behavior. Only the exact value `1` enables it (`true`, `yes`, `01`, `1 ` and unset all stay off). Each skipped entry is still reported as a check with status `skip` whose message names the variable, one `limitations` line counts them, and a `requiredChecks` kind that was skipped blocks readiness. The CLI is unchanged. A kind whose configured commands were skipped is also switched off for that run, so it does not fall back to the repo's autodetected script (for example `npm run lint`); it reports only its `skip` entries. A malformed top-level `commands` value (for example `null` or a number) is left as is, so each kind keeps failing with its `<kind>:configuration` result instead of autodetecting. Not covered by the gate: built-in checks that run repo-controlled scripts (for example `npm run lint` or `npm test` from the target's `package.json`), `setup.enabled`, and CI simulation (`checks.ciSimulation` or the `ciSimulation` argument runs `act` with repo-supplied `actFlags`), so keep pointing the tools at trusted repositories. Both tool descriptions now carry a note about the gate after the existing trusted-repositories warning.
 
 ### Added
 
