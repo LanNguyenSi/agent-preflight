@@ -1,3 +1,4 @@
+import { commandConfigurationError } from "./config.js";
 import { CheckResult, ConfiguredCheckKind, PreflightConfig } from "./types.js";
 
 /**
@@ -38,7 +39,9 @@ function skippedResult(name: string, kind: CheckResult["kind"]): CheckResult {
  * removed is also switched off (`checks.<kind>: false`), because without the
  * configured commands that kind would fall back to autodetection and run the
  * repo's own script (for example `npm run lint`) in place of them. The input
- * is never mutated.
+ * is never mutated. A malformed `commands` value (see
+ * `commandConfigurationError`) is not removed: it stays so the runners report
+ * it as a `<kind>:configuration` failure and nothing executes.
  */
 export function stripShellExecution(config: PreflightConfig): {
   config: PreflightConfig;
@@ -63,6 +66,11 @@ export function stripShellExecution(config: PreflightConfig): {
     for (const kind of CONFIGURED_KINDS) {
       const entries = commands[kind];
       if (entries === undefined) continue;
+      // A malformed override (wrong type, malformed entry, or an unrecognized
+      // key anywhere in `commands`) stays in the copy: the check runners
+      // reject it as a `<kind>:configuration` failure before executing
+      // anything, exactly like the CLI. Removing it would let readiness pass.
+      if (commandConfigurationError(config.commands, kind)) continue;
       delete commands[kind];
       // An empty array already means "autodetect", so nothing was replaced.
       if (!Array.isArray(entries) || entries.length > 0) disabledKinds.push(kind);
