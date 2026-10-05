@@ -59,10 +59,13 @@ export async function runBatch(
       // no explicit-config support), and the `config <path>: ...`
       // limitation falls back to the repo file path, the only file batch
       // reads.
-      const result =
-        warnings.length > 0
-          ? await runPreflight(repoPath, config, undefined, warnings, runOptions)
-          : await runPreflight(repoPath, config, undefined, undefined, runOptions);
+      const result = await runPreflight(
+        repoPath,
+        config,
+        undefined,
+        warnings.length > 0 ? warnings : undefined,
+        runOptions
+      );
       results.push({ repo: name, path: repoPath, result });
     } catch (err) {
       results.push({

@@ -63,6 +63,7 @@ describe("stripShellExecution", () => {
     expect(result.config.customChecks).toEqual([]);
     expect(result.config.commands?.lint).toBeUndefined();
     expect(result.config.commands?.test).toBeUndefined();
+    expect(result.config.checks).toEqual({ lint: false, test: false });
     expect(result.skipped).toEqual([
       skip("smoke", "custom"),
       skip("lint:1", "lint"),
@@ -97,6 +98,27 @@ describe("stripShellExecution", () => {
     expect(result.skipped).toEqual([]);
     expect(result.limitations).toEqual([]);
     expect(result.config.commands?.lint).toBeUndefined();
+  });
+
+  it("disables only the kinds whose configured commands were removed and keeps other toggles", () => {
+    const config: PreflightConfig = {
+      checks: { typecheck: true, audit: false, tdd: false },
+      commands: { lint: ["a"], audit: ["b"], typecheck: [] },
+    };
+    const clone = structuredClone(config);
+    const result = stripShellExecution(config);
+    expect(result.config.checks).toEqual({ typecheck: true, audit: false, tdd: false, lint: false });
+    expect(config).toEqual(clone);
+  });
+
+  it("disables the kind for a non-array commands entry too", () => {
+    const config = { commands: { test: "npm test" } } as unknown as PreflightConfig;
+    expect(stripShellExecution(config).config.checks).toEqual({ test: false });
+  });
+
+  it("leaves checks untouched when the config has only customChecks", () => {
+    const result = stripShellExecution({ customChecks: [{ name: "n", command: "c" }] });
+    expect(result.config.checks).toBeUndefined();
   });
 
   it("keeps unrelated config keys", () => {
@@ -154,7 +176,7 @@ describe("runPreflight shell gate option", () => {
   });
 
   it.each(["", "unset"])("runs repo shell commands by default regardless of the MCP env (env %j)", async (value) => {
-    if (value === "unset") delete process.env.PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS;
+    if (value === "unset") vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", undefined);
     else vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", value);
     const repoPath = fixture();
 

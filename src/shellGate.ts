@@ -30,7 +30,11 @@ function skippedResult(name: string, kind: CheckResult["kind"]): CheckResult {
 /**
  * Returns a copy of `config` without the shell commands the repo config
  * defines (customChecks and commands.lint/typecheck/test/audit), plus one
- * skipped result per removed entry. The input is never mutated.
+ * skipped result per removed entry. A kind whose configured commands were
+ * removed is also switched off (`checks.<kind>: false`), because without the
+ * configured commands that kind would fall back to autodetection and run the
+ * repo's own script (for example `npm run lint`) in place of them. The input
+ * is never mutated.
  */
 export function stripShellExecution(config: PreflightConfig): {
   config: PreflightConfig;
@@ -47,10 +51,13 @@ export function stripShellExecution(config: PreflightConfig): {
   const stripped: PreflightConfig = { ...config, customChecks: [] };
   if (config.commands !== undefined) {
     const commands = { ...config.commands };
+    const disabledKinds: ConfiguredCheckKind[] = [];
     for (const kind of CONFIGURED_KINDS) {
       const entries = commands[kind];
       if (entries === undefined) continue;
       delete commands[kind];
+      // An empty array already means "autodetect", so nothing was replaced.
+      if (!Array.isArray(entries) || entries.length > 0) disabledKinds.push(kind);
       if (!Array.isArray(entries)) continue;
       entries.forEach((entry, index) => {
         const name = typeof entry === "string" ? undefined : entry?.name;
@@ -58,6 +65,11 @@ export function stripShellExecution(config: PreflightConfig): {
       });
     }
     stripped.commands = commands;
+    if (disabledKinds.length > 0) {
+      const checks = { ...config.checks };
+      for (const kind of disabledKinds) checks[kind] = false;
+      stripped.checks = checks;
+    }
   }
 
   const limitations =
