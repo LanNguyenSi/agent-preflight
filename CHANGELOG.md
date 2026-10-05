@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP: with the shell-execution gate closed, a malformed `commands` value in the repo config (a non-array `commands.<kind>`, an array with a malformed entry such as `{"lint": [5]}`, or an unrecognized key in `commands`) is no longer dropped or reported as `skip` with `ready: true`. It stays in the gated config and is reported as a `<kind>:configuration` failure exactly like the CLI, so readiness is false; nothing executes (task 47223fad). Well-formed commands are still skipped.
+
 ## [0.11.0] - 2026-10-05
 
 ### Breaking

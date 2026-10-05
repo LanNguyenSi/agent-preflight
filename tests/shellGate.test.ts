@@ -92,12 +92,29 @@ describe("stripShellExecution", () => {
     expect(result.config.checks).toEqual({ lint: false });
   });
 
-  it("drops a non-array commands entry without a skip", () => {
+  it("keeps a non-array commands entry in place without a skip so the runners report it", () => {
     const config = { commands: { lint: "npm run lint" } } as unknown as PreflightConfig;
     const result = stripShellExecution(config);
     expect(result.skipped).toEqual([]);
     expect(result.limitations).toEqual([]);
-    expect(result.config.commands?.lint).toBeUndefined();
+    expect(result.config.commands?.lint).toBe("npm run lint");
+    expect(result.config.checks).toBeUndefined();
+  });
+
+  it("keeps an array with a malformed entry in place without a skip", () => {
+    const config = { commands: { lint: [5], test: ["ok"] } } as unknown as PreflightConfig;
+    const result = stripShellExecution(config);
+    expect(result.config.commands?.lint).toEqual([5]);
+    expect(result.config.commands?.test).toBeUndefined();
+    expect(result.config.checks).toEqual({ test: false });
+    expect(result.skipped.map((c) => c.kind)).toEqual(["test"]);
+  });
+
+  it("keeps every kind in place when commands carries an unrecognized key", () => {
+    const config = { commands: { lint: ["a"], test: ["b"], surprise: ["c"] } } as unknown as PreflightConfig;
+    const result = stripShellExecution(config);
+    expect(result.config.commands).toEqual({ lint: ["a"], test: ["b"], surprise: ["c"] });
+    expect(result.skipped).toEqual([]);
   });
 
   it("disables only the kinds whose configured commands were removed and keeps other toggles", () => {
@@ -111,19 +128,14 @@ describe("stripShellExecution", () => {
     expect(config).toEqual(clone);
   });
 
-  it("disables the kind for a non-array commands entry too", () => {
-    const config = { commands: { test: "npm test" } } as unknown as PreflightConfig;
-    expect(stripShellExecution(config).config.checks).toEqual({ test: false });
-  });
-
-  it.each([null, 5])("disables the kind for a commands.test of %j without throwing", (value) => {
+  it.each([null, 5])("keeps a commands.test of %j in place without throwing", (value) => {
     const config = { commands: { test: value } } as unknown as PreflightConfig;
     let result: ReturnType<typeof stripShellExecution> | undefined;
     expect(() => {
       result = stripShellExecution(config);
     }).not.toThrow();
-    expect(result!.config.checks?.test).toBe(false);
-    expect(result!.config.commands?.test).toBeUndefined();
+    expect(result!.config.checks).toBeUndefined();
+    expect(result!.config.commands?.test).toBe(value);
     expect(result!.skipped).toEqual([]);
   });
 
