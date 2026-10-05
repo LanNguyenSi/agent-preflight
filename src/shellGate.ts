@@ -16,6 +16,10 @@ export function mcpShellExecutionAllowed(env: NodeJS.ProcessEnv = process.env): 
   return env[MCP_ALLOW_SHELL_ENV] === "1";
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function skippedResult(name: string, kind: CheckResult["kind"]): CheckResult {
   return {
     name,
@@ -49,7 +53,11 @@ export function stripShellExecution(config: PreflightConfig): {
   }
 
   const stripped: PreflightConfig = { ...config, customChecks: [] };
-  if (config.commands !== undefined) {
+  // Only a plain-object `commands` can carry runnable entries. Any other value
+  // (null, a number, an array) stays as is: the check runners reject it as a
+  // configuration error before executing anything, whereas a copied `{}` would
+  // let every kind fall back to autodetection.
+  if (isPlainObject(config.commands)) {
     const commands = { ...config.commands };
     const disabledKinds: ConfiguredCheckKind[] = [];
     for (const kind of CONFIGURED_KINDS) {

@@ -116,6 +116,32 @@ describe("stripShellExecution", () => {
     expect(stripShellExecution(config).config.checks).toEqual({ test: false });
   });
 
+  it.each([null, 5])("disables the kind for a commands.test of %j without throwing", (value) => {
+    const config = { commands: { test: value } } as unknown as PreflightConfig;
+    let result: ReturnType<typeof stripShellExecution> | undefined;
+    expect(() => {
+      result = stripShellExecution(config);
+    }).not.toThrow();
+    expect(result!.config.checks?.test).toBe(false);
+    expect(result!.config.commands?.test).toBeUndefined();
+    expect(result!.skipped).toEqual([]);
+  });
+
+  it.each([null, 5, "npm run lint", ["npm run lint"]])(
+    "keeps a non-object top-level commands value of %j unchanged and leaves checks alone",
+    (value) => {
+      const config = {
+        commands: value,
+        customChecks: [{ name: "n", command: "c" }],
+      } as unknown as PreflightConfig;
+      const result = stripShellExecution(config);
+      expect(result.config.commands).toBe(value);
+      expect(result.config.checks).toBeUndefined();
+      expect(result.config.customChecks).toEqual([]);
+      expect(result.skipped).toEqual([skip("n", "custom")]);
+    }
+  );
+
   it("leaves checks untouched when the config has only customChecks", () => {
     const result = stripShellExecution({ customChecks: [{ name: "n", command: "c" }] });
     expect(result.config.checks).toBeUndefined();

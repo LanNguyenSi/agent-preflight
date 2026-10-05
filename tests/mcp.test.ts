@@ -1039,6 +1039,41 @@ describe("MCP shell execution gate", () => {
     }
   });
 
+  it("keeps a malformed top-level commands value as a configuration failure instead of autodetecting", async () => {
+    vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
+    const scripted = markerPath();
+    const repoPath = makeFixtureRepo("exit 0", {
+      packageScripts: { lint: `touch ${scripted}` },
+      extra: {
+        checks: {
+          gitState: false,
+          lint: true,
+          typecheck: false,
+          test: false,
+          audit: false,
+          ciSimulation: false,
+          commitConvention: false,
+          secretDetection: false,
+          tdd: false,
+        },
+        commands: null,
+      },
+    });
+    dirs.push(repoPath);
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({ name: "preflight_run", arguments: { repoPath } });
+      expect(response.isError).toBeFalsy();
+      const structured = response.structuredContent as { ready: boolean; checks: RunChecks };
+      expect(fs.existsSync(scripted)).toBe(false);
+      const lint = structured.checks.filter((c) => c.kind === "lint");
+      expect(lint.map((c) => [c.name, c.status])).toEqual([["lint:configuration", "fail"]]);
+      expect(structured.ready).toBe(false);
+    } finally {
+      await close();
+    }
+  });
+
   it("keeps the gate closed when the repo config also carries a config warning", async () => {
     vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
     const marker = markerPath();
