@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Docs
+
+- `docs/secret-scanner-investigation.md` now opens with the current secret-detection engine (nine `SECRET_PATTERNS`, the high-confidence recheck, the test-fixture heuristic, severity including `secretDetectionStrict`, the git-listed file set) with `src/checks/secrets.ts` line citations; the investigation-time five-regex description and its known-gaps list stay as marked history, and the option paragraphs no longer present AWS keys as a current gap.
+
 ### Added
 
 - The `preflight batch` CLI and the MCP `preflight_batch` tool now carry each repository's `.preflight.json` validation warnings in that repo's `limitations` as `config <path>: <warning>` entries, matching `preflight run --json` and the MCP `preflight_run` tool (batch has no explicit config file support, so only repo-file warnings can appear); as there, each entry lowers that repo's `confidence` slightly.
