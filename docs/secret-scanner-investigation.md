@@ -8,8 +8,86 @@ what a follow-up task would build.
 
 ## Current state
 
-`src/checks/secrets.ts` scans every non-binary, non-skipped file under the
-repo root with five hand-rolled regexes (`SECRET_PATTERNS`):
+Current as of the engine after #57, #58, #64 and #104; every claim below
+cites `src/checks/secrets.ts` at the line numbers of that revision. The
+investigation-time description (five regexes) is kept further down as
+history.
+
+`SECRET_PATTERNS` (`src/checks/secrets.ts:14-230`) has nine entries:
+
+- Three generic keyword assignments, each with an optional quote after the
+  identifier (`["']?`) so quoted-key JSON/YAML/Python forms are caught
+  (`src/checks/secrets.ts:39-41`): an `api_key`/`apikey` identifier with an
+  unquoted or quoted value of 20+ characters, a `password`/`passwd`/`pwd`
+  identifier with a quoted value of 8+ characters, and a `secret`/`token`
+  identifier with a quoted value of 20+ characters.
+- GitHub classic PAT, `ghp_[a-zA-Z0-9]{36}` (`src/checks/secrets.ts:42`).
+- PEM private-key header, `-----BEGIN (?:RSA |EC )?PRIVATE KEY-----`
+  (`src/checks/secrets.ts:43`).
+- AWS access key ID with the `A3T`, `AKIA`, `ASIA`, `ABIA` and `ACCA`
+  prefixes, anchored by a leading and trailing alphanumeric boundary
+  (`src/checks/secrets.ts:106`).
+- Three AWS secret-key shapes, each requiring a value of exactly 40
+  `[A-Za-z0-9/+=]` characters: an `aws_secret_access_key` identifier
+  (`src/checks/secrets.ts:145`), a `secret_access_key`/`secretAccessKey`
+  variant with an optional `aws` prefix (`src/checks/secrets.ts:172`), and
+  an `aws_secret_key`/`secret_key` variant with a leading identifier
+  boundary (`src/checks/secrets.ts:229`).
+
+A match is suppressed if the matched text hits one of five placeholder
+patterns (`PLACEHOLDER_PATTERNS`, `src/checks/secrets.ts:267-273`:
+`your_..._here`, `your_..._key`, `example[_-]?key`, `placeholder`, and
+`/<your[_\s]/i` at `src/checks/secrets.ts:272`, which also covers `<your `
+with a space), or if the line carries a `pragma: allowlist secret` comment
+(`ALLOWLIST_PRAGMA`, `src/checks/secrets.ts:328`, checked per line at
+`src/checks/secrets.ts:952`). `scanFile` stops at the first matching pattern
+on a line (`src/checks/secrets.ts:953-968`, `break` at
+`src/checks/secrets.ts:966`).
+
+**High-confidence shapes.** `HIGH_CONFIDENCE_PATTERNS`
+(`src/checks/secrets.ts:250-264`) lists three entries: `ghp_`, the PEM
+header, and the AWS access key ID. After a `SECRET_PATTERNS` hit, `scanFile`
+tests the whole line against this list and, on any match, forces
+`testFixture` to `false` (`src/checks/secrets.ts:962-964`). This is needed
+because the first-match `break` means a weaker generic pattern can be the
+one that reports a line that also carries one of these shapes.
+
+**Test-fixture heuristic.** A finding is marked `testFixture` only when both
+conditions hold (`src/checks/secrets.ts:962-964`): the matched text passes
+`TEST_FIXTURE_VALUE_PATTERN` (`src/checks/secrets.ts:309`, anchored at the
+first `:` or `=`, with the value starting with `test`, `dummy` or `fake`
+followed by `-` or `_`), and `isTestPath` is true
+(`src/checks/secrets.ts:317-322`: a directory segment exactly equal to `test`
+or `tests`; the file's own name does not count).
+
+**Severity.** Findings go through git-aware, diff-scoped severity
+(`src/checks/secrets.ts:482-507`). A finding downgrades to `warn` when the
+check runs outside git, the file is a `.md` file, the file is
+gitignored-and-untracked, the finding is a test fixture
+(`src/checks/secrets.ts:491`, independent of diff scope and of
+`secretDetectionStrict`), or the file is committable but the current branch
+never touched it. Everything else is a `fail`. With `secretDetectionStrict`
+(`src/checks/secrets.ts:471`) the diff scope is switched off, so every
+committable, non-fixture finding blocks. The check never shells out for
+detection and has no external dependency: it fails closed by construction,
+never fails open. [checks.md](checks.md) describes the same severity rules
+for operators.
+
+**Scanned file set (#104).** Inside a git work tree the in-tree check scans
+only the files git lists as committable (tracked, plus untracked and not
+ignored) instead of walking the filesystem, so gitignored files are no
+longer read and no longer produce non-blocking warnings
+(`src/checks/secrets.ts:442-448`, `listCommittableFiles` at
+`src/checks/secrets.ts:760-787`). Outside git, or if git fails, it still
+walks the tree (`scanDir`, with `SKIP_DIRS` at `src/checks/secrets.ts:345`).
+See [checks.md](checks.md#secret-detection-scanned-file-set).
+
+### At investigation time (#53)
+
+Historical: the description below is what the investigation measured
+against, and is no longer the engine's current state. The engine then
+scanned every non-binary, non-skipped file under the repo root with five
+hand-rolled regexes (`SECRET_PATTERNS`):
 
 - `(?:api[_-]?key|apikey)\s*[:=]\s*["']?[a-zA-Z0-9_-]{20,}["']?`
 - `(?:password|passwd|pwd)\s*[:=]\s*["'][^"']{8,}["']`
@@ -17,27 +95,21 @@ repo root with five hand-rolled regexes (`SECRET_PATTERNS`):
 - `ghp_[a-zA-Z0-9]{36}` (GitHub classic PAT)
 - `-----BEGIN (?:RSA |EC )?PRIVATE KEY-----`
 
-A match is suppressed if the matched text hits one of five placeholder
-patterns (`PLACEHOLDER_PATTERNS`: `your_..._here`, `your_..._key`,
-`example[_-]?key`, `placeholder`, `<your_`), or if the line carries a
-`pragma: allowlist secret` comment. Findings then go through git-aware,
+A match was suppressed if the matched text hit one of five placeholder
+patterns (`your_..._here`, `your_..._key`, `example[_-]?key`,
+`placeholder`, `<your_`), or if the line carried a
+`pragma: allowlist secret` comment. Findings then went through git-aware,
 diff-scoped severity (not part of this investigation): a `.md` file, a
 gitignored-and-untracked file, a non-git directory, or a file the current
-branch never touched all downgrade to `warn`; everything else is a `fail`.
-The check never shells out and has no external dependency - it fails closed
-by construction, never fails open.
-
-Update (scanned file set): this describes the investigation-time engine. Inside
-a git work tree the in-tree check now scans only the files git lists as
-committable (tracked, plus untracked and not ignored) instead of walking the
-filesystem, so gitignored files are no longer read and no longer produce
-non-blocking warnings; outside git, or if git fails, it still walks the
-tree. See [checks.md](checks.md#secret-detection-scanned-file-set).
+branch never touched all downgraded to `warn`; everything else was a `fail`.
 
 Known gaps going in (from the task brief, 2026-05-18 project-forge run): 3
 false positives, two from `.next/` build output (mitigated since by adding
 `.next` etc. to `SKIP_DIRS`); no coverage for AWS keys, GCP service-account
-JSON, Stripe keys, Slack tokens, or JWTs.
+JSON, Stripe keys, Slack tokens, or JWTs. Since #58 and #64 AWS access keys
+and AWS secret keys are covered; no `SECRET_PATTERNS` entry exists for GCP
+service-account JSON (caught only incidentally via the PEM header), Stripe
+keys, Slack tokens, or JWTs.
 
 ## Methodology
 
@@ -240,10 +312,13 @@ installed.
   regex and the external scanner need a shared `Finding` shape and combined
   severity handling (the diff-scoping / `.md` / gitignored logic already in
   `runSecretDetection` would need to apply uniformly to both sources). The
-  regex baseline's real gaps (no AWS, no GCP, no Stripe, no Slack, no JWT)
-  persist for anyone who doesn't opt in.
+  regex baseline's real gaps (no GCP, no Stripe, no Slack, no JWT)
+  persist for anyone who doesn't opt in. (Later note: the investigation-time
+  list also named AWS; AWS keys have been covered in-tree since #58 and #64,
+  see [Current state](#current-state).)
 
-**3. Status quo, documented** - keep the five regexes, document the known
+**3. Status quo, documented** - keep the in-tree regexes (five at
+investigation time, nine now), document the known
 gaps and FP classes explicitly (this document, plus a `docs/checks.md`
 cross-reference), no new dependency.
 
@@ -258,6 +333,8 @@ cross-reference), no new dependency.
   the `private_key` field redacted produced 0 findings; only trufflehog's
   dedicated `GCP` detector catches the PEM-less case), Stripe keys, Slack
   tokens, and JWTs stay undetected by design, not by measured tradeoff.
+  (Later note: AWS keys, listed as a gap at investigation time, have been
+  covered in-tree since #58 and #64; see [Current state](#current-state).)
 
 ## Recommendation
 
