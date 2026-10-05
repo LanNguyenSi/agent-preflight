@@ -8,6 +8,8 @@ export interface BatchOptions {
   only?: string; // glob pattern, e.g. "frost-*"
   exclude?: string; // glob pattern
   maxConcurrent?: number;
+  /** Skip the shell commands each repo's config defines (MCP surface); see RunPreflightOptions. */
+  denyShellExecution?: boolean;
 }
 
 export interface BatchResult {
@@ -45,6 +47,7 @@ export async function runBatch(
 ): Promise<BatchResult> {
   const repos = discoverRepos(root, opts);
   const results: BatchResult["results"] = [];
+  const runOptions = { denyShellExecution: opts.denyShellExecution };
 
   // Run sequentially to avoid resource contention (act uses Docker)
   for (const repoPath of repos) {
@@ -58,8 +61,8 @@ export async function runBatch(
       // reads.
       const result =
         warnings.length > 0
-          ? await runPreflight(repoPath, config, undefined, warnings)
-          : await runPreflight(repoPath, config);
+          ? await runPreflight(repoPath, config, undefined, warnings, runOptions)
+          : await runPreflight(repoPath, config, undefined, undefined, runOptions);
       results.push({ repo: name, path: repoPath, result });
     } catch (err) {
       results.push({

@@ -8,6 +8,7 @@ import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sd
 import { z } from "zod";
 import { ExplicitConfigError, loadConfigWithSource } from "./config.js";
 import { runPreflight } from "./runner.js";
+import { mcpShellExecutionAllowed } from "./shellGate.js";
 import { runBatch } from "./batch.js";
 import { VERSION } from "./version.js";
 import type { PreflightConfig, PreflightResult, CheckResult } from "./types.js";
@@ -30,6 +31,11 @@ const READY_FALSE_WARNING =
 // drops the security guidance, not just edits copy.
 const SHELL_SURFACE_WARNING =
   "The target repo's .preflight.json can define shell commands this tool will execute (customChecks[].command, commands.lint/typecheck/test/audit); only point it at trusted repositories.";
+
+// Appended after SHELL_SURFACE_WARNING: the warning stays true when the
+// operator opts in, this note says what the default does.
+const SHELL_GATE_NOTE =
+  "Shell commands from the target repo's config are skipped unless the MCP server's environment sets PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1; skipped entries are reported with status skip.";
 
 // Mirrors CheckKind (src/types.ts) exactly. A z.string() here would let
 // `kind` silently drift from CheckKind's literal union without the
@@ -280,7 +286,9 @@ export function createMcpServer(options: { progressIntervalMs?: number } = {}): 
         "ready, confidence, checks, blockers, warnings, limitations. " +
         READY_FALSE_WARNING +
         " " +
-        SHELL_SURFACE_WARNING,
+        SHELL_SURFACE_WARNING +
+        " " +
+        SHELL_GATE_NOTE,
       inputSchema: {
         repoPath: z
           .string()
@@ -331,12 +339,15 @@ export function createMcpServer(options: { progressIntervalMs?: number } = {}): 
       if (noAudit) config.checks = { ...config.checks, audit: false };
       if (noSecrets) config.checks = { ...config.checks, secretDetection: false };
 
+      // Read per call, not at createMcpServer time, so the operator's
+      // environment is honored as it is when the call arrives.
+      const denyShellExecution = !mcpShellExecutionAllowed();
       const result = await withProgressPings(
         extra,
         () =>
           loaded.warnings.length > 0
-            ? runPreflight(resolvedPath, config, loaded.source, loaded.warnings)
-            : runPreflight(resolvedPath, config, loaded.source),
+            ? runPreflight(resolvedPath, config, loaded.source, loaded.warnings, { denyShellExecution })
+            : runPreflight(resolvedPath, config, loaded.source, undefined, { denyShellExecution }),
         progressIntervalMs
       );
 
@@ -361,7 +372,9 @@ export function createMcpServer(options: { progressIntervalMs?: number } = {}): 
         "Each repo uses its own .preflight.json; an explicit config file (preflight_run's configPath, PREFLIGHT_CONFIG) is not supported here. " +
         READY_FALSE_WARNING +
         " " +
-        SHELL_SURFACE_WARNING,
+        SHELL_SURFACE_WARNING +
+        " " +
+        SHELL_GATE_NOTE,
       inputSchema: {
         root: z
           .string()
@@ -402,9 +415,10 @@ export function createMcpServer(options: { progressIntervalMs?: number } = {}): 
       if (noAudit) configOverride.checks = { ...configOverride.checks, audit: false };
       if (noSecrets) configOverride.checks = { ...configOverride.checks, secretDetection: false };
 
+      const denyShellExecution = !mcpShellExecutionAllowed();
       const batchResult = await withProgressPings(
         extra,
-        () => runBatch(resolvedRoot, { only, exclude }, configOverride),
+        () => runBatch(resolvedRoot, { only, exclude, denyShellExecution }, configOverride),
         progressIntervalMs
       );
 
