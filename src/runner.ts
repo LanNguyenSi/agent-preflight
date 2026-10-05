@@ -5,6 +5,7 @@ import { defaultLogDir, ensureProjectSetup, getWorkingDirHint, SetupBuildOutcome
 import { expandLeadingTilde } from "./pathUtils.js";
 import { CONFIG_FILENAME, requiredChecksConfigurationError } from "./config.js";
 import type { WorktreeSnapshot } from "./checks/git.js";
+import { stripShellExecution } from "./shellGate.js";
 
 // Maps a CheckResult's `kind` back to the `.preflight.json` `checks.<key>`
 // toggle that controls it, for the acknowledge feature below. Deliberately
@@ -159,13 +160,25 @@ function checkSecretDetectionAcknowledgeIgnored(config: PreflightConfig): string
  * same problems the `console.warn` output does; like every other limitation
  * this slightly lowers `confidence`.
  */
+export interface RunPreflightOptions {
+  /**
+   * Drop the shell commands the repo config defines (customChecks and
+   * commands.*) and report each as a skipped check instead. Set by the MCP
+   * surface unless its server environment opts in; the CLI never sets it.
+   */
+  denyShellExecution?: boolean;
+}
+
 export async function runPreflight(
   repoPath: string,
-  config: PreflightConfig,
+  requestedConfig: PreflightConfig,
   configSource?: ConfigSource,
-  configWarnings?: string[]
+  configWarnings?: string[],
+  options: RunPreflightOptions = {}
 ): Promise<PreflightResult> {
   const start = Date.now();
+  const gated = options.denyShellExecution ? stripShellExecution(requestedConfig) : undefined;
+  const config = gated?.config ?? requestedConfig;
   const checks: CheckResult[] = [];
   const { targetPath, limitations } = resolveTargetPath(repoPath, config.workingDir);
 
@@ -311,6 +324,9 @@ export async function runPreflight(
     checks.push(...result.checks);
     limitations.push(...result.limitations);
   }
+
+  checks.push(...(gated?.skipped ?? []));
+  limitations.push(...(gated?.limitations ?? []));
 
   // Apply waivers before requiredChecks: an acknowledged result retains its
   // status and reason, but cannot satisfy a requirement for a passing check.

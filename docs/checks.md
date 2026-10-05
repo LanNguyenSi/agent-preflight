@@ -215,7 +215,7 @@ PREFLIGHT_CONFIG=/srv/team/preflight.json preflight run ./my-project
 - The result reports the source as `config: { "source": "option" | "env" | "repo" | "none", "path": "<file>" | null }` in `--json` output (and as a `Config:` line in the summary). `repo` means the repo file was loaded; `none` means no file was used (no repo file, or one that could not be loaded, such as invalid JSON, a directory or a non-object, so defaults applied).
 - The MCP tool `preflight_run` accepts the same thing as `configPath` (relative to the server's working directory). `preflight batch` does not support it: each repo uses its own `.preflight.json`. `preflight sandbox` rejects `--config` and `PREFLIGHT_CONFIG` with an error instead of ignoring them.
 - `PREFLIGHT_CONFIG` is removed by the shared command runner (`runShellCheck`) from the environment of configured checks and other commands routed through it. Tool-availability probes and setup commands also use the shared environment builder and remove the selector. Direct subprocess paths, including the built-in npm audit runner and `act` CI simulation, currently inherit it; other direct children are outside this filter. This is a command-runner boundary, not a guarantee that every child process lacks the selector.
-- Security: the explicit file can define shell commands (`customChecks[].command`, `commands.*`) that run on your machine, exactly like the repo file. Only point `--config`, `PREFLIGHT_CONFIG` or `configPath` at files you trust.
+- Security: the explicit file can define shell commands (`customChecks[].command`, `commands.*`) that run on your machine, exactly like the repo file. Only point `--config`, `PREFLIGHT_CONFIG` or `configPath` at files you trust. On the MCP surface the explicit file goes through the same default-off gate as the repo file (see the Security note under custom checks).
 
 ## Command overrides
 
@@ -290,6 +290,8 @@ define shell commands (`customChecks[].command`, `commands.lint`/`typecheck`/
 and the MCP server) or inside the sandbox container with your workspace and
 package caches mounted, plus the Docker socket if enabled (`preflight
 sandbox`). Run preflight only on repositories you trust.
+
+On the MCP server, `customChecks` and `commands.*` from the repo config are skipped by default: only the exact value `1` of `PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS` in the MCP server's environment enables them, and every skipped entry is reported as a check with status `skip` whose message names that variable. When a kind's configured commands are skipped, that kind is also switched off for the run, so the repo's autodetected script for it (for example `npm run lint`) does not run in their place; the kind reports only its `skip` entries. The CLI (`run`/`batch`/`sandbox`) is unchanged. This gate does not make the MCP surface execution-free: the built-in checks that run repo-controlled scripts (for example `npm run lint` or `npm test` from the target's `package.json`, `pytest`, composer scripts), `setup.enabled` in a repo config and CI simulation (`checks.ciSimulation` from the repo config, or the caller's `ciSimulation` argument, runs `act` with repo-supplied `actFlags` and is not gated) still run, so keep pointing the tools at trusted repositories.
 
 ## Setup phase
 

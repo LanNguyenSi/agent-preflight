@@ -49,6 +49,8 @@ async function connectedClient(
 // `enableAudit` wires a deterministic `commands.audit` override (a bare
 // `true`) instead of relying on the real `npm audit`, which would be slow
 // and network-dependent for an empty fixture package.json.
+// `packageScripts` becomes the fixture package.json `scripts`, so a test can
+// tell a configured command from an autodetected repo script.
 // `extra` is merged into the fixture's own `.preflight.json` top level, e.g.
 // to add a key `validateConfig` warns about.
 function makeFixtureRepo(
@@ -57,13 +59,18 @@ function makeFixtureRepo(
     enableAudit?: boolean;
     enableSecretDetection?: boolean;
     extra?: Record<string, unknown>;
+    packageScripts?: Record<string, string>;
   } = {}
 ): string {
-  const { enableAudit = false, enableSecretDetection = false, extra = {} } = overrides;
+  const { enableAudit = false, enableSecretDetection = false, extra = {}, packageScripts } = overrides;
   const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-mcp-fixture-"));
   fs.writeFileSync(
     path.join(repoPath, "package.json"),
-    JSON.stringify({ name: "fixture", version: "1.0.0" })
+    JSON.stringify({
+      name: "fixture",
+      version: "1.0.0",
+      ...(packageScripts ? { scripts: packageScripts } : {}),
+    })
   );
   fs.writeFileSync(
     path.join(repoPath, ".preflight.json"),
@@ -94,9 +101,13 @@ function makeFixtureRepo(
 }
 
 // An ambient PREFLIGHT_CONFIG would change which config every preflight_run
-// call below loads; start each test from an unset variable.
+// call below loads; start each test from an unset variable. The shell gate
+// starts OPEN here because almost every test below needs its fixture's
+// customChecks entry to actually execute; the gate's own describe block
+// overrides the value per test.
 beforeEach(() => {
   vi.stubEnv("PREFLIGHT_CONFIG", "");
+  vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "1");
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -129,6 +140,15 @@ describe("MCP tool schema / registration", () => {
         "(customChecks[].command, commands.lint/typecheck/test/audit); only point it at trusted repositories.";
       expect(run.description).toContain(shellSurfaceWarning);
       expect(batch.description).toContain(shellSurfaceWarning);
+
+      // The default-off gate note, pinned verbatim in both descriptions.
+      const shellGateNote =
+        "Shell commands from the target repo's config are skipped unless the MCP server's environment " +
+        "sets PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1; skipped entries are reported with status skip.";
+      expect(run.description).toContain(shellGateNote);
+      expect(batch.description).toContain(shellGateNote);
+      expect(run.description).toContain("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS");
+      expect(batch.description).toContain("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS");
 
       expect(Object.keys(run.inputSchema.properties ?? {}).sort()).toEqual(
         ["ciSimulation", "configPath", "noAudit", "noSecrets", "repoPath"].sort()
@@ -866,5 +886,259 @@ describe("preflight_run configPath", () => {
     } finally {
       await close();
     }
+  });
+});
+
+describe("MCP shell execution gate", () => {
+  const closedValues = ["", "0", "true", "yes", "1 ", "01", "TRUE"];
+  const markers: string[] = [];
+  const dirs: string[] = [];
+
+  function markerPath(): string {
+    const marker = path.join(
+      os.tmpdir(),
+      `preflight-mcp-marker-${process.pid}-${Date.now()}-${markers.length}`
+    );
+    markers.push(marker);
+    return marker;
+  }
+
+  afterEach(() => {
+    for (const marker of markers.splice(0)) fs.rmSync(marker, { force: true });
+    for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  type RunChecks = Array<{ name: string; kind: string; status: string; message?: string }>;
+
+  async function runOnFixture(command: string): Promise<{
+    response: Awaited<ReturnType<Client["callTool"]>>;
+    checks: RunChecks;
+  }> {
+    const repoPath = makeFixtureRepo(command);
+    dirs.push(repoPath);
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({
+        name: "preflight_run",
+        arguments: { repoPath },
+      });
+      const structured = response.structuredContent as { checks: RunChecks };
+      return { response, checks: structured.checks };
+    } finally {
+      await close();
+    }
+  }
+
+  it.each(closedValues)("keeps the gate closed for PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=%j (marker absent, entry skipped)", async (value) => {
+    vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", value);
+    const marker = markerPath();
+    const { response, checks } = await runOnFixture(`touch ${marker}`);
+
+    expect(response.isError).toBeFalsy();
+    expect(fs.existsSync(marker)).toBe(false);
+    const entry = checks.find((c) => c.name === "fixture-check");
+    expect(entry).toBeDefined();
+    expect(entry!.status).toBe("skip");
+    expect(entry!.kind).toBe("custom");
+    expect(entry!.message).toContain("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS");
+  });
+
+  it("is closed when the variable is unset", async () => {
+    vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", undefined);
+    const marker = markerPath();
+    const { checks } = await runOnFixture(`touch ${marker}`);
+
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(checks.find((c) => c.name === "fixture-check")?.status).toBe("skip");
+  });
+
+  it("runs the command when the value is exactly \"1\" (pass)", async () => {
+    vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "1");
+    const marker = markerPath();
+    const { checks } = await runOnFixture(`touch ${marker}`);
+
+    expect(fs.existsSync(marker)).toBe(true);
+    expect(checks.find((c) => c.name === "fixture-check")?.status).toBe("pass");
+  });
+
+  it("runs the command when the value is exactly \"1\" (fail for a non-zero exit)", async () => {
+    vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "1");
+    const marker = markerPath();
+    const { checks } = await runOnFixture(`touch ${marker} && exit 1`);
+
+    expect(fs.existsSync(marker)).toBe(true);
+    expect(checks.find((c) => c.name === "fixture-check")?.status).toBe("fail");
+  });
+
+  it("returns the skipped check through the output schema with text content equal to structuredContent", async () => {
+    vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
+    const { response } = await runOnFixture("exit 0");
+
+    expect(response.isError).toBeFalsy();
+    const content = response.content as Array<{ type: string; text: string }>;
+    expect(JSON.parse(content[0].text)).toEqual(response.structuredContent);
+  });
+
+  it.each([
+    ["lint", "lint"],
+    ["test", "test"],
+  ])("does not fall back to the repo's autodetected %s script when its configured commands are skipped", async (kind, toggle) => {
+    vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
+    const configured = markerPath();
+    const scripted = markerPath();
+    const repoPath = makeFixtureRepo("exit 0", {
+      packageScripts: { [kind]: `touch ${scripted}` },
+      extra: {
+        checks: {
+          gitState: false,
+          lint: false,
+          typecheck: false,
+          test: false,
+          audit: false,
+          ciSimulation: false,
+          commitConvention: false,
+          secretDetection: false,
+          tdd: false,
+          [toggle]: true,
+        },
+        commands: { [kind]: [`touch ${configured}`] },
+        requiredChecks: [kind],
+      },
+    });
+    dirs.push(repoPath);
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({ name: "preflight_run", arguments: { repoPath } });
+      const structured = response.structuredContent as {
+        ready: boolean;
+        blockers: string[];
+        checks: RunChecks;
+      };
+      expect(fs.existsSync(configured)).toBe(false);
+      expect(fs.existsSync(scripted)).toBe(false);
+      const ofKind = structured.checks.filter((c) => c.kind === kind);
+      expect(ofKind.map((c) => c.status)).toEqual(["skip"]);
+      expect(ofKind[0].message).toContain("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS");
+      expect(structured.ready).toBe(false);
+      expect(structured.blockers.some((b) => b.includes(`Required check kind "${kind}"`))).toBe(true);
+    } finally {
+      await close();
+    }
+
+    // Gate open: the configured command runs and the repo script does not.
+    vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "1");
+    const { client: openClient, close: closeOpen } = await connectedClient();
+    try {
+      const response = await openClient.callTool({ name: "preflight_run", arguments: { repoPath } });
+      const structured = response.structuredContent as { checks: RunChecks };
+      expect(fs.existsSync(configured)).toBe(true);
+      expect(fs.existsSync(scripted)).toBe(false);
+      expect(structured.checks.filter((c) => c.kind === kind).map((c) => c.status)).toEqual(["pass"]);
+    } finally {
+      await closeOpen();
+    }
+  });
+
+  it("keeps a malformed top-level commands value as a configuration failure instead of autodetecting", async () => {
+    vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
+    const scripted = markerPath();
+    const repoPath = makeFixtureRepo("exit 0", {
+      packageScripts: { lint: `touch ${scripted}` },
+      extra: {
+        checks: {
+          gitState: false,
+          lint: true,
+          typecheck: false,
+          test: false,
+          audit: false,
+          ciSimulation: false,
+          commitConvention: false,
+          secretDetection: false,
+          tdd: false,
+        },
+        commands: null,
+      },
+    });
+    dirs.push(repoPath);
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({ name: "preflight_run", arguments: { repoPath } });
+      expect(response.isError).toBeFalsy();
+      const structured = response.structuredContent as { ready: boolean; checks: RunChecks };
+      expect(fs.existsSync(scripted)).toBe(false);
+      const lint = structured.checks.filter((c) => c.kind === "lint");
+      expect(lint.map((c) => [c.name, c.status])).toEqual([["lint:configuration", "fail"]]);
+      expect(structured.ready).toBe(false);
+    } finally {
+      await close();
+    }
+  });
+
+  it("keeps the gate closed when the repo config also carries a config warning", async () => {
+    vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
+    const marker = markerPath();
+    const repoPath = makeFixtureRepo(`touch ${marker}`, { extra: { surpriseKey: true } });
+    dirs.push(repoPath);
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({ name: "preflight_run", arguments: { repoPath } });
+      const structured = response.structuredContent as { checks: RunChecks; limitations: string[] };
+      expect(fs.existsSync(marker)).toBe(false);
+      expect(structured.checks.find((c) => c.name === "fixture-check")?.status).toBe("skip");
+      expect(structured.limitations.some((l) => l.includes("surpriseKey"))).toBe(true);
+    } finally {
+      await close();
+    }
+  });
+
+  describe("preflight_batch", () => {
+    function makeBatchRoot(command: string, extra?: Record<string, unknown>): string {
+      const batchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-mcp-gate-batch-"));
+      dirs.push(batchRoot);
+      const fixture = makeFixtureRepo(command, { extra });
+      fs.renameSync(fixture, path.join(batchRoot, path.basename(fixture)));
+      return batchRoot;
+    }
+
+    async function batchChecks(root: string): Promise<RunChecks> {
+      const { client, close } = await connectedClient();
+      try {
+        const response = await client.callTool({ name: "preflight_batch", arguments: { root } });
+        expect(response.isError).toBeFalsy();
+        const structured = response.structuredContent as {
+          results: Array<{ result: { checks: RunChecks } | null }>;
+        };
+        return structured.results[0].result!.checks;
+      } finally {
+        await close();
+      }
+    }
+
+    it("skips the repo's shell commands by default (marker absent, entry skipped)", async () => {
+      vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
+      const marker = markerPath();
+      const checks = await batchChecks(makeBatchRoot(`touch ${marker}`));
+
+      expect(fs.existsSync(marker)).toBe(false);
+      expect(checks.find((c) => c.name === "fixture-check")?.status).toBe("skip");
+    });
+
+    it("keeps the gate closed when the repo config also carries a config warning", async () => {
+      vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
+      const marker = markerPath();
+      const checks = await batchChecks(makeBatchRoot(`touch ${marker}`, { surpriseKey: true }));
+
+      expect(fs.existsSync(marker)).toBe(false);
+      expect(checks.find((c) => c.name === "fixture-check")?.status).toBe("skip");
+    });
+
+    it("runs them when the value is exactly \"1\" (marker exists)", async () => {
+      vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "1");
+      const marker = markerPath();
+      const checks = await batchChecks(makeBatchRoot(`touch ${marker}`));
+
+      expect(fs.existsSync(marker)).toBe(true);
+      expect(checks.find((c) => c.name === "fixture-check")?.status).toBe("pass");
+    });
   });
 });
