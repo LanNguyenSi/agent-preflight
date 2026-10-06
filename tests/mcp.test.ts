@@ -1196,17 +1196,20 @@ describe("MCP shell execution gate", () => {
       return { binDir, argvLog };
     }
 
-    function hostileRepo(): string {
+    function hostileRepo(opts: { hostileFlags?: boolean; actrc?: boolean; extra?: Record<string, unknown> } = {}): string {
+      const { hostileFlags = true, actrc = false, extra: more = {} } = opts;
       const repoPath = makeFixtureRepo("exit 0", {
         extra: {
           checks: {
             gitState: false, lint: false, typecheck: false, test: false, audit: false,
             ciSimulation: true, commitConvention: false, secretDetection: false, tdd: false,
           },
-          actFlags: ["--dryrun=false", "-P", "ubuntu-latest=-self-hosted"],
+          ...(hostileFlags ? { actFlags: ["--dryrun=false", "-P", "ubuntu-latest=-self-hosted"] } : {}),
+          ...more,
         },
       });
       dirs.push(repoPath);
+      if (actrc) fs.writeFileSync(path.join(repoPath, ".actrc"), "--dryrun=false\n-P ubuntu-latest=-self-hosted\n");
       fs.mkdirSync(path.join(repoPath, ".github", "workflows"), { recursive: true });
       fs.writeFileSync(
         path.join(repoPath, ".github", "workflows", "ci.yml"),
@@ -1234,6 +1237,51 @@ describe("MCP shell execution gate", () => {
       expect(entry?.status).toBe("skip");
       expect(entry?.message).toContain("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS");
       expect(structured.limitations.some((l) => l.includes("CI simulation was not run"))).toBe(true);
+      expect(structured.limitations.some((l) => l.startsWith("CI simulation skipped (enable"))).toBe(false);
+    });
+
+    it("does not run act with default actFlags and an .actrc in the repo when the gate is closed", async () => {
+      vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
+      const { argvLog } = stubAct();
+      const structured = await run(hostileRepo({ hostileFlags: false, actrc: true }));
+      expect(fs.existsSync(argvLog)).toBe(false);
+      expect(structured.checks.find((c) => c.kind === "ci-simulation")?.status).toBe("skip");
+    });
+
+    it("does not run act through preflight_batch when the gate is closed", async () => {
+      vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
+      const { argvLog } = stubAct();
+      const batchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-mcp-act-batch-"));
+      dirs.push(batchRoot);
+      const fixture = hostileRepo();
+      fs.renameSync(fixture, path.join(batchRoot, path.basename(fixture)));
+      const { client, close } = await connectedClient();
+      try {
+        const response = await client.callTool({ name: "preflight_batch", arguments: { root: batchRoot } });
+        expect(response.isError).toBeFalsy();
+        const structured = response.structuredContent as {
+          results: Array<{ result: { checks: RunChecks } | null }>;
+        };
+        expect(fs.existsSync(argvLog)).toBe(false);
+        expect(structured.results[0].result!.checks.find((c) => c.kind === "ci-simulation")?.status).toBe("skip");
+      } finally {
+        await close();
+      }
+    });
+
+    it("keeps a requiredChecks ci-simulation entry unmet (ready false) while the gate is closed", async () => {
+      vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
+      stubAct();
+      const { client, close } = await connectedClient();
+      try {
+        const response = await client.callTool({
+          name: "preflight_run",
+          arguments: { repoPath: hostileRepo({ extra: { requiredChecks: ["ci-simulation"] } }) },
+        });
+        expect((response.structuredContent as { ready: boolean }).ready).toBe(false);
+      } finally {
+        await close();
+      }
     });
 
     it("does not run act for the caller's ciSimulation argument either when the gate is closed", async () => {
