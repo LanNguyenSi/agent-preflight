@@ -1115,6 +1115,75 @@ describe("MCP shell execution gate", () => {
     }
   });
 
+  const gatedChecks = (kinds: string[]) => ({
+    gitState: false,
+    lint: kinds.includes("lint"),
+    typecheck: kinds.includes("typecheck"),
+    test: kinds.includes("test"),
+    audit: kinds.includes("audit"),
+    ciSimulation: false,
+    commitConvention: false,
+    secretDetection: false,
+    tdd: false,
+  });
+
+  it("reports a malformed entry beside a well-formed one as a lint:configuration failure and runs neither", async () => {
+    vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
+    const scripted = markerPath();
+    const configured = markerPath();
+    const repoPath = makeFixtureRepo("exit 0", {
+      packageScripts: { lint: `touch ${scripted}` },
+      extra: { checks: gatedChecks(["lint"]), commands: { lint: [`touch ${configured}`, 5] } },
+    });
+    dirs.push(repoPath);
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({ name: "preflight_run", arguments: { repoPath } });
+      expect(response.isError).toBeFalsy();
+      const structured = response.structuredContent as { ready: boolean; checks: RunChecks };
+      expect(fs.existsSync(scripted)).toBe(false);
+      expect(fs.existsSync(configured)).toBe(false);
+      const lint = structured.checks.filter((c) => c.kind === "lint");
+      expect(lint.map((c) => [c.name, c.status])).toEqual([["lint:configuration", "fail"]]);
+      expect(structured.ready).toBe(false);
+    } finally {
+      await close();
+    }
+  });
+
+  it("reports an unknown commands key as a configuration failure for every kind, with no skips and no autodetection", async () => {
+    vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
+    const kinds = ["lint", "typecheck", "test", "audit"];
+    const scripted = kinds.map(() => markerPath());
+    const configured = kinds.map(() => markerPath());
+    const repoPath = makeFixtureRepo("exit 0", {
+      packageScripts: Object.fromEntries(kinds.map((kind, i) => [kind, `touch ${scripted[i]}`])),
+      extra: {
+        checks: gatedChecks(kinds),
+        commands: {
+          ...Object.fromEntries(kinds.map((kind, i) => [kind, [`touch ${configured[i]}`]])),
+          surprise: ["x"],
+        },
+      },
+    });
+    dirs.push(repoPath);
+    const { client, close } = await connectedClient();
+    try {
+      const response = await client.callTool({ name: "preflight_run", arguments: { repoPath } });
+      expect(response.isError).toBeFalsy();
+      const structured = response.structuredContent as { ready: boolean; checks: RunChecks };
+      for (const marker of [...scripted, ...configured]) expect(fs.existsSync(marker)).toBe(false);
+      const relevant = structured.checks.filter((c) => kinds.includes(c.kind));
+      expect(relevant.map((c) => [c.name, c.status])).toEqual(
+        kinds.map((kind) => [`${kind}:configuration`, "fail"])
+      );
+      expect(relevant.some((c) => c.status === "skip")).toBe(false);
+      expect(structured.ready).toBe(false);
+    } finally {
+      await close();
+    }
+  });
+
   it("keeps the gate closed when the repo config also carries a config warning", async () => {
     vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "");
     const marker = markerPath();
