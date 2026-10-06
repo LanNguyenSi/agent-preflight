@@ -315,7 +315,7 @@ export async function runPreflight(
     const result = await runCiSimulation(targetPath, config.actFlags ?? []);
     checks.push(...result.checks);
     limitations.push(...result.limitations);
-  } else {
+  } else if (!gated?.skipped.some((entry) => entry.kind === "ci-simulation")) {
     limitations.push("CI simulation skipped (enable with checks.ciSimulation: true, requires act)");
   }
 
