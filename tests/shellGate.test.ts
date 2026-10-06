@@ -6,6 +6,7 @@ import { execSync } from "child_process";
 import {
   MCP_ALLOW_SHELL_ENV,
   SHELL_SKIPPED_MESSAGE,
+  CI_SIMULATION_SKIPPED_MESSAGE,
   mcpShellExecutionAllowed,
   stripShellExecution,
 } from "../src/shellGate.js";
@@ -77,6 +78,37 @@ describe("stripShellExecution", () => {
       'MCP: 4 shell command(s) from the repo config were not run (PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS is not "1")',
     ]);
     expect(config).toEqual(clone);
+  });
+
+  it("skips CI simulation with an honest entry, switches it off and drops repo actFlags", () => {
+    const config: PreflightConfig = {
+      checks: { ciSimulation: true, lint: false },
+      actFlags: ["--dryrun=false", "-P", "ubuntu-latest=-self-hosted"],
+    };
+    const clone = structuredClone(config);
+    const result = stripShellExecution(config);
+    expect(result.config.checks).toEqual({ ciSimulation: false, lint: false });
+    expect(result.config.actFlags).toBeUndefined();
+    expect(result.skipped).toEqual([
+      {
+        name: "act-dry-run",
+        kind: "ci-simulation",
+        status: "skip",
+        message: CI_SIMULATION_SKIPPED_MESSAGE,
+        durationMs: 0,
+        confidenceContribution: 0,
+      },
+    ]);
+    expect(CI_SIMULATION_SKIPPED_MESSAGE).toContain("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1");
+    expect(result.limitations.some((l) => l.includes("CI simulation was not run"))).toBe(true);
+    expect(config).toEqual(clone);
+  });
+
+  it("leaves a config without ciSimulation untouched by the CI gate", () => {
+    const config: PreflightConfig = { checks: { ciSimulation: false }, actFlags: ["--x"] };
+    const result = stripShellExecution(config);
+    expect(result.skipped).toEqual([]);
+    expect(result.config.actFlags).toEqual(["--x"]);
   });
 
   it("names unnamed entries by their one-based position within the kind", () => {

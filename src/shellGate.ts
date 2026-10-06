@@ -11,6 +11,9 @@ export const MCP_ALLOW_SHELL_ENV = "PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS";
 export const SHELL_SKIPPED_MESSAGE =
   "Skipped: shell commands from the repo config are disabled on the MCP surface; set PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1 in the MCP server environment to enable them";
 
+export const CI_SIMULATION_SKIPPED_MESSAGE =
+  "Skipped: CI simulation runs act with flags and an .actrc taken from the repo, so it is disabled on the MCP surface; set PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1 in the MCP server environment to enable it";
+
 const CONFIGURED_KINDS: ConfiguredCheckKind[] = ["lint", "typecheck", "test", "audit"];
 
 export function mcpShellExecutionAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -21,12 +24,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function skippedResult(name: string, kind: CheckResult["kind"]): CheckResult {
+function skippedResult(
+  name: string,
+  kind: CheckResult["kind"],
+  message: string = SHELL_SKIPPED_MESSAGE
+): CheckResult {
   return {
     name,
     kind,
     status: "skip",
-    message: SHELL_SKIPPED_MESSAGE,
+    message,
     durationMs: 0,
     confidenceContribution: 0,
   };
@@ -88,11 +95,25 @@ export function stripShellExecution(config: PreflightConfig): {
     }
   }
 
+  const shellSkipped = skipped.length;
   const limitations =
-    skipped.length > 0
+    shellSkipped > 0
       ? [
-          `MCP: ${skipped.length} shell command(s) from the repo config were not run (${MCP_ALLOW_SHELL_ENV} is not "1")`,
+          `MCP: ${shellSkipped} shell command(s) from the repo config were not run (${MCP_ALLOW_SHELL_ENV} is not "1")`,
         ]
       : [];
+
+  // CI simulation runs `act` with repo-supplied `actFlags` (a later
+  // `--dryrun=false` would override the leading `--dryrun`) and act also reads
+  // an `.actrc` from the repo, so with the gate closed it is not run at all.
+  // Dropping only `actFlags` would leave the `.actrc` path open.
+  if (config.checks?.ciSimulation === true) {
+    skipped.push(skippedResult("act-dry-run", "ci-simulation", CI_SIMULATION_SKIPPED_MESSAGE));
+    limitations.push(
+      `MCP: CI simulation was not run (${MCP_ALLOW_SHELL_ENV} is not "1"); act would take its flags from the repo config`
+    );
+    stripped.checks = { ...stripped.checks, ciSimulation: false };
+    delete stripped.actFlags;
+  }
   return { config: stripped, skipped, limitations };
 }

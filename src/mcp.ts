@@ -297,7 +297,7 @@ export function createMcpServer(options: { progressIntervalMs?: number } = {}): 
           .boolean()
           .optional()
           .describe(
-            "Enable act-based CI simulation (requires the `act` CLI to be installed). Default false."
+            "Enable act-based CI simulation (requires the `act` CLI to be installed). Default false. Skipped (status skip) unless the server sets PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1."
           ),
         noAudit: z
           .boolean()

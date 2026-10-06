@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- MCP: CI simulation (`checks.ciSimulation` from the repo config, or the caller's `ciSimulation` argument) is now behind the same shell-execution gate as `customChecks` and `commands.*`. While `PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS` is not exactly `1`, `act` is not run and the repo's `actFlags` are ignored: the run reports an `act-dry-run` check with status `skip` (message names the variable) and one `limitations` line. Previously a hostile `actFlags` (for example a later `--dryrun=false` with a self-hosted platform mapping) reached `act` on the MCP surface; that this executes workflow steps on the host is unverified (no `act` on the verification host), and the gate does not depend on it. A `requiredChecks` entry of `ci-simulation` is unmet while skipped. The CLI is unchanged (task 87b835ad).
+
 ### Fixed
 
 - MCP: with the shell-execution gate closed, a malformed `commands` value in the repo config (a non-array `commands.<kind>`, an array with a malformed entry such as `{"lint": [5]}`, or an unrecognized key in `commands`) is no longer dropped or reported as `skip` with `ready: true`. It stays in the gated config and is reported as a `<kind>:configuration` failure exactly like the CLI, so readiness is false; nothing executes (task 47223fad). Well-formed commands are still skipped.
