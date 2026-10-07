@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 
+- **`@modelcontextprotocol/sdk` 1.32.1** (GHSA-6qxp-vccf-f47h, task aff72e2b): the lockfile resolves 1.32.1 and the dependency range is now `^1.32.1`, so consumers cannot resolve an affected version. Since 1.30.1 the SDK's HTTP server transports apply a 4 MiB default request-body limit and a 100-message batch cap.
 - MCP: CI simulation (`checks.ciSimulation` from the repo config, or the caller's `ciSimulation` argument) is now behind the same shell-execution gate as `customChecks` and `commands.*`. While `PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS` is not exactly `1`, `act` is not run and the repo's `actFlags` are ignored: the run reports an `act-dry-run` check with status `skip` (message names the variable) and one `limitations` line. Previously a hostile `actFlags` (for example a later `--dryrun=false` with a self-hosted platform mapping) reached `act` on the MCP surface; that this executes workflow steps on the host is unverified (no `act` on the verification host), and the gate does not depend on it. A `requiredChecks` entry of `ci-simulation` is unmet while skipped. The CLI is unchanged (task 87b835ad).
 
 ### Fixed
