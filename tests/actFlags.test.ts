@@ -55,7 +55,20 @@ describe("findUnsafeActFlag: non-ASCII platform values", () => {
     const message = findUnsafeActFlag(flags);
     expect(message).toBeDefined();
     expect(message).toContain("CI simulation refused");
-    expect(message).toContain("non-ASCII");
+    expect(message).toContain("only ASCII characters are accepted");
+  });
+
+  it.each<[string, string[], string]>([
+    ["a non-ASCII image", ["-P", "ubuntu-22.04=caf\u00e9:1"], '"-P ubuntu-22.04=caf\u00e9:1"'],
+    ["a non-ASCII label", ["--platform", "caf\u00e9=node:22-slim"], '"--platform caf\u00e9=node:22-slim"'],
+  ])("pins the full message for %s", (_label, flags, shownEntry) => {
+    expect(findUnsafeActFlag(flags)).toBe(
+      `CI simulation refused: actFlags entry ${shownEntry} is not allowed because ` +
+        "only ASCII characters are accepted in a <label>=<image> platform mapping argument, label included: " +
+        "act compares the value with -self-hosted using Unicode case folding (U+017F matches s), " +
+        "and Docker image references are ASCII-only. " +
+        "Remove it from actFlags in the config; container platform mappings stay allowed.",
+    );
   });
 
   it("keeps the ASCII container mappings accepted", () => {

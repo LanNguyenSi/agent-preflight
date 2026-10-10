@@ -63,7 +63,7 @@ function shown(text: string): string {
 const SELF_HOSTED_REASON =
   "a self-hosted platform mapping (a value ending in -self-hosted) makes act run workflow steps on this host";
 const NON_ASCII_REASON =
-  "a platform mapping value with a non-ASCII character is refused: act compares the value with -self-hosted using Unicode case folding (U+017F matches s), and Docker image references are ASCII-only";
+  "only ASCII characters are accepted in a <label>=<image> platform mapping argument, label included: act compares the value with -self-hosted using Unicode case folding (U+017F matches s), and Docker image references are ASCII-only";
 const DRYRUN_REASON = "a --dryrun override makes act create job containers and run workflow steps";
 
 /**
