@@ -103,10 +103,13 @@ export function stripShellExecution(config: PreflightConfig): {
         ]
       : [];
 
-  // CI simulation runs `act` with repo-supplied `actFlags` (a later
-  // `--dryrun=false` would override the leading `--dryrun`) and act also reads
-  // an `.actrc` from the repo, so with the gate closed it is not run at all.
-  // Dropping only `actFlags` would leave the `.actrc` path open.
+  // CI simulation runs `act` with repo-supplied `actFlags`, and act also reads
+  // an `.actrc` from the repo. A self-hosted platform mapping
+  // (`-P <label>=-self-hosted`) from either source makes act run the steps on
+  // the host even under the leading `--dryrun`; `--dryrun=false` together with
+  // a container platform runs them in a job container with the host Docker
+  // socket. With the gate closed `act` is not run at all: dropping only
+  // `actFlags` would leave the `.actrc` path open.
   if (config.checks?.ciSimulation === true) {
     skipped.push(skippedResult("act-dry-run", "ci-simulation", CI_SIMULATION_SKIPPED_MESSAGE));
     limitations.push(

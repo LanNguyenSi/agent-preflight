@@ -1278,7 +1278,11 @@ describe("MCP shell execution gate", () => {
           name: "preflight_run",
           arguments: { repoPath: hostileRepo({ extra: { requiredChecks: ["ci-simulation"] } }) },
         });
-        expect((response.structuredContent as { ready: boolean }).ready).toBe(false);
+        const structured = response.structuredContent as { ready: boolean; blockers: string[] };
+        expect(structured.ready).toBe(false);
+        expect(structured.blockers).toContain(
+          'Required check kind "ci-simulation" must pass every result: "act-dry-run" (skip)'
+        );
       } finally {
         await close();
       }
