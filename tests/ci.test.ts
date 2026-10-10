@@ -246,7 +246,7 @@ function pendingSubprocess(extra: Record<string, unknown> = {}) {
   return { subprocess: Object.assign(promise, extra), finish };
 }
 
-describe("runCiSimulation — timers and process hooks", () => {
+describe("runCiSimulation: timers and process hooks", () => {
   it("starts act detached so the timeout can signal its whole process group", async () => {
     const dir = makeRepoWithWorkflows();
     mockExeca.mockResolvedValue({ exitCode: 0, all: "" });
@@ -361,5 +361,97 @@ describe("runCiSimulation — timers and process hooks", () => {
 
     expect(result.checks[0].status).toBe("fail");
     expect(result.checks[0].message).toContain("timed out");
+  });
+
+  it("applies a 120 s default timeout when no timeoutMs is given", async () => {
+    vi.useFakeTimers();
+    const dir = makeRepoWithWorkflows();
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const { subprocess, finish } = pendingSubprocess({ pid: 4242, kill: vi.fn() });
+    mockExeca.mockReturnValue(subprocess);
+
+    const run = runCiSimulation(dir);
+    await vi.advanceTimersByTimeAsync(119_999);
+    expect(kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(kill).toHaveBeenCalledWith(-4242, "SIGKILL");
+    finish({ exitCode: 1, all: "" });
+    await run;
+  });
+
+  it("signals nothing when the subprocess has no pid", async () => {
+    vi.useFakeTimers();
+    const dir = makeRepoWithWorkflows();
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const directKill = vi.fn();
+    const { subprocess, finish } = pendingSubprocess({ kill: directKill });
+    mockExeca.mockReturnValue(subprocess);
+
+    const run = runCiSimulation(dir, [], { timeoutMs: 1000 });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(kill).not.toHaveBeenCalled();
+    expect(directKill).not.toHaveBeenCalled();
+    finish({ exitCode: 1, all: "" });
+    await run;
+  });
+
+  it("survives a direct kill that throws after the group kill threw", async () => {
+    vi.useFakeTimers();
+    const dir = makeRepoWithWorkflows();
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("no such process group"), { code: "ESRCH" });
+    });
+    const directKill = vi.fn(() => {
+      throw Object.assign(new Error("no such process"), { code: "ESRCH" });
+    });
+    const { subprocess, finish } = pendingSubprocess({ pid: 4242, kill: directKill });
+    mockExeca.mockReturnValue(subprocess);
+
+    const run = runCiSimulation(dir, [], { timeoutMs: 1000 });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(directKill).toHaveBeenCalledWith("SIGKILL");
+    finish({ exitCode: 1, all: "" });
+    const result = await run;
+
+    expect(result.checks[0].message).toContain("timed out");
+  });
+
+  it("does not throw when the subprocess exposes no output streams at the grace deadline", async () => {
+    vi.useFakeTimers();
+    const dir = makeRepoWithWorkflows();
+    vi.spyOn(process, "kill").mockImplementation(() => true);
+    const { subprocess, finish } = pendingSubprocess({ pid: 4242, kill: vi.fn() });
+    mockExeca.mockReturnValue(subprocess);
+
+    const run = runCiSimulation(dir, [], { timeoutMs: 1000 });
+    await vi.advanceTimersByTimeAsync(3000);
+    finish({ exitCode: 1, all: "" });
+    const result = await run;
+
+    expect(result.checks[0].message).toContain("timed out");
+  });
+
+  it("reports the not-installed limitation when execa throws ENOENT synchronously", async () => {
+    const dir = makeRepoWithWorkflows();
+    mockExeca.mockImplementation(() => {
+      throw Object.assign(new Error("spawn act ENOENT"), { code: "ENOENT" });
+    });
+
+    const result = await runCiSimulation(dir);
+
+    expect(result.checks).toHaveLength(0);
+    expect(result.limitations).toEqual([expect.stringContaining("act not installed")]);
+  });
+
+  it("reports a failing check when execa throws a non-ENOENT error synchronously", async () => {
+    const dir = makeRepoWithWorkflows();
+    mockExeca.mockImplementation(() => {
+      throw new Error("bad options");
+    });
+
+    const result = await runCiSimulation(dir);
+
+    expect(result.checks[0].status).toBe("fail");
+    expect(result.checks[0].message).toBe("act failed: bad options");
   });
 });

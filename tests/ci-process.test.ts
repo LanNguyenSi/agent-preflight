@@ -162,7 +162,10 @@ describe("runCiSimulation when preflight itself is terminated", () => {
 
   // A parent process that runs the check against a stub act, then dies as the
   // test directs. ts-node loads the TypeScript source; the resolver hook maps
-  // the ".js" specifiers of the sources to their ".ts" files.
+  // the ".js" specifiers of the sources to their ".ts" files. A timer keeps the
+  // process alive after the check settles, so a signal ends it only when the
+  // check's hook re-raises that signal, and "exit" and "listener" end it only
+  // when the test creates the go file.
   const harness = `
 const Module = require("module");
 const orig = Module._resolveFilename;
@@ -175,21 +178,35 @@ Module._resolveFilename = function (request, ...rest) {
 require(process.argv[2]).register({ transpileOnly: true, compilerOptions: { module: "commonjs" } });
 const { runCiSimulation } = require(process.argv[3]);
 const fs = require("fs");
-const exitWhenActRuns = process.argv[5] === "exit";
-runCiSimulation(process.argv[4], [], { timeoutMs: 120000 }).then(() => {});
-if (exitWhenActRuns) {
-  // The test creates this file once it has seen act running.
-  setInterval(() => {
-    if (fs.existsSync(process.argv[6])) process.exit(3);
-  }, 20);
+const [mode, goFile, markerFile] = process.argv.slice(5);
+if (mode === "listener") {
+  // The host handles SIGTERM itself, so the check must not re-raise it: one
+  // "x" per delivery, and a re-raise would deliver the signal a second time.
+  process.on("SIGTERM", () => fs.appendFileSync(markerFile, "x"));
 }
+runCiSimulation(process.argv[4], [], { timeoutMs: 120000 }).then(() => {});
+setInterval(() => {
+  if (mode !== "wait" && fs.existsSync(goFile)) process.exit(3);
+}, 20);
 `;
 
-  async function runScenario(end: NodeJS.Signals | "exit"): Promise<void> {
+  interface ParentEnd {
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }
+
+  type Scenario =
+    | { mode: "wait"; signal: NodeJS.Signals }
+    | { mode: "exit" }
+    | { mode: "listener"; signal: "SIGTERM" };
+
+  /** Runs the harness against a stub act, ends it as directed, and returns how it ended. */
+  async function runScenario(scenario: Scenario): Promise<ParentEnd & { listenerCalls: number }> {
     const binDir = makeTempDir("preflight-ci-bin-");
     const actPidFile = path.join(binDir, "act.pid");
     const childPidFile = path.join(binDir, "child.pid");
     const goFile = path.join(binDir, "go");
+    const markerFile = path.join(binDir, "listener.ran");
     // act and a sleeper that holds act's output pipe, like a job container.
     fs.writeFileSync(
       path.join(binDir, "act"),
@@ -201,17 +218,14 @@ if (exitWhenActRuns) {
 
     const parent = spawn(
       process.execPath,
-      [
-        harnessFile,
-        tsNode,
-        ciSource,
-        makeRepo(),
-        end === "exit" ? "exit" : "wait",
-        goFile,
-      ],
+      [harnessFile, tsNode, ciSource, makeRepo(), scenario.mode, goFile, markerFile],
       { env: { ...process.env, PATH: `${binDir}${path.delimiter}${originalPath}` }, stdio: "ignore" }
     );
-    const parentExited = new Promise<void>((resolve) => parent.once("exit", () => resolve()));
+    const parentEnd = new Promise<ParentEnd | null>((resolve) => {
+      parent.once("exit", (code, signal) => resolve({ code, signal }));
+      // A parent that is still alive after the bound did not end as it should.
+      setTimeout(() => resolve(null), 10_000).unref();
+    });
     try {
       expect(await waitFor(() => readPid(actPidFile) > 0 && readPid(childPidFile) > 0, 15_000)).toBe(true);
       const actPid = readPid(actPidFile);
@@ -219,21 +233,48 @@ if (exitWhenActRuns) {
       expect(isAlive(actPid)).toBe(true);
       expect(isAlive(childPid)).toBe(true);
 
-      if (end === "exit") fs.writeFileSync(goFile, "");
-      else parent.kill(end);
-      await parentExited;
+      if (scenario.mode === "exit") {
+        fs.writeFileSync(goFile, "");
+      } else {
+        parent.kill(scenario.signal);
+        if (scenario.mode === "listener") {
+          expect(await waitFor(() => fs.existsSync(markerFile), 5000)).toBe(true);
+        }
+      }
+      if (scenario.mode === "listener") {
+        // The check's hook has handled the signal without ending the host.
+        expect(await waitFor(() => !isAlive(actPid) && !isAlive(childPid), 5000)).toBe(true);
+        expect(parent.exitCode === null && parent.signalCode === null).toBe(true);
+        fs.writeFileSync(goFile, "");
+      }
 
+      const end = await parentEnd;
+      expect(end, "the parent did not end").not.toBeNull();
       expect(await waitFor(() => !isAlive(actPid) && !isAlive(childPid), 5000)).toBe(true);
+      const marker = fs.existsSync(markerFile) ? fs.readFileSync(markerFile, "utf8") : "";
+      return { ...(end as ParentEnd), listenerCalls: marker.length };
     } finally {
       if (parent.exitCode === null && parent.signalCode === null) parent.kill("SIGKILL");
     }
   }
 
-  it.each<NodeJS.Signals>(["SIGTERM", "SIGINT"])("stops act and its descendants when the parent receives %s", async (signal) => {
-    await runScenario(signal);
-  }, 30_000);
+  it.each<NodeJS.Signals>(["SIGTERM", "SIGINT", "SIGHUP"])(
+    "stops act and its descendants and still dies by %s when the parent receives it",
+    async (signal) => {
+      const end = await runScenario({ mode: "wait", signal });
+      expect(end.signal).toBe(signal);
+      expect(end.code).toBeNull();
+    },
+    30_000
+  );
 
   it("stops act and its descendants when the parent exits normally while act runs", async () => {
-    await runScenario("exit");
+    const end = await runScenario({ mode: "exit" });
+    expect(end).toMatchObject({ code: 3, signal: null });
+  }, 30_000);
+
+  it("stops act's group but leaves the host alive when the host has its own SIGTERM listener", async () => {
+    const end = await runScenario({ mode: "listener", signal: "SIGTERM" });
+    expect(end).toMatchObject({ code: 3, signal: null, listenerCalls: 1 });
   }, 30_000);
 });
