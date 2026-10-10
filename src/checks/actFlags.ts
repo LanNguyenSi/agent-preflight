@@ -7,6 +7,9 @@
  *  - a dry-run override (`--dryrun=false` and every other spelling act's flag
  *    parser reads as false), which makes act create job containers and run the
  *    steps in them.
+ * A platform mapping with any non-ASCII character is refused as well, because
+ * act's Unicode case folding can match it to `-self-hosted` (see
+ * platformValueProblem).
  * The scanner is deliberately conservative: it inspects every token on its own,
  * including a token that act would consume as the value of a preceding flag, so
  * an ambiguous spelling is refused rather than guessed at.
@@ -25,15 +28,6 @@ const BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
 const SELF_HOSTED_SUFFIX = "-self-hosted";
 
-/**
- * act compares the platform value with `-self-hosted` through Go's
- * strings.EqualFold, which folds some non-ASCII characters onto ASCII letters
- * (U+017F LATIN SMALL LETTER LONG S matches `s`), so an ASCII-only suffix
- * compare is not enough. One conservative rule covers both: a value that ends
- * in `-self-hosted` when compared as ASCII ignoring case, or any value that
- * contains a non-ASCII character (Docker image references are ASCII-only), is
- * refused.
- */
 function hasNonAscii(value: string): boolean {
   for (let i = 0; i < value.length; i++) {
     if (value.charCodeAt(i) > 0x7f) return true;
@@ -41,6 +35,15 @@ function hasNonAscii(value: string): boolean {
   return false;
 }
 
+/**
+ * act compares the platform value with `-self-hosted` through Go's
+ * strings.EqualFold, which folds some non-ASCII characters onto ASCII letters
+ * (U+017F LATIN SMALL LETTER LONG S matches `s`), so an ASCII-only suffix
+ * compare is not enough. One conservative rule covers both: a `<label>=<image>`
+ * argument that ends in `-self-hosted` when compared as ASCII ignoring case, or
+ * that contains a non-ASCII character anywhere (the label included; Docker
+ * image references are ASCII-only), is refused.
+ */
 function platformValueProblem(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   if (hasNonAscii(value)) return NON_ASCII_REASON;
@@ -65,8 +68,8 @@ const DRYRUN_REASON = "a --dryrun override makes act create job containers and r
 
 /**
  * Returns the refusal message for the first unsafe entry in `actFlags`, or
- * undefined when none of the entries is a self-hosted mapping or a dry-run
- * override.
+ * undefined when none of the entries is a self-hosted mapping, a platform
+ * mapping with a non-ASCII character, or a dry-run override.
  */
 export function findUnsafeActFlag(actFlags: readonly string[]): string | undefined {
   for (let i = 0; i < actFlags.length; i++) {

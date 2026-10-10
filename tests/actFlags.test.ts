@@ -35,7 +35,8 @@ describe("findUnsafeActFlag: self-hosted platform mappings", () => {
 
 describe("findUnsafeActFlag: non-ASCII platform values", () => {
   // act folds U+017F (long s) onto s when it compares a platform value with
-  // -self-hosted, so these run steps on the host although an ASCII compare misses them.
+  // -self-hosted, so the long-s rows run steps on the host although an ASCII
+  // compare misses them; the other rows pin that any non-ASCII character is refused.
   const longS = "\u017f";
   const kelvin = "\u212a";
   it.each<[string, string[]]>([
