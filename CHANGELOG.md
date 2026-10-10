@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- CI simulation: a timed-out `act` run no longer leaves descendants behind (act runs in its own process group and the timeout kills the whole group), and the timed-out check says so. A missing `act` binary is reported as the "act not installed" limitation instead of a failed `act-dry-run` check (task 599101dd).
 - MCP: with the shell-execution gate closed, a malformed `commands` value in the repo config (a non-array `commands.<kind>`, an array with a malformed entry such as `{"lint": [5]}`, or an unrecognized key in `commands`) is no longer dropped or reported as `skip` with `ready: true`. It stays in the gated config and is reported as a `<kind>:configuration` failure exactly like the CLI, so readiness is false; nothing executes (task 47223fad). Well-formed commands are still skipped.
 
 ### Docs
