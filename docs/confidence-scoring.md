@@ -41,7 +41,7 @@ If no checks run, the score is 0.
 | Git state, protected branch | 0.05 |
 | Commit convention | 0.05 |
 
-CI simulation carries the highest single weight because the `act --dryrun` plan validation spans the entire workflow set (jobs, steps, and runner images) rather than a single tool, even though it only checks the plan and does not execute the steps.
+CI simulation carries the highest single weight because the `act --dryrun` plan validation spans the entire workflow set (jobs, steps, and runner images) rather than a single tool, even though under the default flags it only checks the plan; a repo-supplied platform mapping can make `act` execute the steps (see [checks.md](./checks.md#custom-checks)).
 
 ## Why deterministic, not LLM-scored
 
