@@ -1,0 +1,4 @@
+# Used by the workflow-guard job. The test fixtures carry deliberately old
+# workflow files that are test input, not this repository's CI.
+ignorePaths:
+  - "tests/fixtures/**"

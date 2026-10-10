@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The CI simulation refusal for a platform mapping with a non-ASCII character now reads as one sentence naming the whole `<label>=<image>` argument, the ASCII-only rule and its reason, instead of repeating "refused" (task f06ee007).
 - MCP: with the shell-execution gate closed, a malformed `commands` value in the repo config (a non-array `commands.<kind>`, an array with a malformed entry such as `{"lint": [5]}`, or an unrecognized key in `commands`) is no longer dropped or reported as `skip` with `ready: true`. It stays in the gated config and is reported as a `<kind>:configuration` failure exactly like the CLI, so readiness is false; nothing executes (task 47223fad). Well-formed commands are still skipped.
 
+### CI
+
+- A `workflow-guard` workflow runs the agent-dx workflow-slop pack against `.github/workflows/` through the reusable workflow, pinned to a commit SHA (task a17055cc). CI only; no package code change.
+
 ### Docs
 
 - The Sandbox chapter of `docs/architecture.md` now states that the sandbox is not an isolation boundary and lists what `src/sandbox.ts` mounts (writable workspace, writable package caches, and the host Docker socket with `--docker-socket`); the README feature lines that mention the `act` CI dry-run link to the CI-simulation security note (task 4eab4ff6).
