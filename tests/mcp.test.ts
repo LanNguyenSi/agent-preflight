@@ -1191,7 +1191,7 @@ describe("MCP shell execution gate", () => {
       const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-act-stub-"));
       dirs.push(binDir);
       const argvLog = path.join(binDir, "argv.log");
-      fs.writeFileSync(path.join(binDir, "act"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvLog}"\nexit 0\n`, { mode: 0o755 });
+      fs.writeFileSync(path.join(binDir, "act"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvLog}"\necho "PWD=$(pwd -P)" >> "${argvLog}"\nif [ -e .actrc ]; then echo ACTRC_IN_CWD >> "${argvLog}"; fi\nexit 0\n`, { mode: 0o755 });
       vi.stubEnv("PATH", `${binDir}${path.delimiter}${process.env.PATH ?? ""}`);
       return { binDir, argvLog };
     }
@@ -1300,12 +1300,44 @@ describe("MCP shell execution gate", () => {
       expect(structured.checks.find((c) => c.kind === "ci-simulation")?.status).toBe("skip");
     });
 
-    it("passes the repo actFlags to act only when the gate is open (control)", async () => {
+    it("passes benign repo actFlags to act when the gate is open (control)", async () => {
       vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "1");
       const { argvLog } = stubAct();
-      const structured = await run(hostileRepo());
-      expect(fs.readFileSync(argvLog, "utf8")).toContain("--dryrun=false");
+      const repoPath = hostileRepo({ hostileFlags: false, extra: { actFlags: ["-P", "ubuntu-latest=node:22-slim"] } });
+      const structured = await run(repoPath);
+      const argv = fs.readFileSync(argvLog, "utf8").split("\n");
+      expect(argv).toContain("ubuntu-latest=node:22-slim");
       expect(structured.checks.find((c) => c.kind === "ci-simulation")?.status).toBe("pass");
+    });
+
+    it("refuses hostile repo actFlags even when the gate is open: act is not started and readiness is false", async () => {
+      vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "1");
+      const { argvLog } = stubAct();
+      const { client, close } = await connectedClient();
+      try {
+        const response = await client.callTool({ name: "preflight_run", arguments: { repoPath: hostileRepo() } });
+        const structured = response.structuredContent as { ready: boolean; blockers: string[]; checks: RunChecks };
+        expect(fs.existsSync(argvLog)).toBe(false);
+        expect(structured.checks.find((c) => c.kind === "ci-simulation")?.status).toBe("fail");
+        expect(structured.ready).toBe(false);
+        expect(structured.blockers.some((b) => b.includes("CI simulation refused") && b.includes("--dryrun=false"))).toBe(true);
+      } finally {
+        await close();
+      }
+    });
+
+    it("does not let a repo .actrc into act's working directory when the gate is open", async () => {
+      vi.stubEnv("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS", "1");
+      const { argvLog } = stubAct();
+      const repoPath = hostileRepo({ hostileFlags: false, actrc: true });
+      const structured = await run(repoPath);
+      const argv = fs.readFileSync(argvLog, "utf8").split("\n");
+      expect(argv[argv.indexOf("-C") + 1]).toBe(repoPath);
+      expect(argv).not.toContain("ACTRC_IN_CWD");
+      expect(argv).not.toContain(`PWD=${fs.realpathSync(repoPath)}`);
+      expect(argv.some((line) => line.startsWith("PWD="))).toBe(true);
+      expect(structured.checks.find((c) => c.kind === "ci-simulation")?.status).toBe("pass");
+      expect(structured.limitations.some((l) => l.includes(".actrc") && l.includes("not read"))).toBe(true);
     });
   });
 

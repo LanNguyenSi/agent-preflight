@@ -82,7 +82,7 @@ describe("runCiSimulation — act exits 0", () => {
     expect(result.limitations.some((l) => l.includes("act simulation"))).toBe(true);
   });
 
-  it("calls execa with act --dryrun --json in the repo cwd", async () => {
+  it("calls execa with act --dryrun --json, the repo as -C, and a neutral cwd", async () => {
     const dir = makeRepoWithWorkflows();
     mockExeca.mockResolvedValue({ exitCode: 0, all: "" });
 
@@ -91,10 +91,92 @@ describe("runCiSimulation — act exits 0", () => {
     expect(mockExeca).toHaveBeenCalledOnce();
     const [cmd, args, opts] = mockExeca.mock.calls[0];
     expect(cmd).toBe("act");
-    expect(args).toContain("--dryrun");
-    expect(args).toContain("--json");
+    expect(args.slice(0, 2)).toEqual(["--dryrun", "--json"]);
     expect(args).toContain("--platform");
-    expect(opts.cwd).toBe(dir);
+    expect(args.slice(-2)).toEqual(["-C", dir]);
+    // act reads .actrc from its working directory, which must not be the repo.
+    expect(opts.cwd).not.toBe(dir);
+    expect(fs.existsSync(opts.cwd)).toBe(false);
+  });
+
+  it("runs act from an empty directory that exists during the call and is removed afterwards", async () => {
+    const dir = makeRepoWithWorkflows({ ".actrc": "-P ubuntu-latest=-self-hosted\n" });
+    let seenCwd = "";
+    let entriesDuringCall: string[] = [];
+    mockExeca.mockImplementation(async (_cmd: string, _args: string[], opts: { cwd: string }) => {
+      seenCwd = opts.cwd;
+      entriesDuringCall = fs.readdirSync(opts.cwd);
+      return { exitCode: 0, all: "" };
+    });
+
+    await runCiSimulation(dir);
+
+    expect(entriesDuringCall).toEqual([]);
+    expect(path.resolve(seenCwd)).not.toBe(path.resolve(dir));
+    expect(fs.existsSync(seenCwd)).toBe(false);
+  });
+
+  it("reports that the repo's .actrc is not read when the file exists", async () => {
+    const dir = makeRepoWithWorkflows({ ".actrc": "-P ubuntu-latest=-self-hosted\n" });
+    mockExeca.mockResolvedValue({ exitCode: 0, all: "" });
+
+    const result = await runCiSimulation(dir);
+
+    expect(result.limitations.some((l) => l.includes(".actrc") && l.includes("not read"))).toBe(true);
+  });
+
+  it("does not mention .actrc when the repo has none", async () => {
+    const dir = makeRepoWithWorkflows();
+    mockExeca.mockResolvedValue({ exitCode: 0, all: "" });
+
+    const result = await runCiSimulation(dir);
+
+    expect(result.limitations.some((l) => l.includes(".actrc"))).toBe(false);
+  });
+
+  it("still passes a container platform mapping through to act", async () => {
+    const dir = makeRepoWithWorkflows();
+    mockExeca.mockResolvedValue({ exitCode: 0, all: "" });
+
+    const result = await runCiSimulation(dir, ["-P", "ubuntu-22.04=node:22-slim", "--pull=false"]);
+
+    expect(result.checks[0].status).toBe("pass");
+    const [, args] = mockExeca.mock.calls[0];
+    expect(args).toEqual(["--dryrun", "--json", "-P", "ubuntu-22.04=node:22-slim", "--pull=false", "-C", dir]);
+  });
+});
+
+describe("runCiSimulation — refuses actFlags that execute steps", () => {
+  it.each<[string, string[]]>([
+    ["-P self-hosted", ["-P", "ubuntu-latest=-self-hosted"]],
+    ["--platform self-hosted", ["--platform", "ubuntu-22.04=-self-hosted"]],
+    ["--platform=self-hosted", ["--platform=ubuntu-22.04=-self-hosted"]],
+    ["-P=self-hosted", ["-P=ubuntu-22.04=-self-hosted"]],
+    ["attached -Pvalue", ["-Pubuntu-22.04=-self-hosted"]],
+    ["--dryrun=false", ["--dryrun=false"]],
+    ["--dryrun=0", ["--dryrun=0"]],
+    ["-n=false", ["-n=false"]],
+    ["-bn=false", ["-bn=false"]],
+    ["the default mapping plus --dryrun=false", ["--platform", "ubuntu-latest=catthehacker/ubuntu:act-latest", "--dryrun=false"]],
+  ])("does not start act for %s and reports a failing check", async (_label, flags) => {
+    const dir = makeRepoWithWorkflows();
+
+    const result = await runCiSimulation(dir, flags);
+
+    expect(mockExeca).not.toHaveBeenCalled();
+    expect(result.checks).toHaveLength(1);
+    expect(result.checks[0].name).toBe("act-dry-run");
+    expect(result.checks[0].kind).toBe("ci-simulation");
+    expect(result.checks[0].status).toBe("fail");
+    expect(result.checks[0].message).toContain("CI simulation refused: actFlags entry");
+  });
+
+  it("names the offending flag in the blocker message", async () => {
+    const dir = makeRepoWithWorkflows();
+
+    const result = await runCiSimulation(dir, ["--pull=false", "--dryrun=false"]);
+
+    expect(result.checks[0].message).toContain('"--dryrun=false"');
   });
 });
 
