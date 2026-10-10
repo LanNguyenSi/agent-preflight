@@ -178,7 +178,8 @@ const fs = require("fs");
 const exitWhenActRuns = process.argv[5] === "exit";
 runCiSimulation(process.argv[4], [], { timeoutMs: 120000 }).then(() => {});
 if (exitWhenActRuns) {
-  const timer = setInterval(() => {
+  // The test creates this file once it has seen act running.
+  setInterval(() => {
     if (fs.existsSync(process.argv[6])) process.exit(3);
   }, 20);
 }
@@ -188,6 +189,7 @@ if (exitWhenActRuns) {
     const binDir = makeTempDir("preflight-ci-bin-");
     const actPidFile = path.join(binDir, "act.pid");
     const childPidFile = path.join(binDir, "child.pid");
+    const goFile = path.join(binDir, "go");
     // act and a sleeper that holds act's output pipe, like a job container.
     fs.writeFileSync(
       path.join(binDir, "act"),
@@ -205,7 +207,7 @@ if (exitWhenActRuns) {
         ciSource,
         makeRepo(),
         end === "exit" ? "exit" : "wait",
-        childPidFile,
+        goFile,
       ],
       { env: { ...process.env, PATH: `${binDir}${path.delimiter}${originalPath}` }, stdio: "ignore" }
     );
@@ -217,7 +219,8 @@ if (exitWhenActRuns) {
       expect(isAlive(actPid)).toBe(true);
       expect(isAlive(childPid)).toBe(true);
 
-      if (end !== "exit") parent.kill(end);
+      if (end === "exit") fs.writeFileSync(goFile, "");
+      else parent.kill(end);
       await parentExited;
 
       expect(await waitFor(() => !isAlive(actPid) && !isAlive(childPid), 5000)).toBe(true);
