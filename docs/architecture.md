@@ -130,6 +130,14 @@ In sandbox mode the act invocation runs inside the container. `--docker-socket` 
 
 The fingerprint determines the local image tag (default `agent-preflight:local`), which lets switching between repos pick up different prepared images automatically. `.preflight.json` extras (`sandbox.aptPackages`, `sandbox.pipPackages`) are merged into the build. `--print` shows the resolved docker command without running it. `--build` and `--pull` force the image to refresh.
 
+The sandbox is not an isolation boundary: it is a Docker container that runs `preflight run` over a bind-mounted copy of your working tree. What the container can reach follows from `buildDockerRunCommand` and `getCacheMounts` in `src/sandbox.ts`:
+
+- The workspace (`repoPath`) is mounted at `/workspace` with `-v <workspace>:/workspace`, without a read-only option, so the container can modify the host files in it.
+- The package caches `~/.npm`, `~/.cache/pip`, `~/.cache/composer`, `~/.m2` and `~/.gradle` are mounted into `/root/...` the same way, writable, for each one that exists on the host.
+- With `--docker-socket`, `/var/run/docker.sock` is mounted into the container (`createSandboxPlan` fails with an error when that path does not exist on the host). A process in the container that can use that socket can drive the host Docker daemon. The shipped skill templates under `templates/skills/*/references/runtime-decision.md` use `--docker-socket` for CI simulation.
+
+The security note for CI simulation, including what it refuses and the measured cases, is in [checks.md](./checks.md#custom-checks).
+
 ## Batch mode
 
 `preflight batch [root]` walks the immediate children of `root`, picks the ones that are git repos, and runs the single-repo path against each. `--only` and `--exclude` accept glob patterns (matched against the directory name). Output aggregates into a per-repo summary plus counts (`ready`, `notReady`, `skipped`). Inspired by [`git-batch-cli`](https://github.com/LanNguyenSi/agent-dx/tree/master/packages/git-batch-cli).
