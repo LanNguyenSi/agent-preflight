@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Docs
 
 - The Sandbox chapter of `docs/architecture.md` now states that the sandbox is not an isolation boundary and lists what `src/sandbox.ts` mounts (writable workspace, writable package caches, and the host Docker socket with `--docker-socket`); the README feature lines that mention the `act` CI dry-run link to the CI-simulation security note (task 4eab4ff6).
+- The README overview, feature and usage lines no longer describe the `act` dry run as validating the workflow plan; they say it can still execute workflow steps and point at the security note. The `runtime-decision.md` references of the three skill templates recommend `--docker-socket --ci-simulation` only for trusted repositories, with a link to that note (task 78b68aaa).
 
 ## [0.11.0] - 2026-10-05
 
