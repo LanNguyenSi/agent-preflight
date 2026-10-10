@@ -6,12 +6,12 @@ Validate your repo locally before pushing, with a confidence score an agent can 
 
 ## Overview
 
-agent-preflight runs lint, typecheck, test, dependency audit, secret detection, commit-convention, and (optionally) an `act`-based CI dry-run that validates your GitHub Actions workflow plan against your working tree (it runs `act` against repository-controlled configuration; see the [security note](docs/checks.md#custom-checks)), then returns a structured result with a confidence score between 0 and 1. It exists to break the "change, push, wait for CI, fix, repeat" loop that AI agents run into when they cannot tell whether the pipeline will accept their work. Local validation, JSON output, deterministic scoring.
+agent-preflight runs lint, typecheck, test, dependency audit, secret detection, commit-convention, and (optionally) an `act`-based CI simulation (`act --dryrun` against your working tree, which runs `act` against repository-controlled configuration and can still execute workflow steps in the cases the [security note](docs/checks.md#custom-checks) lists), then returns a structured result with a confidence score between 0 and 1. It exists to break the "change, push, wait for CI, fix, repeat" loop that AI agents run into when they cannot tell whether the pipeline will accept their work. Local validation, JSON output, deterministic scoring.
 
 ## Key features
 
 - Lint, typecheck, test, dependency audit, secret detection, and commit-convention checks with auto-detected commands for Node, Python, PHP, and Java
-- Optional `act`-based CI dry-run that validates your GitHub Actions workflow plan; it runs `act` against repository-controlled configuration, see the [security note](docs/checks.md#custom-checks)
+- Optional `act`-based CI simulation (`act --dryrun`); it runs `act` against repository-controlled configuration and can still execute workflow steps in the cases the [security note](docs/checks.md#custom-checks) lists
 - A deterministic confidence score (0-1) instead of a plain pass/fail
 - Human-readable or `--json` output for direct agent consumption
 - An MCP server (`preflight-mcp`) exposing the same runner in-process
@@ -57,7 +57,7 @@ preflight run .
 ```bash
 preflight run                              # current dir
 preflight run ./my-project --json          # machine-readable
-preflight run --ci-simulation              # add act --dryrun CI plan validation (trusted repos only, see docs/checks.md#custom-checks)
+preflight run --ci-simulation              # add an act --dryrun CI simulation, which can still execute steps (trusted repos only, see docs/checks.md#custom-checks)
 preflight run . --config ../shared/preflight.json   # config file outside the repo
 preflight batch ~/git                      # every repo under a root
 preflight sandbox                          # run inside a docker image

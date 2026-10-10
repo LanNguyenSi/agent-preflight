@@ -34,6 +34,8 @@ For `act` inside the container:
 preflight sandbox . --docker-socket --ci-simulation --json
 ```
 
+Use `--docker-socket --ci-simulation` only on trusted repositories; see the [security note](https://github.com/LanNguyenSi/agent-preflight/blob/main/docs/checks.md#custom-checks).
+
 ## Reporting
 
 Always say whether the reported result came from:
