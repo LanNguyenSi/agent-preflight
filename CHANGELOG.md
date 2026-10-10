@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- CI simulation: a timed-out `act` run no longer leaves descendants behind (act runs in its own process group and the timeout kills the whole group), and the timed-out check says so, also when act exits 0 just as the timeout fires. The group is also killed when preflight exits or receives SIGINT, SIGTERM or SIGHUP while act runs (SIGKILL of preflight cannot be intercepted). Two seconds after the group kill the output streams are destroyed, so a descendant that left the group and holds act's pipes cannot keep the call waiting past the timeout; that descendant itself keeps running. A missing `act` binary is reported as the "act not installed" limitation instead of a failed `act-dry-run` check (task 599101dd).
 - The CI simulation refusal for a platform mapping with a non-ASCII character now reads as one sentence naming the whole `<label>=<image>` argument, the ASCII-only rule and its reason, instead of repeating "refused" (task f06ee007).
 - MCP: with the shell-execution gate closed, a malformed `commands` value in the repo config (a non-array `commands.<kind>`, an array with a malformed entry such as `{"lint": [5]}`, or an unrecognized key in `commands`) is no longer dropped or reported as `skip` with `ready: true`. It stays in the gated config and is reported as a `<kind>:configuration` failure exactly like the CLI, so readiness is false; nothing executes (task 47223fad). Well-formed commands are still skipped.
 

@@ -17,7 +17,7 @@ Check-specific descriptions below use the default gate unless stated otherwise. 
 | Secret detection | `secret-detection` | API keys, tokens, private keys in source files | regex scan, git-aware + diff-scoped severity | `fail` only when the current change introduced the secret; `warn` for pre-existing, docs, test-fixture, or non-git (gitignored files are not scanned inside a git work tree) |
 | Commit convention | `commit-convention` | Recent commit messages that do not follow conventional commits | `git log` | `warn` only |
 | TDD signal | `tdd` | `.ts`/`.js` source files changed on the branch without a paired test file (see [TDD signal: changed files](#tdd-signal-changed-files)) | `git diff`, filesystem scan | `warn` to nudge; `skip` with a limitation when files changed but none is a `.ts`/`.js` file, or when nothing was found and the diff range could not be determined; `pass` when nothing changed or only test files and exceptions changed; blocks only when `tdd` is required (then a `skip` also blocks, because it is not a `pass`); associates filenames only, it does not establish coverage or prove a TDD workflow |
-| CI simulation (opt-in) | `ci-simulation` | Workflow failures before push | `act` against `.github/workflows/` | `fail` when act exits non-zero |
+| CI simulation (opt-in) | `ci-simulation` | Workflow failures before push | `act` against `.github/workflows/` | `fail` when act exits non-zero or the run times out; a missing `act` is reported as a limitation |
 | Custom checks | `custom` | Anything you can express as a shell command | user-provided `command` | `fail` or `warn` per `failOnError` |
 
 ## Status semantics
