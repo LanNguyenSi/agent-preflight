@@ -29,9 +29,14 @@ RUN pip3 install --break-system-packages \
   ruff \
   $EXTRA_PIP_PACKAGES
 
-ARG ACT_VERSION=v0.2.82
-RUN curl -fsSL "https://github.com/nektos/act/releases/download/${ACT_VERSION}/act_Linux_x86_64.tar.gz" \
-  | tar -xz -C /usr/local/bin act \
+# ACT_SHA256 is the act_Linux_x86_64.tar.gz entry of the release's
+# checksums.txt; update both args together when bumping ACT_VERSION.
+ARG ACT_VERSION=v0.2.89
+ARG ACT_SHA256=0191d6f1f3b716b5c55820032605d05fc3c1cdbf581ebeff655019e5dd1524c0
+RUN curl -fsSL -o /tmp/act.tar.gz "https://github.com/nektos/act/releases/download/${ACT_VERSION}/act_Linux_x86_64.tar.gz" \
+  && echo "${ACT_SHA256}  /tmp/act.tar.gz" | sha256sum -c - \
+  && tar -xz -C /usr/local/bin -f /tmp/act.tar.gz act \
+  && rm /tmp/act.tar.gz \
   && chmod +x /usr/local/bin/act
 
 ARG SANDBOX_PROFILE=default
