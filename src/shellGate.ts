@@ -12,7 +12,7 @@ export const SHELL_SKIPPED_MESSAGE =
   "Skipped: shell commands from the repo config are disabled on the MCP surface; set PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1 in the MCP server environment to enable them";
 
 export const CI_SIMULATION_SKIPPED_MESSAGE =
-  "Skipped: CI simulation runs act with flags and an .actrc taken from the repo, so it is disabled on the MCP surface; set PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1 in the MCP server environment to enable it";
+  "Skipped: CI simulation runs act against flags and workflow files taken from the repo, so it is disabled on the MCP surface; set PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1 in the MCP server environment to enable it";
 
 const CONFIGURED_KINDS: ConfiguredCheckKind[] = ["lint", "typecheck", "test", "audit"];
 
@@ -103,13 +103,11 @@ export function stripShellExecution(config: PreflightConfig): {
         ]
       : [];
 
-  // CI simulation runs `act` with repo-supplied `actFlags`, and act also reads
-  // an `.actrc` from the repo. A self-hosted platform mapping
-  // (`-P <label>=-self-hosted`) from either source makes act run the steps on
-  // the host even under the leading `--dryrun`; `--dryrun=false` together with
-  // a container platform runs them in a job container with the host Docker
-  // socket. With the gate closed `act` is not run at all: dropping only
-  // `actFlags` would leave the `.actrc` path open.
+  // CI simulation runs `act` with repo-supplied `actFlags` against the repo's
+  // workflow files. With the gate closed `act` is not run at all, so none of
+  // that reaches it. (When the gate is open, CI simulation itself screens
+  // `actFlags` and keeps the repo's `.actrc` out by running act from a neutral
+  // working directory.)
   if (config.checks?.ciSimulation === true) {
     skipped.push(skippedResult("act-dry-run", "ci-simulation", CI_SIMULATION_SKIPPED_MESSAGE));
     limitations.push(

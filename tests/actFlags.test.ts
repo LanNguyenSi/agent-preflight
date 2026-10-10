@@ -33,6 +33,41 @@ describe("findUnsafeActFlag: self-hosted platform mappings", () => {
   });
 });
 
+describe("findUnsafeActFlag: non-ASCII platform values", () => {
+  // act folds U+017F (long s) onto s when it compares a platform value with
+  // -self-hosted, so these run steps on the host although an ASCII compare misses them.
+  const longS = "\u017f";
+  const kelvin = "\u212a";
+  it.each<[string, string[]]>([
+    ["long s, separate -P value", ["-P", `ubuntu-22.04=-${longS}elf-hosted`]],
+    ["long s, upper-case rest, separate -P value", ["-P", `ubuntu-22.04=-${longS}ELF-HO${longS}TED`]],
+    ["long s, --platform with a separate value", ["--platform", `ubuntu-22.04=-${longS}elf-hosted`]],
+    ["long s, --platform=value", [`--platform=ubuntu-22.04=-${longS}elf-hosted`]],
+    ["long s, attached -P", [`-Pubuntu-22.04=-${longS}elf-hosted`]],
+    ["long s, -P=value", [`-P=ubuntu-22.04=-${longS}elf-hosted`]],
+    ["kelvin sign in an image value, separate -P value", ["-P", `ubuntu-22.04=img${kelvin}:1`]],
+    ["kelvin sign, --platform=value", [`--platform=ubuntu-22.04=img${kelvin}:1`]],
+    ["kelvin sign, attached -P", [`-Pubuntu-22.04=img${kelvin}:1`]],
+    ["a non-ASCII image value", ["-P", "ubuntu-22.04=caf\u00e9:1"]],
+    ["a non-ASCII label", ["--platform", "caf\u00e9=node:22-slim"]],
+  ])("refuses %s", (_label, flags) => {
+    const message = findUnsafeActFlag(flags);
+    expect(message).toBeDefined();
+    expect(message).toContain("CI simulation refused");
+    expect(message).toContain("non-ASCII");
+  });
+
+  it("keeps the ASCII container mappings accepted", () => {
+    expect(findUnsafeActFlag(["-P", "ubuntu-22.04=node:22-slim", "--platform=b=img:2"])).toBeUndefined();
+  });
+
+  it("says the config, not only the repo config, in the refusal", () => {
+    const message = findUnsafeActFlag(["-P", "x=-self-hosted"]);
+    expect(message).toContain("actFlags in the config");
+    expect(message).not.toContain("repo config");
+  });
+});
+
 describe("findUnsafeActFlag: dry-run overrides", () => {
   it.each(["false", "0", "f", "F", "FALSE", "False", "no", ""])("refuses --dryrun=%j", (value) => {
     const message = findUnsafeActFlag([`--dryrun=${value}`]);

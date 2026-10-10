@@ -100,6 +100,9 @@ describe("stripShellExecution", () => {
       },
     ]);
     expect(CI_SIMULATION_SKIPPED_MESSAGE).toContain("PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1");
+    expect(CI_SIMULATION_SKIPPED_MESSAGE).toBe(
+      "Skipped: CI simulation runs act against flags and workflow files taken from the repo, so it is disabled on the MCP surface; set PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1 in the MCP server environment to enable it"
+    );
     expect(result.limitations.some((l) => l.includes("CI simulation was not run"))).toBe(true);
     expect(config).toEqual(clone);
   });

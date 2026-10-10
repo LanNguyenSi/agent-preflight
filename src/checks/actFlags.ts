@@ -25,8 +25,27 @@ const BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
 const SELF_HOSTED_SUFFIX = "-self-hosted";
 
-function isSelfHostedMapping(value: string | undefined): boolean {
-  return value !== undefined && value.toLowerCase().endsWith(SELF_HOSTED_SUFFIX);
+/**
+ * act compares the platform value with `-self-hosted` through Go's
+ * strings.EqualFold, which folds some non-ASCII characters onto ASCII letters
+ * (U+017F LATIN SMALL LETTER LONG S matches `s`), so an ASCII-only suffix
+ * compare is not enough. One conservative rule covers both: a value that ends
+ * in `-self-hosted` when compared as ASCII ignoring case, or any value that
+ * contains a non-ASCII character (Docker image references are ASCII-only), is
+ * refused.
+ */
+function hasNonAscii(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    if (value.charCodeAt(i) > 0x7f) return true;
+  }
+  return false;
+}
+
+function platformValueProblem(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (hasNonAscii(value)) return NON_ASCII_REASON;
+  if (value.toLowerCase().endsWith(SELF_HOSTED_SUFFIX)) return SELF_HOSTED_REASON;
+  return undefined;
 }
 
 function isDryrunOverride(value: string): boolean {
@@ -40,6 +59,8 @@ function shown(text: string): string {
 
 const SELF_HOSTED_REASON =
   "a self-hosted platform mapping (a value ending in -self-hosted) makes act run workflow steps on this host";
+const NON_ASCII_REASON =
+  "a platform mapping value with a non-ASCII character is refused: act compares the value with -self-hosted using Unicode case folding (U+017F matches s), and Docker image references are ASCII-only";
 const DRYRUN_REASON = "a --dryrun override makes act create job containers and run workflow steps";
 
 /**
@@ -62,8 +83,9 @@ export function findUnsafeActFlag(actFlags: readonly string[]): string | undefin
       }
       if (name === "platform") {
         const value = inline ?? next;
-        if (isSelfHostedMapping(value)) {
-          return refusal(inline === undefined ? `${token} ${next}` : token, SELF_HOSTED_REASON);
+        const problem = platformValueProblem(value);
+        if (problem !== undefined) {
+          return refusal(inline === undefined ? `${token} ${next}` : token, problem);
         }
       }
       continue;
@@ -83,8 +105,9 @@ export function findUnsafeActFlag(actFlags: readonly string[]): string | undefin
         if (SHORT_VALUE_FLAGS.has(flag)) {
           if (flag === "P") {
             const value = rest.startsWith("=") ? rest.slice(1) : rest.length > 0 ? rest : next;
-            if (isSelfHostedMapping(value)) {
-              return refusal(rest.length > 0 ? token : `${token} ${next}`, SELF_HOSTED_REASON);
+            const problem = platformValueProblem(value);
+            if (problem !== undefined) {
+              return refusal(rest.length > 0 ? token : `${token} ${next}`, problem);
             }
           }
           break;
@@ -99,6 +122,6 @@ export function findUnsafeActFlag(actFlags: readonly string[]): string | undefin
 function refusal(entry: string, reason: string): string {
   return (
     `CI simulation refused: actFlags entry ${shown(entry)} is not allowed because ${reason}. ` +
-    "Remove it from actFlags in the repo config; container platform mappings stay allowed."
+    "Remove it from actFlags in the config; container platform mappings stay allowed."
   );
 }
