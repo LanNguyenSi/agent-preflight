@@ -23,3 +23,10 @@ jobs:
     uses: lannguyensi/agent-dx/.github/workflows/workflow-guard.yml@4261a19c68fce9ce2d44c2221f536c04235c14aa
     with:
       config: slop.config.yml
+
+  workflow-guard-branch-pin-negative:
+    permissions:
+      contents: read
+    uses: LanNguyenSi/agent-dx/.github/workflows/workflow-guard.yml@feat/workflow-guard-optional-ref
+    with:
+      config: slop.config.yml
