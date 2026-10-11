@@ -98,10 +98,13 @@ export const DEPENDENCIES_NOT_INSTALLED_HINT = "dependencies not installed; run 
 
 // True only when the evidence is unambiguous: package.json declares at least
 // one dependency, `--setup` is not going to install it, and neither the target
-// directory nor any ancestor holds a `node_modules` directory (an ancestor
-// covers workspace packages hoisted to the repo root) or a Yarn PnP map. Any
-// doubt answers false, so the check runs exactly as before and a real failure
-// is never hidden behind this limitation.
+// directory nor any ancestor up to the repository boundary holds a
+// `node_modules` directory (an ancestor covers workspace packages hoisted to
+// the repo root) or a Yarn PnP map. The walk stops after the first directory
+// that contains a `.git` entry (directory or worktree file), so an install
+// outside the repository never counts. Any doubt answers false, so the check
+// runs exactly as before and a real failure is never hidden behind this
+// limitation.
 export function nodeDependenciesMissing(context: ProjectContext, config: PreflightConfig): boolean {
   if (config.setup?.enabled === true) return false;
   const pkg = context.packageJson;
@@ -117,6 +120,12 @@ export function nodeDependenciesMissing(context: ProjectContext, config: Preflig
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
       }
+    }
+    try {
+      fs.statSync(path.join(dir, ".git"));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
     }
     const parent = path.dirname(dir);
     if (parent === dir) return true;

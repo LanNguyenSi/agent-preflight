@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -88,7 +89,7 @@ describe("missing installed dependencies", () => {
     expect(readCalls(callsPath)).toBe("");
   });
 
-  it("does not let the skipped checks make the run ready, but does not block it either", async () => {
+  it("keeps the skipped checks non-failing but makes the default-config run not ready, with one install-hint blocker", async () => {
     const { repoPath } = makeRepo({ installed: false });
     const config = { logDir: logDir(repoPath), checks: { gitState: false, audit: false, secretDetection: false, commitConvention: false, tdd: false } };
 
@@ -97,9 +98,21 @@ describe("missing installed dependencies", () => {
     expect(result.checks.every((c) => c.status === "skip")).toBe(true);
     expect(result.limitations.filter((l) => l.includes(HINT))).toHaveLength(3);
     expect(result.confidence).toBe(0);
+    expect(result.ready).toBe(false);
+    expect(result.blockers).toHaveLength(1);
+    expect(result.blockers[0]).toContain(HINT);
+    expect(result.blockers[0]).toContain("npm-test");
 
     const required = await runPreflight(repoPath, { ...config, requiredChecks: ["test"] });
     expect(required.ready).toBe(false);
+    expect(required.blockers.some((b) => b.includes('Required check kind "test"'))).toBe(true);
+  });
+
+  it("does not add the install blocker once node_modules exists", async () => {
+    const { repoPath } = makeRepo({ installed: true });
+    const config = { logDir: logDir(repoPath), checks: { gitState: false, audit: false, secretDetection: false, commitConvention: false, tdd: false } };
+    const result = await runPreflight(repoPath, config);
+    expect(result.blockers.some((b) => b.includes(HINT))).toBe(false);
   });
 
   it("runs the checks as before once node_modules exists", async () => {
@@ -137,5 +150,82 @@ describe("missing installed dependencies", () => {
     );
     const test = await runTestChecks(pkgDir, { logDir: logDir(repoPath) });
     expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "fail"]]);
+  });
+  it("treats a Yarn Plug'n'Play map alone as installed", async () => {
+    const { repoPath } = makeRepo({ installed: false });
+    fs.writeFileSync(path.join(repoPath, ".pnp.cjs"), "");
+    const test = await runTestChecks(repoPath, { logDir: logDir(repoPath) });
+    expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "fail"]]);
+    expect(test.limitations.join("\n")).not.toContain(HINT);
+  });
+
+  it("names an eslint check with a skip when eslint is declared with a config, no lint script and no install", async () => {
+    const { repoPath, callsPath } = makeRepo({ installed: false });
+    fs.writeFileSync(
+      path.join(repoPath, "package.json"),
+      JSON.stringify({ devDependencies: { eslint: "^9.0.0" } })
+    );
+    fs.writeFileSync(path.join(repoPath, "eslint.config.js"), "export default [];\n");
+    const lint = await runLintChecks(repoPath, { logDir: logDir(repoPath) });
+    expect(lint.checks).toHaveLength(1);
+    expect(lint.checks[0]).toMatchObject({ name: "eslint", kind: "lint", status: "skip" });
+    expect(lint.checks[0].message).toContain(HINT);
+    expect(readCalls(callsPath)).toBe("");
+  });
+
+  it("names a tsc-lint-fallback check with a skip for a tsconfig project without eslint, lint script or install", async () => {
+    const { repoPath, callsPath } = makeRepo({ installed: false });
+    fs.writeFileSync(
+      path.join(repoPath, "package.json"),
+      JSON.stringify({ devDependencies: { typescript: "^5.0.0" } })
+    );
+    const lint = await runLintChecks(repoPath, { logDir: logDir(repoPath) });
+    expect(lint.checks).toHaveLength(1);
+    expect(lint.checks[0]).toMatchObject({ name: "tsc-lint-fallback", kind: "lint", status: "skip" });
+    expect(lint.checks[0].message).toContain(HINT);
+    expect(readCalls(callsPath)).toBe("");
+  });
+
+  describe("repository boundary", () => {
+    it("ignores a node_modules outside the enclosing git repository", async () => {
+      const outer = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-missing-deps-outer-"));
+      tempDirs.push(outer);
+      fs.mkdirSync(path.join(outer, "node_modules"));
+      const { repoPath } = makeRepo({ installed: false });
+      const inner = path.join(outer, "repo");
+      fs.cpSync(repoPath, inner, { recursive: true });
+      execFileSync("git", ["init", "-q"], { cwd: inner });
+
+      const test = await runTestChecks(inner, { logDir: logDir(inner) });
+      expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "skip"]]);
+      expect(test.limitations.join("\n")).toContain(HINT);
+    });
+
+    it("also stops at a .git file (linked worktree)", async () => {
+      const outer = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-missing-deps-outer-"));
+      tempDirs.push(outer);
+      fs.mkdirSync(path.join(outer, "node_modules"));
+      const { repoPath } = makeRepo({ installed: false });
+      const inner = path.join(outer, "repo");
+      fs.cpSync(repoPath, inner, { recursive: true });
+      fs.writeFileSync(path.join(inner, ".git"), "gitdir: /nonexistent\n");
+
+      const test = await runTestChecks(inner, { logDir: logDir(inner) });
+      expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "skip"]]);
+    });
+
+    it("counts a node_modules hoisted to the repository root for a nested package", async () => {
+      const { repoPath } = makeRepo({ installed: true });
+      execFileSync("git", ["init", "-q"], { cwd: repoPath });
+      const pkgDir = path.join(repoPath, "packages", "a");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(pkgDir, "package.json"),
+        JSON.stringify({ scripts: { test: "vitest run" }, devDependencies: { vitest: "^1.0.0" } })
+      );
+      const test = await runTestChecks(pkgDir, { logDir: logDir(repoPath) });
+      expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "fail"]]);
+      expect(test.limitations.join("\n")).not.toContain(HINT);
+    });
   });
 });

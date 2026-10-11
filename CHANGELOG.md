@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Auto-detected Node checks (`npm-test`, `npm-typecheck`, `tsc`, `npm-lint`, `eslint`, `tsc-lint-fallback`) report a non-blocking `skip` plus a limitation ("dependencies not installed; run with --setup or install first") instead of a `fail` when `package.json` declares dependencies but no `node_modules` (or Yarn PnP map) exists in the target directory or an ancestor and `--setup` is not given. The skip is not a pass, so it cannot raise readiness or confidence, and it blocks only when its kind is required; with an install present, or when the state is uncertain, the checks run as before (task 4f577c58).
+- Auto-detected Node checks (`npm-test`, `npm-typecheck`, `tsc`, `npm-lint`, `eslint`, `tsc-lint-fallback`) report a `skip` plus a limitation ("dependencies not installed; run with --setup or install first") instead of a `fail` when `package.json` declares dependencies but no `node_modules` (or Yarn PnP map) exists in the target directory or an ancestor up to the enclosing git repository root, and `--setup` is not given. The skip is not a pass, so it cannot raise confidence, and the run adds one blocker carrying the same install hint, so `ready` is `false` in the default configuration as well as when the kind is required. With an install present, or when the state is uncertain, the checks run as before (task 4f577c58).
 
 ### Security
 
