@@ -224,6 +224,26 @@ interface ShellCheckRunResult {
   rawOutput?: string;
 }
 
+// execa 8 hands its `timeout` option to child_process.spawn as well as arming
+// its own timer. Node's timer sends the same kill signal (SIGTERM by default)
+// without telling execa, so when the child's exit is observed before execa's
+// own timer callback runs, execa reports a plain SIGTERM kill with
+// `timedOut: false` even though the timeout is what killed the child. Both
+// timers are due within about a millisecond of each other, which makes this
+// rare but real. `didTimeOut` restores the verdict: a SIGTERM exit that
+// arrived no earlier than the configured budget after the spawn is a timeout.
+// `spawnedAt` is a `performance.now()` reading taken just before the execa
+// call. One millisecond of slack covers timer rounding; an unrelated SIGTERM
+// landing inside that last millisecond is indistinguishable from a timeout.
+export function didTimeOut(
+  result: { timedOut?: boolean; signal?: string | number },
+  timeoutMs: number,
+  spawnedAt: number
+): boolean {
+  if (result.timedOut) return true;
+  return result.signal === "SIGTERM" && performance.now() - spawnedAt >= timeoutMs - 1;
+}
+
 // Invariant: when `missingLimitation` is set, we first check that the primary
 // binary of the command is resolvable. Only then do we execute. This keeps the
 // limitation path reserved for "the tool really isn't installed" and prevents
@@ -253,7 +273,8 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
   }
 
   try {
-    const { exitCode, all, timedOut, signal, isCanceled } = await execa(
+    const spawnedAt = performance.now();
+    const execaResult = await execa(
       "bash",
       ["-c", options.command],
       {
@@ -264,6 +285,8 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
         env,
       }
     );
+    const { exitCode, all, signal, isCanceled } = execaResult;
+    const timedOut = didTimeOut(execaResult, options.timeoutMs ?? 120_000, spawnedAt);
 
     if (
       !timedOut &&
@@ -2065,7 +2088,8 @@ async function runSetupCommand(
   command: string,
   timeoutMs: number = 120_000
 ): Promise<SetupCommandResult> {
-  const { exitCode, all, timedOut } = await execa(
+  const spawnedAt = performance.now();
+  const result = await execa(
     "bash",
     ["-c", command],
     {
@@ -2077,7 +2101,11 @@ async function runSetupCommand(
     }
   );
 
-  return { exitCode: exitCode ?? 1, timedOut: Boolean(timedOut), output: all };
+  return {
+    exitCode: result.exitCode ?? 1,
+    timedOut: didTimeOut(result, timeoutMs, spawnedAt),
+    output: result.all,
+  };
 }
 
 const PREDICATE_WINDOW_PART = 65_536;
