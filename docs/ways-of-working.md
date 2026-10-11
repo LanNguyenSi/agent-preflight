@@ -58,7 +58,7 @@ error: target path '/tmp/missing-repo' does not exist. Pass a path to an existin
 
 Never expose raw exception traces to the user by default.
 
-Current behaviour does not fully match this yet. Explicit-config errors use `preflight: <message>`. Repo-config problems, including an unparsable `.preflight.json`, are warnings (`[preflight] Warning: <path>: <message>`), and the run continues with defaults. Some errors, for example `Sandbox Dockerfile not found` on `preflight sandbox`, still surface as stack traces.
+Current behaviour does not fully match this yet. Explicit-config errors use `preflight: <message>`. Repo-config problems, including an unparsable `.preflight.json`, are warnings (`[preflight] Warning: <path>: <message>`, or `[preflight] Warning: failed to parse <path>: <message>` for an unparsable file), and the run continues with defaults. Some errors, for example `Sandbox Dockerfile not found` on `preflight sandbox`, still surface as stack traces.
 
 ### Structured Output
 
@@ -185,7 +185,7 @@ Strategy: **unit-tests** with [Vitest](https://vitest.dev/).
 - Tests must not touch the filesystem except through temp directories (`fs.mkdtempSync(path.join(os.tmpdir(), ...))`).
 - Tests must not make network calls.
 - Tests must not depend on environment variables unless explicitly set in the test.
-- Run the suite with `npm test` (`vitest run`); collect coverage with `npx vitest run --coverage` (provided by `@vitest/coverage-v8`). Aim for branch coverage of the check runners (`src/checks/`) and `runner.ts`; there is no enforced threshold gate.
+- Run the suite with `npm test` (`vitest run`); collect coverage with `npx vitest run --coverage` (provided by `@vitest/coverage-v8`). Aim for branch coverage of the check runners (`src/checks/`) and `runner.ts`. A `--coverage` run fails below the thresholds in `vitest.config.ts`, and CI runs the suite that way.
 
 ### Test-File Typecheck (CI)
 

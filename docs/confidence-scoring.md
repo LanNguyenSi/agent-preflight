@@ -30,7 +30,7 @@ flowchart TD
     R["check results: pass, fail, warn, skip"]
     ACK["acknowledge waivers: fail becomes acknowledged<br/>not for ci-simulation, custom, secret-detection"]
     BF["status fail: blocker"]
-    RQ["requiredChecks: kind without results<br/>or any non-pass result: blocker"]
+    RQ["requiredChecks: invalid list, kind without results<br/>or any non-pass result: blocker"]
     W["status warn: warning"]
     READY["ready = no blockers"]
     CONF["confidence = pass weight / total weight<br/>minus limitation penalty"]
@@ -46,7 +46,7 @@ flowchart TD
     READY --> EXIT
 ```
 
-`requiredChecks` changes readiness only. Each listed kind needs at least one actual result and all its results must pass; missing, disabled, skipped, warned, acknowledged or failed required checks block readiness. Their original statuses remain visible, and no policy result or weight is added to the score. An acknowledged failure never counts as a pass. Omitting `requiredChecks` or setting it to `[]` retains the previous gate. The policy does not establish exhaustive tool discovery; continue reading limitations. See [required checks](./checks.md#required-checks).
+`requiredChecks` changes readiness only. Each listed kind needs at least one actual result and all its results must pass; missing, disabled, skipped, warned, acknowledged or failed required checks block readiness. An invalid `requiredChecks` value (not an array, or an unknown kind) is a blocker on its own. Their original statuses remain visible, and no policy result or weight is added to the score. An acknowledged failure never counts as a pass. Omitting `requiredChecks` or setting it to `[]` retains the previous gate. The policy does not establish exhaustive tool discovery; continue reading limitations. See [required checks](./checks.md#required-checks).
 
 ## Default weights
 

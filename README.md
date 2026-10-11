@@ -104,7 +104,7 @@ Failures waived with `acknowledge` appear in an `Acknowledged` section, and bloc
 Security: preflight executes repository-controlled input, so run it (and the MCP server) only against repositories you trust.
 
 - A target repo's `.preflight.json`, or an explicit `--config` file, can define shell commands (`customChecks`, `commands.*`) that run on your machine. The autodetected checks run the repo's own scripts (for example `npm run lint`, `npm test`, composer scripts), and `--setup` can run its `build` script.
-- CI simulation runs `act` against the repo's `actFlags`, `.actrc` and workflow files and can still execute workflow steps. preflight refuses some `actFlags` shapes and keeps the repo's `.actrc` out; that is not an isolation boundary.
+- CI simulation runs `act` against the repo's `actFlags` and workflow files and can still execute workflow steps. preflight refuses some `actFlags` shapes and keeps the repo's `.actrc` out (act would otherwise read it from its working directory); that is not an isolation boundary.
 - The MCP server skips repo-defined commands (`customChecks`, `commands.*`) and CI simulation unless its environment sets `PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1`. Autodetected scripts for kinds without configured commands, and `setup.enabled`, still run there.
 - The sandbox is not an isolation boundary either: the workspace and package caches are mounted writable, and `--docker-socket` mounts the host Docker socket.
 

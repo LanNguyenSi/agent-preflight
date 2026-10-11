@@ -232,7 +232,7 @@ export async function runPreflight(
   const effectiveConfig: PreflightConfig = { ...config, logDir: resolvedLogDir };
 
   // Load the check modules with dynamic import(); every module except tdd is
-  // loaded before any toggle is read, so a failing import rejects the run
+  // loaded before any check runs, so a failing import rejects the run.
   const { runLintChecks } = await import("./checks/lint.js");
   const { runTypecheckChecks } = await import("./checks/typecheck.js");
   const { runTestChecks } = await import("./checks/test.js");

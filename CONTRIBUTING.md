@@ -17,10 +17,10 @@ Thanks for your interest. agent-preflight is a CI preflight validation tool: loc
    npm install
    npm run build
    npx tsc --noEmit -p tsconfig.test.json
-   npm test
+   npx vitest run --coverage
    ```
 
-   `npm run build` does not typecheck the test files; `npx tsc --noEmit -p tsconfig.test.json` does, as in CI. Optionally also run `npm run lint` (CI does not run it) and `node dist/cli.js run .` to dogfood preflight on the repo.
+   `npm run build` does not typecheck the test files; `npx tsc --noEmit -p tsconfig.test.json` does, as in CI. `npx vitest run --coverage` is the test run CI uses; it fails when coverage drops below the thresholds in `vitest.config.ts`. Optionally also run `npm run lint` (CI does not run it) and `node dist/cli.js run .` to dogfood preflight on the repo.
 
 4. Open the PR with a clear summary, motivation, and test plan.
 

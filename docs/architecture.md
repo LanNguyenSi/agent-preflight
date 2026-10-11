@@ -1,6 +1,6 @@
 # Architecture
 
-`agent-preflight` is a TypeScript CLI built on top of [`commander`](https://www.npmjs.com/package/commander) and [`execa`](https://www.npmjs.com/package/execa). Two entry points share one runner: the `preflight` CLI (also installed as `agent-preflight`) with three subcommands (`run`, `batch`, `sandbox`), and `preflight-mcp`, a stdio MCP server exposing `preflight_run` and `preflight_batch`. Behind the runner sits a set of check modules. No daemon and no state shared between runs.
+`agent-preflight` is a TypeScript CLI built on top of [`commander`](https://www.npmjs.com/package/commander) and [`execa`](https://www.npmjs.com/package/execa). Two entry points share one runner: the `preflight` CLI (the npm package also exposes it as `agent-preflight`) with three subcommands (`run`, `batch`, `sandbox`), and `preflight-mcp`, a stdio MCP server exposing `preflight_run` and `preflight_batch`. Behind the runner sits a set of check modules. No daemon and no state shared between runs.
 
 ## Top-level layout
 
@@ -75,7 +75,7 @@ flowchart TD
     MRUN["preflight_run<br/>mcp.ts"]
     BCLI["preflight batch<br/>cli.ts"]
     MBATCH["preflight_batch<br/>mcp.ts"]
-    SP["sandbox.ts createSandboxPlan"]
+    SP["sandbox.ts runSandbox<br/>createSandboxPlan, then docker run"]
     CONT["container: node /app/dist/cli.js run /workspace"]
     LCS["config.ts loadConfigWithSource<br/>--config, PREFLIGHT_CONFIG or .preflight.json"]
     RB["batch.ts runBatch<br/>loadRepoConfigWithSource per git repo"]

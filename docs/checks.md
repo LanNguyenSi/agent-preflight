@@ -290,7 +290,7 @@ The diagram below shows, per entry point, which repository-controlled inputs rea
 ```mermaid
 flowchart TD
     REPO["repo-controlled input<br/>.preflight.json, package scripts, workflow files"]
-    SBX["preflight sandbox<br/>container, writable workspace and caches"]
+    SBX["preflight sandbox<br/>image build with sandbox.aptPackages, pipPackages;<br/>container, writable workspace and caches,<br/>optional docker socket"]
     CLI["preflight run / batch"]
     MCP["MCP preflight_run / preflight_batch"]
     GATE{"PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS<br/>is exactly 1?"}
