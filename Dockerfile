@@ -32,8 +32,8 @@ RUN pip3 install --break-system-packages \
 # ACT_SHA256_AMD64 / ACT_SHA256_ARM64 are the act_Linux_x86_64.tar.gz and
 # act_Linux_arm64.tar.gz entries of the release's checksums.txt; update all
 # three args together when bumping ACT_VERSION. TARGETARCH is set by BuildKit;
-# the legacy builder leaves it empty, so fall back to the build platform's
-# Debian architecture. Any other architecture fails the build.
+# the legacy builder leaves it empty, so fall back to the image's own
+# Debian architecture (dpkg --print-architecture). Any other architecture fails the build.
 ARG ACT_VERSION=v0.2.89
 ARG ACT_SHA256_AMD64=0191d6f1f3b716b5c55820032605d05fc3c1cdbf581ebeff655019e5dd1524c0
 ARG ACT_SHA256_ARM64=daa8679ba9615a74d2d0cec321dc593f21948a2a11bb65862b063d8b930f4bcb
