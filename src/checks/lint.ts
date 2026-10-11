@@ -14,6 +14,8 @@ import {
   hasNodeProject,
   hasPhpProject,
   hasPythonProject,
+  nodeDependenciesMissing,
+  dependenciesNotInstalledResult,
   runConfiguredCommands,
   runShellCheck,
 } from "./shared.js";
@@ -59,7 +61,18 @@ export async function runLintChecks(
   const limitations: string[] = [];
 
   if (hasNodeProject(context)) {
-    if (context.packageJson?.scripts?.lint) {
+    const lintName = context.packageJson?.scripts?.lint
+      ? "npm-lint"
+      : hasNodeDependency(context, "eslint") && findEslintConfig(repoPath)
+        ? "eslint"
+        : !hasNodeDependency(context, "eslint") && context.hasTsconfig
+          ? "tsc-lint-fallback"
+          : undefined;
+    if (lintName && nodeDependenciesMissing(context, config)) {
+      const missing = dependenciesNotInstalledResult(lintName, "lint", 0.15);
+      checks.push(missing.check);
+      limitations.push(missing.limitation);
+    } else if (context.packageJson?.scripts?.lint) {
       const result = await runShellCheck({
         repoPath,
         name: "npm-lint",

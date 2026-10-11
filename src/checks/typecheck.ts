@@ -11,6 +11,8 @@ import {
   hasNodeProject,
   hasPhpProject,
   hasPythonProject,
+  nodeDependenciesMissing,
+  dependenciesNotInstalledResult,
   runConfiguredCommands,
   runShellCheck,
 } from "./shared.js";
@@ -28,7 +30,12 @@ export async function runTypecheckChecks(
   const checks: CheckResult[] = [];
   const limitations: string[] = [];
 
-  if (hasNodeProject(context) && context.packageJson?.scripts?.typecheck) {
+  if (hasNodeProject(context) && (context.packageJson?.scripts?.typecheck || context.hasTsconfig) && nodeDependenciesMissing(context, config)) {
+    const name = context.packageJson?.scripts?.typecheck ? "npm-typecheck" : "tsc";
+    const missing = dependenciesNotInstalledResult(name, "typecheck", 0.2);
+    checks.push(missing.check);
+    limitations.push(missing.limitation);
+  } else if (hasNodeProject(context) && context.packageJson?.scripts?.typecheck) {
     const result = await runShellCheck({
       repoPath,
       name: "npm-typecheck",

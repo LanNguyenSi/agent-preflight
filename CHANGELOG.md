@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Auto-detected Node checks (`npm-test`, `npm-typecheck`, `tsc`, `npm-lint`, `eslint`, `tsc-lint-fallback`) report a non-blocking `skip` plus a limitation ("dependencies not installed; run with --setup or install first") instead of a `fail` when `package.json` declares dependencies but no `node_modules` (or Yarn PnP map) exists in the target directory or an ancestor and `--setup` is not given. The skip is not a pass, so it cannot raise readiness or confidence, and it blocks only when its kind is required; with an install present, or when the state is uncertain, the checks run as before (task 4f577c58).
+
 ### Security
 
 - **Sandbox image pins act v0.2.89** (task fd274f4d): the sandbox Dockerfile built act v0.2.82, which is affected by CVE-2026-34041 and CVE-2026-34042 (fixed upstream in act 0.2.86), while the CI-simulation refusal rules and docs were measured against act 0.2.89. The download is now also verified against the sha256 from the official nektos/act v0.2.89 `checksums.txt` (the previous `curl | tar` step verified nothing); the build fails on a mismatch. Rebuild the sandbox image (`preflight sandbox --build`) to pick it up.
