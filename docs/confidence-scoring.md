@@ -23,7 +23,30 @@ confidence = max(0, min(1, base - penalty))
 
 If no checks run, the score is 0.
 
-`requiredChecks` changes readiness only. Each listed kind needs at least one actual result and all its results must pass; missing, disabled, skipped, warned, acknowledged or failed required checks block readiness. Their original statuses remain visible, and no policy result or weight is added to the score. An acknowledged failure never counts as a pass. Omitting `requiredChecks` or setting it to `[]` retains the previous gate. The policy does not establish exhaustive tool discovery; continue reading limitations. See [required checks](./checks.md#required-checks).
+The diagram shows the order in which check statuses, acknowledgements, `requiredChecks` and limitations turn into `ready`, `confidence` and the exit code. Policy blockers from `requiredChecks` affect only `ready`, not the score.
+
+```mermaid
+flowchart TD
+    R["check results: pass, fail, warn, skip"]
+    ACK["acknowledge waivers: fail becomes acknowledged<br/>not for ci-simulation, custom, secret-detection"]
+    BF["status fail: blocker"]
+    RQ["requiredChecks: invalid list, kind without results<br/>or any non-pass result: blocker"]
+    W["status warn: warning"]
+    READY["ready = no blockers"]
+    CONF["confidence = pass weight / total weight<br/>minus limitation penalty"]
+    EXIT["preflight run: exit 0 if ready, else 1"]
+
+    R --> ACK
+    ACK --> BF
+    ACK --> RQ
+    ACK --> W
+    ACK --> CONF
+    BF --> READY
+    RQ --> READY
+    READY --> EXIT
+```
+
+`requiredChecks` changes readiness only. Each listed kind needs at least one actual result and all its results must pass; missing, disabled, skipped, warned, acknowledged or failed required checks block readiness. An invalid `requiredChecks` value (not an array, or an unknown kind) is a blocker on its own. Their original statuses remain visible, and no policy result or weight is added to the score. An acknowledged failure never counts as a pass. Omitting `requiredChecks` or setting it to `[]` retains the previous gate. The policy does not establish exhaustive tool discovery; continue reading limitations. See [required checks](./checks.md#required-checks).
 
 ## Default weights
 
@@ -68,7 +91,7 @@ Limitations are reported back to the caller so an agent can quote them when expl
   "confidence": 0.87,
   "checks": [],
   "blockers": [],
-  "warnings": ["3 recent commits don't follow conventional format"],
+  "warnings": ["3 recent commit(s) don't follow conventional format"],
   "limitations": [
     "CI simulation skipped (enable with checks.ciSimulation: true, requires act)",
     "secret detection uses pattern matching; not exhaustive"

@@ -8,7 +8,7 @@ A command, feature, or bug fix is done when:
 - [ ] Tests are written and passing (unit-tests strategy - see below)
 - [ ] Exit codes are correct for success and failure paths
 - [ ] Help text is accurate and complete (`--help` for the affected command)
-- [ ] Error messages follow the project's message format (see Error Messages)
+- [ ] New error messages follow the target message format (see Error Messages)
 - [ ] Documentation is updated if a public interface changed
 - [ ] Code has been reviewed by at least one other contributor
 - [ ] Change has been manually tested against a real terminal (not just unit tests)
@@ -42,7 +42,7 @@ preflight run . --json | jq '.checks[]'
 
 ### Error Messages
 
-Errors written to stderr must follow this format:
+New errors written to stderr should follow this target format:
 
 ```
 error: <what went wrong>. <how to fix it>.
@@ -52,11 +52,13 @@ Examples:
 
 ```
 error: unknown option '--output'. Run 'preflight run --help' to see the available flags.
-error: could not parse .preflight.json: unexpected token at line 4. Fix the JSON and re-run.
+error: config file '../shared/preflight.json' does not exist. Fix the --config path and re-run.
 error: target path '/tmp/missing-repo' does not exist. Pass a path to an existing repository.
 ```
 
 Never expose raw exception traces to the user by default.
+
+Current behaviour does not fully match this yet. Explicit-config errors use `preflight: <message>`. Repo-config problems, including an unparsable `.preflight.json`, are warnings (`[preflight] Warning: <path>: <message>`, or `[preflight] Warning: failed to parse <path>: <message>` for an unparsable file), and the run continues with defaults. Some errors, for example `Sandbox Dockerfile not found` on `preflight sandbox`, still surface as stack traces.
 
 ### Structured Output
 
@@ -64,7 +66,7 @@ Never expose raw exception traces to the user by default.
 
 ## Planned / not yet implemented
 
-The conventions below are aspirational. The current `commander`-based CLI implements only `--json`, `--setup`, `--ci-simulation`, `--no-audit`, and `--no-secrets` (plus `--only` / `--exclude` on `batch` and the image flags on `sandbox`). None of the flags or behaviors in this section exist yet; treat them as the target shape if and when the surface grows, not as current behavior.
+The conventions below are aspirational. The current CLI implements `--json`, `--setup`, `--no-audit` and `--no-secrets`, `--ci-simulation` on `run` and `sandbox`, `--config` on `run` (`sandbox` rejects it), `--only` / `--exclude` on `batch`, and `--build`, `--pull`, `--print`, `--docker-socket` and `--image` on `sandbox`, plus the global `--version`. None of the flags or behaviors in this section exist yet; treat them as the target shape if and when the surface grows, not as current behavior.
 
 ### Color Output
 
@@ -125,7 +127,7 @@ This project follows [Semantic Versioning](https://semver.org/):
 3. Commit: `chore(release): v1.2.3`
 4. Tag: `git tag v1.2.3`
 5. Push tag: `git push origin v1.2.3`
-6. CI builds and publishes the release bundle assets automatically
+6. The tag push runs `release.yml` (release bundle attached to a GitHub release) and `publish-npm.yml` (npm publish with provenance; it fails if the tag does not match `package.json`)
 
 ## Branching Strategy
 
@@ -183,7 +185,7 @@ Strategy: **unit-tests** with [Vitest](https://vitest.dev/).
 - Tests must not touch the filesystem except through temp directories (`fs.mkdtempSync(path.join(os.tmpdir(), ...))`).
 - Tests must not make network calls.
 - Tests must not depend on environment variables unless explicitly set in the test.
-- Run the suite with `npm test` (`vitest run`); collect coverage with `npx vitest run --coverage` (provided by `@vitest/coverage-v8`). Aim for branch coverage of the check runners (`src/checks/`) and `runner.ts`; there is no enforced threshold gate.
+- Run the suite with `npm test` (`vitest run`); collect coverage with `npx vitest run --coverage` (provided by `@vitest/coverage-v8`). Aim for branch coverage of the check runners (`src/checks/`) and `runner.ts`. A `--coverage` run fails below the thresholds in `vitest.config.ts`, and CI runs the suite that way.
 
 ### Test-File Typecheck (CI)
 
@@ -310,7 +312,7 @@ This project is configured for AI-assisted development. Read `AI_CONTEXT.md` bef
 ### For AI Agents
 
 - Read `AI_CONTEXT.md` before starting any task
-- Follow the check module pattern exactly (each `checks/<name>.ts` exports one `runX` returning `CheckSetResult`) - do not invent new file layouts
+- Follow the check module pattern (each check module exports a run function returning `CheckSetResult`; see [architecture.md](architecture.md#module-boundaries)) - do not invent new file layouts
 - Use the exit code table from architecture.md for all error paths
 - Write `--help` text for every new flag and command
 - Match the test naming convention

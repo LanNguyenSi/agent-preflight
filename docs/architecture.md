@@ -1,20 +1,24 @@
 # Architecture
 
-`agent-preflight` is a TypeScript CLI built on top of [`commander`](https://www.npmjs.com/package/commander) and [`execa`](https://www.npmjs.com/package/execa). One binary (`preflight`), three subcommands (`run`, `batch`, `sandbox`), and a set of independent check modules behind them. No daemon, no server, no shared state.
+`agent-preflight` is a TypeScript CLI built on top of [`commander`](https://www.npmjs.com/package/commander) and [`execa`](https://www.npmjs.com/package/execa). Two entry points share one runner: the `preflight` CLI (the npm package also exposes it as `agent-preflight`) with three subcommands (`run`, `batch`, `sandbox`), and `preflight-mcp`, a stdio MCP server exposing `preflight_run` and `preflight_batch`. Behind the runner sits a set of check modules. No daemon and no state shared between runs.
 
 ## Top-level layout
 
 ```
 src/
   cli.ts              # commander entry, parses flags, dispatches subcommands
+  mcp.ts              # stdio MCP server (preflight_run, preflight_batch)
   config.ts           # loads .preflight.json, applies defaults
   runner.ts           # orchestrates a single repo, computes confidence
+  shellGate.ts        # skips repo-defined shell commands and CI simulation on the MCP surface
   batch.ts            # walks a root directory, runs runner per repo
   sandbox.ts          # builds the docker plan, runs preflight in a container
+  pathUtils.ts        # leading ~/ expansion for log paths
   types.ts            # PreflightConfig, PreflightResult, CheckResult, CheckKind
   version.ts          # reads the version from package.json at load time
   checks/
     git.ts            # clean-worktree, protected-branch
+    git-common.ts     # git helpers and diff-base resolution for secrets and tdd
     lint.ts
     typecheck.ts
     test.ts
@@ -23,12 +27,13 @@ src/
     commits.ts        # commit convention
     tdd.ts            # changed-file vs test-file pairing
     ci.ts             # act-based CI simulation
+    actFlags.ts       # refuses unsafe act flags
     custom.ts         # user-defined shell checks
     shared.ts         # project detection, runner helpers, setup phase
     php.ts            # Composer binary paths and bounded PHP config discovery
 ```
 
-Tests live under `tests/` and mirror the `src/` layout. Build output goes to `dist/`.
+Tests are flat `*.test.ts` files under `tests/`, with `tests/integration/`, `tests/contract/`, `tests/setup/` and `tests/helpers/` for suites and helpers, and fixture repositories under `tests/fixtures/`. Build output goes to `dist/`.
 
 ## How a single run works
 
@@ -36,9 +41,9 @@ Tests live under `tests/` and mirror the `src/` layout. Build output goes to `di
 
 1. `cli.ts` parses flags, resolves the target path to an absolute path, calls `loadConfigWithSource` (with the `--config` value, if any).
 2. `config.ts` picks the config: the explicit file from `--config`, else `PREFLIGHT_CONFIG`, else `.preflight.json` in the repo, and merges it with `defaultConfig()` from `config.ts`. A missing repo file is not an error; the tool works without config. A missing or invalid explicit file, or one that yields any validation warning, is an error (`ExplicitConfigError`, exit 1); a repo file stays lenient. The chosen source is reported as `config` in the result. `PREFLIGHT_CONFIG` is removed by the shared command runner (`runShellCheck`) from the environment of configured checks and other commands routed through it. Direct subprocess paths, including the built-in npm audit runner and `act` CI simulation, currently inherit it; other direct children are outside this filter. This is a command-runner boundary, not a guarantee that every child process lacks the selector. `batch` and `sandbox` do not take an explicit file; `sandbox` rejects it.
-3. `runner.ts` dynamically imports each enabled check module. Imports are dynamic so a missing optional dependency in one check never breaks the others.
+3. `runner.ts` loads the check modules with dynamic `import()` and runs each enabled check in a fixed order.
 4. Each check returns a `CheckSetResult` of `{ checks, limitations }`. The runner aggregates results, applies acknowledgements, then collects failure blockers and warnings. It adds policy blockers for invalid `requiredChecks`, missing required kinds or any non-passing result of a required kind. Confidence is still calculated from actual check results and limitations; policy blockers add no synthetic check or weight.
-5. `cli.ts` formats the result. `--json` prints `JSON.stringify(result, null, 2)`. The default formatter renders the icon, the score, the blockers, the warnings, and the limitations.
+5. `cli.ts` formats the result. `--json` prints `JSON.stringify(result, null, 2)`. The default formatter renders the icon, the score, the blockers, the warnings, the acknowledged checks, the limitations, the check count and duration, and the config source.
 6. Exit code is `0` when `ready` is true, otherwise `1`.
 
 The shape of `PreflightResult` is the contract:
@@ -61,56 +66,67 @@ Command strings and objects share execution in `checks/shared.ts`. An object's `
 
 ### Run pipeline
 
-The diagram traces how `preflight run` flows through config loading, check dispatch, and result formatting, and where `batch` and `sandbox` branch off.
+Two entry points share the runner, the `preflight` CLI and the `preflight-mcp` server. The first diagram shows how each subcommand and MCP tool reaches `runPreflight`: `run` and `preflight_run` load the config with `loadConfigWithSource`; `batch` and `preflight_batch` go through `runBatch`, which reads each repo's own `.preflight.json` with `loadRepoConfigWithSource`; `sandbox` runs `preflight run` inside a container.
 
 ```mermaid
-flowchart LR
-    CLI["cli.ts<br/>parse flags, resolve repo"]
-    CFG["config.ts<br/>load .preflight.json + defaults"]
-    RUNNER["runner.ts<br/>orchestrate, aggregate, compute confidence"]
+flowchart TD
+    SCLI["preflight sandbox<br/>cli.ts"]
+    RUN["preflight run<br/>cli.ts"]
+    MRUN["preflight_run<br/>mcp.ts"]
+    BCLI["preflight batch<br/>cli.ts"]
+    MBATCH["preflight_batch<br/>mcp.ts"]
+    SP["sandbox.ts runSandbox<br/>createSandboxPlan, then docker run"]
+    CONT["container: node /app/dist/cli.js run /workspace"]
+    LCS["config.ts loadConfigWithSource<br/>--config, PREFLIGHT_CONFIG or .preflight.json"]
+    RB["batch.ts runBatch<br/>loadRepoConfigWithSource per git repo"]
+    RP["runner.ts runPreflight"]
 
-    subgraph checks["checks/ - dynamically imported by runner.ts"]
-        GIT["git.ts<br/>worktree, branch"]
-        LINT["lint.ts"]
-        TC["typecheck.ts"]
-        TEST["test.ts"]
-        AUD["audit.ts"]
-        SEC["secrets.ts"]
-        COM["commits.ts<br/>commit convention"]
-        TDD["tdd.ts<br/>test pairing"]
-        CI["ci.ts<br/>act dry-run"]
-        CUS["custom.ts<br/>user-defined shells"]
-    end
+    SCLI --> SP
+    SP -->|"docker run"| CONT
+    CONT -->|"cli.ts run in the container"| LCS
+    RUN --> LCS
+    MRUN -->|"configPath"| LCS
+    BCLI --> RB
+    MBATCH --> RB
+    LCS -->|"config"| RP
+    RB -->|"each repo's config"| RP
+```
 
-    OUT["stdout<br/>human summary or --json, exit 0 or 1"]
-    BATCH["batch.ts<br/>per-repo loop"]
-    SAND["sandbox.ts<br/>Docker image + run"]
+The second diagram shows what `runPreflight` does with one repo, in order. On the MCP surface it first strips the repo-defined shell commands and CI simulation, unless the server sets `PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1`. It then runs the setup phase when enabled, then each enabled check, and finally applies acknowledgements and `requiredChecks` and computes the confidence score.
 
-    CLI -->|"preflight run"| CFG
-    CFG --> RUNNER
-    RUNNER --> GIT & LINT & TC & TEST & AUD & SEC & COM & TDD & CI & CUS
-    GIT & LINT & TC & TEST & AUD & SEC & COM & TDD & CI & CUS -->|"CheckSetResult"| RUNNER
-    RUNNER -->|"PreflightResult"| CLI
-    CLI --> OUT
+```mermaid
+flowchart TD
+    RP["runner.ts runPreflight"]
+    GATE["shellGate.ts stripShellExecution<br/>unless PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1"]
+    SETUP["checks/shared.ts ensureProjectSetup"]
+    CHECKS["checks/*.ts, loaded with import()<br/>git, lint, typecheck, test, audit, secrets,<br/>commits, tdd, ci, custom"]
+    AF["checks/actFlags.ts findUnsafeActFlag"]
+    POLICY["acknowledgements, requiredChecks, confidence"]
+    RES["PreflightResult"]
+    OUTCLI["CLI: summary or --json, exit 0 or 1"]
+    OUTMCP["MCP: structuredContent and text"]
 
-    CLI -->|"preflight batch"| BATCH
-    BATCH -->|"each git repo"| CFG
-
-    CLI -->|"preflight sandbox"| SAND
-    SAND -->|"docker run preflight run"| RUNNER
+    RP -.->|"1. MCP only"| GATE
+    RP -->|"2. setup.enabled"| SETUP
+    RP -->|"3. each enabled check"| CHECKS
+    CHECKS -->|"ci.ts"| AF
+    CHECKS -->|"CheckSetResult"| POLICY
+    POLICY --> RES
+    RES --> OUTCLI
+    RES --> OUTMCP
 ```
 
 ## Exit codes
 
 The exit code is the machine-readable verdict; it is the contract `docs/integration.md` and `docs/ways-of-working.md` rely on.
 
-| Command | Exit `0` | Exit `1` |
-|---------|----------|----------|
-| `preflight run [repoPath]` | `ready` is true (no failure or required-check policy blockers) | `ready` is false |
-| `preflight batch [root]` | every repo is ready (`notReady` is 0) | one or more repos are not ready |
-| `preflight sandbox [repoPath]` | the in-container `preflight run` exited 0 | the in-container run exited non-zero (or the container failed to start) |
+| Command | Exit `0` | Otherwise |
+|---------|----------|-----------|
+| `preflight run [repoPath]` | `ready` is true (no failure or required-check policy blockers) | `1`: `ready` is false |
+| `preflight batch [root]` | no repo is not ready (`notReady` is 0); repos whose run threw an error are counted as `skipped` and do not change the exit code | `1`: one or more repos are not ready |
+| `preflight sandbox [repoPath]` | the in-container `preflight run` exited 0, or `--print` was given | the container's exit code (`1` when the run is not ready), or docker's own non-zero code when the image build, the pull or `docker run` itself fails |
 
-There is no distinct usage-error code: invalid flags or unknown commands are handled by `commander`, which prints the error to stderr and exits non-zero. Confidence is reported in the payload, not the exit code: a low-confidence run can still exit `0` when nothing blocked.
+There is no distinct usage-error code: invalid flags or unknown commands are handled by `commander`, which prints the error to stderr and exits non-zero. An invalid explicit config file exits `1` with a `preflight: <message>` line on stderr. Some other errors, such as a missing Docker binary or `Sandbox Dockerfile not found` on `sandbox`, are not caught and end the process with a stack trace and a non-zero exit. Confidence is reported in the payload, not the exit code: a low-confidence run can still exit `0` when nothing blocked.
 
 ## act integration
 
@@ -128,7 +144,9 @@ In sandbox mode the act invocation runs inside the container. `--docker-socket` 
 - Symfony: `symfony.lock`, `bin/console`, or `symfony/*` Composer packages
 - Java: Maven (`pom.xml`) and Gradle (`build.gradle`, `build.gradle.kts`) manifests
 
-The fingerprint determines the local image tag (default `agent-preflight:local`), which lets switching between repos pick up different prepared images automatically. `.preflight.json` extras (`sandbox.aptPackages`, `sandbox.pipPackages`) are merged into the build. `--print` shows the resolved docker command without running it. `--build` and `--pull` force the image to refresh.
+`.preflight.json` extras (`sandbox.aptPackages`, `sandbox.pipPackages`) are merged into the build. The image tag is `agent-preflight:local-<capabilities>-<hash>` (`agent-preflight:local-<hash>` when only extra packages are configured), or plain `agent-preflight:local` when nothing is detected. The hash covers the detected capabilities, the extra apt and pip packages and the Dockerfile, so a new capability or a Dockerfile change selects a new image. A missing image of this family is built on first use. `--build` rebuilds it; `--print` prints the docker commands without running them; `--image <name>` runs the given image instead, and an image outside the `agent-preflight:local` family is never built automatically; `--pull` runs `docker pull` on the image, which only works for a registry image given with `--image`, since the local tags are not published. `make sandbox-build` builds only the plain `agent-preflight:local` tag, which the legacy `./agent-preflight-sandbox` wrapper runs (override with `AGENT_PREFLIGHT_SANDBOX_IMAGE`).
+
+The image is built from the `Dockerfile` and sources in the agent-preflight package root, next to `dist/`. A source checkout, an `./install.sh` install and a release bundle have them; the npm package does not, so from an npm or npx install `preflight sandbox` stops with `Sandbox Dockerfile not found`.
 
 The sandbox is not an isolation boundary: it is a Docker container that runs `preflight run` over a bind mount of your working tree (the host directory itself, not a copy). Among what the container can reach, from `buildDockerRunCommand` and `getCacheMounts` in `src/sandbox.ts`:
 
@@ -145,7 +163,7 @@ The security note for CI simulation, including what it refuses and the measured 
 
 ## Setup phase
 
-Opt-in via `--setup` or `setup.enabled: true`. `checks/shared.ts` runs the unambiguous dependency-bootstrap commands per stack (`npm ci` when `package-lock.json` exists, `composer install` when `vendor/` is missing, etc.), plus -- conditionally -- one build: `npm run build` at the repo root when `package.json` has a `build` script AND `.github/workflows/ci.yml` shows a `run:` step invoking it before the test step, under its own wall-clock budget (`setup.buildTimeoutMs`, 300000 ms by default). That build is the only setup command whose execution is decided by content in the target repo, and its outcome feeds the test check's build-required classification. See [checks.md](./checks.md#setup-phase) for the full list and [checks.md's "Build-required test classification"](./checks.md#build-required-test-classification-an-unbuilt-package-is-not-a-broken-one) for the rule, its trust boundary, and its documented limits. Any setup work appends an entry to `limitations` so the agent can see what was prepared automatically.
+Opt-in via `--setup` or `setup.enabled: true`. `checks/shared.ts` runs the unambiguous dependency-bootstrap commands per stack (`npm ci` when `package-lock.json` exists, `composer install` when `vendor/` is missing, etc.), plus -- conditionally -- one build: `npm run build` in the effective target directory (`workingDir`, default the repo root) when its `package.json` has a `build` script AND its `.github/workflows/ci.yml` shows a `run:` step invoking it before the test step, under its own wall-clock budget (`setup.buildTimeoutMs`, 300000 ms by default). That build is the only setup command whose execution is decided by content in the target repo, and its outcome feeds the test check's build-required classification. See [checks.md](./checks.md#setup-phase) for the full list and [checks.md's "Build-required test classification"](./checks.md#build-required-test-classification-an-unbuilt-package-is-not-a-broken-one) for the rule, its trust boundary, and its documented limits. A setup step that is skipped for a missing tool, fails or times out adds an entry to `limitations`; a successful step adds none.
 
 ## MCP server
 
@@ -166,8 +184,8 @@ See [`docs/checks.md`](./checks.md) for what each check verifies.
 
 ## Module boundaries
 
-Each `checks/<name>.ts` exports a single `runX(targetPath, config)` function returning `CheckSetResult`. They never read the filesystem or shell out outside their own scope, never mutate the runner's state directly, and never import from each other except through `shared.ts`. This is the property that lets the runner add or remove a check without touching the others.
+Each check module exports a run function that returns `CheckSetResult`; the runner collects those results instead of the modules changing its state. Most take `(targetPath, config)`. `ci.ts` takes the act flags and `commits.ts` the commit convention instead of the config, and `test.ts` and `git.ts` take one more argument, the setup build outcome and the pre-setup worktree snapshot (`git.ts` also exports `snapshotWorktreeState`). Check modules import each other only for shared helpers: `shared.ts`, `php.ts`, `git-common.ts` and `actFlags.ts`.
 
 ## CI for this repo
 
-GitHub Actions workflows live under `.github/workflows/`. The pipeline runs the same lint, typecheck, and test commands the tool itself runs on its target. Release bundles are produced with `make release-bundle`, which writes `out/release/agent-preflight-v<version>-bundle.tar.gz` plus an SHA256.
+GitHub Actions workflows live under `.github/workflows/`. `ci.yml` runs the build-scoped typecheck, the test-file typecheck (`tsconfig.test.json`) and the Vitest suite with coverage; lint is not run in CI, so run `npm run lint` locally. `workflow-guard.yml` scans the workflow files with agent-dx's reusable workflow-guard, configured by `slop.config.yml`. Pushing a `v*` tag runs `release.yml` (release bundle attached to a GitHub release) and `publish-npm.yml` (npm publish with provenance after checking that `package.json` matches the tag). Release bundles are produced with `make release-bundle`, which writes `out/release/agent-preflight-v<version>-bundle.tar.gz` plus an SHA256.

@@ -30,6 +30,7 @@ Honor `workingDir`, command objects and `requiredChecks`; each required kind nee
 - If not, use a checked-out `agent-preflight` repository when one is available.
 - Prefer `preflight sandbox <repo> --json` for sandbox reruns.
 - `./agent-preflight-sandbox` remains available as a checkout-local compatibility wrapper.
+- If `preflight sandbox` stops with `Sandbox Dockerfile not found`, the CLI came from the npm package, which does not include the sandbox image sources: use a source checkout or an `install.sh` install, or report sandbox mode as unavailable.
 - If Claude cannot find either form, it should explicitly report that `agent-preflight` is not installed or not available in the workspace.
 
 ## Reporting Format

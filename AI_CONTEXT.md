@@ -30,15 +30,16 @@ It adds neither an ordinary failure blocker nor a warning. If its kind is in
 [`requiredChecks`](docs/checks.md#required-checks), a policy blocker names the
 acknowledged result because only passing results satisfy that requirement.
 Consumers must still scan `checks[]` to see every waived failure.
-`secret-detection` is excluded from acknowledgement: its toggle stays a plain
-`boolean`.
+`secret-detection` cannot be acknowledged: an `acknowledge` on
+`checks.secretDetection` is reported in `limitations` as unsupported; use
+`secretAllowlist` or an inline `pragma: allowlist secret` instead.
 
 ## Current Command Surface
 
 - `preflight run [repoPath] [--config <path>]`
 - `preflight batch [root]`
 - `preflight sandbox [repoPath]`
-- `preflight-mcp` (MCP stdio server; exposes `preflight_run`/`preflight_batch` — see `src/mcp.ts` and README "MCP server". The target repo's `.preflight.json` can define shell commands these tools execute, same as the CLI checks; only point it at trusted repositories.)
+- `preflight-mcp` (MCP stdio server; exposes `preflight_run`/`preflight_batch`; see `src/mcp.ts` and [docs/architecture.md](docs/architecture.md#mcp-server). The target repo's `.preflight.json` can define shell commands these tools execute, same as the CLI checks; only point it at trusted repositories.)
 
 The optional legacy Docker wrapper is `./agent-preflight-sandbox`.
 `preflight sandbox` resolves a capability-based local image profile from the target repo and may auto-build a matching image on first use.
@@ -54,8 +55,12 @@ agent-preflight/
 │   ├── cli.ts        # Commander CLI
 │   ├── config.ts     # .preflight.json loading + defaults
 │   ├── mcp.ts        # MCP stdio server (preflight_run/preflight_batch)
+│   ├── pathUtils.ts  # Leading ~/ expansion for log paths
 │   ├── runner.ts     # Main preflight orchestration
-│   └── types.ts      # Shared types
+│   ├── sandbox.ts    # Docker sandbox plan and run
+│   ├── shellGate.ts  # MCP shell-execution gate
+│   ├── types.ts      # Shared types
+│   └── version.ts    # Package version from package.json
 ├── tests/            # Vitest suites
 ├── Dockerfile        # Optional sandbox runtime
 ├── agent-preflight-sandbox

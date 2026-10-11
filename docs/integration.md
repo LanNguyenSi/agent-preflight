@@ -1,6 +1,6 @@
-# Integration with agent-tasks and agent-relay
+# Integrations
 
-`agent-preflight` is one piece of a small toolchain. This page is about how it composes with the other pieces, in particular with [`agent-tasks`](https://github.com/LanNguyenSi/agent-tasks) (the task-and-PR coordinator) and `agent-relay` (the GitHub bridge).
+`agent-preflight` is one piece of a small toolchain. This page is about how it composes with the other pieces, in particular with [`agent-tasks`](https://github.com/LanNguyenSi/agent-tasks) (the task-and-PR coordinator) and with agent harnesses such as [`harness`](https://github.com/LanNguyenSi/harness).
 
 ## The claim gate alignment
 
@@ -39,23 +39,21 @@ awk "BEGIN{exit !($confidence >= 0.8)}" || {
 
 The same JSON object can be posted into a task note or attached to a PR body so a reviewer sees what was validated and what was skipped.
 
-## With agent-relay
+## Order of operations
 
-`agent-relay` brokers GitHub side effects (PR create, merge, comment) over an internal API so agents do not need direct GitHub credentials. `agent-preflight` runs entirely locally. They do not share state, but they share an order:
+`agent-preflight` runs entirely locally and shares no state with the tools that open and merge the PR, but they share an order:
 
-1. Agent runs `preflight run` locally.
-2. If ready, agent pushes the branch.
-3. Agent calls `agent-relay` to open the PR with the preflight summary in the body.
+1. Run `preflight run` locally.
+2. If ready, push the branch.
+3. Open the PR with the preflight summary in the body (with agent-tasks: `pull_requests_create`).
 4. CI runs the same checks remotely as the safety net.
-5. `agent-relay` merges when CI is green and required reviewers approve.
+5. Merge when CI is green and required reviewers approve (with agent-tasks: `pull_requests_merge`).
 
 Step 1 is what `agent-preflight` adds. The remote CI in step 4 stays as the source of truth, but step 1 makes "push, wait, fix, repeat" a rare path instead of the default.
 
 ## With harness
 
-[`harness`](https://github.com/LanNguyenSi/harness) is the canonical Claude Code / opencode hook-wiring layer that consumes `agent-preflight`. Its `~/.claude/hooks/git-preflight.sh` is a thin wrapper around `preflight run "$PWD" --json` that records the result to the evidence ledger as `preflight:${REPO}`; harness Phase 4 then ships a `preflight-before-investigation` policy that gates `PreToolUse Bash ^git (status|log|diff|branch)` on `requires: { ledger_tag: "preflight:${REPO}", within: 1h }`. That is the founding-incident block (the 2026-04-23 stale-checkout incident that motivated harness).
-
-agent-preflight stays harness-agnostic; the integration is one-way (harness depends on `preflight`, not the reverse). Canonical script shape and the worked policy live in [harness's ARCHITECTURE.md](https://github.com/LanNguyenSi/harness/blob/master/docs/ARCHITECTURE.md) (§5 + Appendix A).
+To gate an agent on preflight under [`harness`](https://github.com/LanNguyenSi/harness), write a custom hook that runs `preflight run "$PWD" --json` and acts on `ready` or the exit code (see "With other harnesses" below). [harness's ARCHITECTURE.md](https://github.com/LanNguyenSi/harness/blob/master/docs/ARCHITECTURE.md) (§5) shows such a hook as an illustrative example. agent-preflight has no dependency on harness.
 
 ## With other harnesses
 
