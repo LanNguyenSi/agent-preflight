@@ -95,21 +95,19 @@ function childHoldingStreams(): FakeChild & { streams: PassThrough[] } {
   return Object.assign(promise, { kill: vi.fn(() => true), pid: 1, stdout, stderr, all, streams });
 }
 
-// A stand-in whose process exits on its own in the same turn of the event
-// loop in which the timeout fires: its exit lands right after the timer
-// callback. Until then `kill()` still reports the signal as delivered, as
-// Node does for a child that has exited but whose exit it has not processed.
-function childExitingWithTheTimer(timeoutMs: number, fields: Record<string, unknown>): FakeChild {
+// A stand-in for a child that exits inside the turn of the caller's own
+// timer: the test calls `exit` from that timer's callback, after the callback
+// has run and before the check phase that delivers the kill.
+function childExitingOnDemand(fields: Record<string, unknown>): FakeChild & { exit: () => void } {
   let exited = false;
+  let exit: () => void = () => {};
   const promise = new Promise<Record<string, unknown>>((resolve) => {
-    // The microtask runs once the caller has armed its own timer, so this
-    // timer, with the same delay, is due in the same turn and fires after it.
-    queueMicrotask(() => setTimeout(() => {
+    exit = () => {
       exited = true;
       resolve({ timedOut: false, isCanceled: false, all: "", stdout: "", stderr: "", ...fields });
-    }, timeoutMs));
+    };
   });
-  return Object.assign(promise, { kill: vi.fn(() => !exited), pid: 1 });
+  return Object.assign(promise, { kill: vi.fn(() => !exited), pid: 1, exit: () => exit() });
 }
 
 describe.each(kinds)("configured %s commands", (kind) => {
@@ -741,9 +739,18 @@ describe("test command timeouts", () => {
     });
 
     it("does not call an exit a timeout when it lands in the same turn as the timer", async () => {
-      const child = childExitingWithTheTimer(50, { exitCode: 0 });
+      const child = childExitingOnDemand({ exitCode: 0 });
       vi.mocked(execaModule.execa).mockImplementationOnce((() => child) as never);
-      expect(await run(50)).toBe(false);
+      // Wrap the caller's 50 ms timer so the child exits right after its
+      // callback, in the same timers phase, before the deferred kill runs.
+      const realSetTimeout = globalThis.setTimeout;
+      const spy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, ms?: number) =>
+        realSetTimeout(ms === 50 ? () => { callback(); child.exit(); } : callback, ms)) as never);
+      try {
+        expect(await run(50)).toBe(false);
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it("destroys the output streams after the grace when the killed child's streams stay open", async () => {
