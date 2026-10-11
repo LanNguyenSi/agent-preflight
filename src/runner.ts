@@ -10,8 +10,9 @@ import { stripShellExecution } from "./shellGate.js";
 // Maps a CheckResult's `kind` back to the `.preflight.json` `checks.<key>`
 // toggle that controls it, for the acknowledge feature below. Deliberately
 // excludes:
-//   - "ci-simulation" (its toggle stays a plain boolean — see
-//     PreflightConfig.checks — acknowledging it is out of scope);
+//   - "ci-simulation" (an object-shaped toggle is accepted but only `true`
+//     enables the check, see PreflightConfig.checks; acknowledging it is
+//     out of scope);
 //   - "custom" (customChecks[] already has its own per-check `failOnError`
 //     waiver);
 //   - "secret-detection" (Orchestrator decision D-013, fix-round on
@@ -230,7 +231,8 @@ export async function runPreflight(
   }
   const effectiveConfig: PreflightConfig = { ...config, logDir: resolvedLogDir };
 
-  // Import check runners dynamically to keep dependencies optional
+  // Load the check modules with dynamic import(); every module except tdd is
+  // loaded before any toggle is read, so a failing import rejects the run
   const { runLintChecks } = await import("./checks/lint.js");
   const { runTypecheckChecks } = await import("./checks/typecheck.js");
   const { runTestChecks } = await import("./checks/test.js");

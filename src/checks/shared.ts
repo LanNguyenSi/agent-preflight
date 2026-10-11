@@ -1010,7 +1010,7 @@ export interface PartialBuildState {
 // that writes into its package's output directory therefore makes that package
 // read as partially built. Nothing is snapshotted beforehand, because a
 // snapshot would answer a question about a directory the failing run no longer
-// had; the cost is documented in the README instead.
+// had; the cost is documented in docs/checks.md instead.
 export function evaluatePartialBuild(pkgDir: string): PartialBuildState {
   const pkg = readJsonFile<PackageJson>(path.join(pkgDir, "package.json"));
   const readings = packageOutputDirs(pkgDir, pkg).map((dir) => readOutputDir(pkgDir, dir));
@@ -1608,7 +1608,7 @@ export async function ensureProjectSetup(
   }
 
   // Option (a) from the build-required decision (see checks/test.ts and
-  // README's "Build-required test classification"): behind `--setup` only,
+  // docs/checks.md "Build-required test classification"): behind `--setup` only,
   // and only when BOTH a `build` script exists AND this repo's own CI
   // workflow demonstrably builds before it tests (`ciShowsBuildBeforeTest`,
   // conservative by construction -- see that function's comment). Runs

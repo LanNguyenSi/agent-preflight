@@ -79,7 +79,7 @@ export async function runTestChecks(
           logDir: config.logDir,
         });
         if (result.check) {
-          // The named build-required outcome (decision (c); see README's
+          // The named build-required outcome (decision (c); see docs/checks.md
           // "Build-required test classification"). The decision itself lives
           // in `evaluateBuildRequiredTestFailure`: a failing `npm test` is
           // downgraded to a non-blocking `skip` only when the FILESYSTEM says

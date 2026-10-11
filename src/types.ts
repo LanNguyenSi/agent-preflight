@@ -63,8 +63,8 @@ export type CheckKind = typeof CHECK_KINDS[number];
  * `validateConfig()` can accept and pass through an object-shaped value
  * from `.preflight.json` instead of silently dropping it: `secretDetection`
  * reports a configured-but-inert `{ acknowledge }` in `limitations` (see
- * runner.ts#checkSecretDetectionAcknowledgeIgnored and the README's
- * "Deliberate boundaries"), and `ciSimulation` simply isn't `=== true`, so
+ * runner.ts#checkSecretDetectionAcknowledgeIgnored and docs/checks.md
+ * "Waiving a permanently-failing check"), and `ciSimulation` simply isn't `=== true`, so
  * it falls back to its normal "skipped" limitations entry, same as any
  * other non-`true` value.
  */
@@ -122,12 +122,13 @@ export interface PreflightConfig {
    * Directory the complete stdout+stderr of a failing shell-based check
    * (lint, typecheck, test, audit, custom) is persisted to, overriding both
    * the `PREFLIGHT_LOG_DIR` environment variable and the home-based default
-   * `~/.agent-preflight/logs` (see README's log directory precedence table
-   * for the full 3-level order). A relative path is resolved against the
+   * `~/.agent-preflight/logs` (see docs/checks.md "Failure log directory
+   * override" for the full 3-level order). A relative path is resolved against the
    * repo root (the `repoPath` passed to `runPreflight`/`runBatch`), not
    * `workingDir` and not `process.cwd()`. Only the 20 newest of this
    * feature's own log files are kept; unrelated files in the directory are
-   * left alone. See README "Configuration" for the on-disk log format.
+   * left alone. See docs/checks.md "Failure log directory override" for the
+   * on-disk log format.
    */
   logDir?: string;
   actFlags?: string[];
