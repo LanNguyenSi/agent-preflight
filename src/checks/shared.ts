@@ -1,4 +1,4 @@
-import { execa } from "execa";
+import { execa, type ExecaReturnValue, type Options as ExecaOptions } from "execa";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -224,24 +224,36 @@ interface ShellCheckRunResult {
   rawOutput?: string;
 }
 
-// execa 8 hands its `timeout` option to child_process.spawn as well as arming
-// its own timer. Node's timer sends the same kill signal (SIGTERM by default)
-// without telling execa, so when the child's exit is observed before execa's
-// own timer callback runs, execa reports a plain SIGTERM kill with
-// `timedOut: false` even though the timeout is what killed the child. Both
-// timers are due within about a millisecond of each other, which makes this
-// rare but real. `didTimeOut` restores the verdict: a SIGTERM exit that
-// arrived no earlier than the configured budget after the spawn is a timeout.
-// `spawnedAt` is a `performance.now()` reading taken just before the execa
-// call. One millisecond of slack covers timer rounding; an unrelated SIGTERM
-// landing inside that last millisecond is indistinguishable from a timeout.
-export function didTimeOut(
-  result: { timedOut?: boolean; signal?: string | number },
-  timeoutMs: number,
-  spawnedAt: number
-): boolean {
-  if (result.timedOut) return true;
-  return result.signal === "SIGTERM" && performance.now() - spawnedAt >= timeoutMs - 1;
+// Runs `execa` with a timeout this module owns. execa 8 hands its `timeout`
+// option to child_process.spawn as well as arming its own timer. Node's timer
+// sends the same kill signal without telling execa, so when the child's exit
+// is observed before execa's own timer callback runs, execa reports a plain
+// SIGTERM kill with `timedOut: false` even though the timeout is what killed
+// the child. Both timers are due within about a millisecond of each other,
+// which makes this rare but real. Inferring a timeout from the elapsed time
+// instead misreads an unrelated early SIGTERM whose result settles late. So
+// no `timeout` is passed to execa: a local timer kills the child with
+// `subprocess.kill()` (SIGTERM, then execa's default SIGKILL after five
+// seconds, the same escalation execa's own timeout applies) and the verdict is
+// whether that timer sent the signal. `kill()` returns false for a child that
+// has already exited, so a command that finished just as the budget ran out is
+// not a timeout. The timer is cleared once the child has settled.
+export async function execaWithTimeout(
+  file: string,
+  args: string[],
+  options: ExecaOptions,
+  timeoutMs: number
+): Promise<{ result: ExecaReturnValue; timedOut: boolean }> {
+  const subprocess = execa(file, args, options);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = subprocess.kill();
+  }, timeoutMs);
+  try {
+    return { result: await subprocess, timedOut };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Invariant: when `missingLimitation` is set, we first check that the primary
@@ -273,20 +285,18 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
   }
 
   try {
-    const spawnedAt = performance.now();
-    const execaResult = await execa(
+    const { result, timedOut } = await execaWithTimeout(
       "bash",
       ["-c", options.command],
       {
         cwd: options.repoPath,
         reject: false,
         all: true,
-        timeout: options.timeoutMs ?? 120_000,
         env,
-      }
+      },
+      options.timeoutMs ?? 120_000
     );
-    const { exitCode, all, signal, isCanceled } = execaResult;
-    const timedOut = didTimeOut(execaResult, options.timeoutMs ?? 120_000, spawnedAt);
+    const { exitCode, all, signal, isCanceled } = result;
 
     if (
       !timedOut &&
@@ -2088,24 +2098,19 @@ async function runSetupCommand(
   command: string,
   timeoutMs: number = 120_000
 ): Promise<SetupCommandResult> {
-  const spawnedAt = performance.now();
-  const result = await execa(
+  const { result, timedOut } = await execaWithTimeout(
     "bash",
     ["-c", command],
     {
       cwd: repoPath,
       reject: false,
       all: true,
-      timeout: timeoutMs,
       env: buildCommandEnv(repoPath),
-    }
+    },
+    timeoutMs
   );
 
-  return {
-    exitCode: result.exitCode ?? 1,
-    timedOut: didTimeOut(result, timeoutMs, spawnedAt),
-    output: result.all,
-  };
+  return { exitCode: result.exitCode ?? 1, timedOut, output: result.all };
 }
 
 const PREDICATE_WINDOW_PART = 65_536;
