@@ -463,10 +463,15 @@ describe("configured test recursion protection", () => {
 describe("test command timeouts", () => {
   it("reports the configured timeout for a sleeping command", async () => {
     const result = await runTestChecks(repoPath, {
-      logDir, commands: { test: [{ run: "exec sleep 1", timeoutMs: 20 }] },
+      // The command outlives the timer by orders of magnitude, so it cannot
+      // exit on its own before the timer fires, however long a loaded runner
+      // stalls the event loop. The timer starts at spawn and kills the child
+      // regardless of its state, so spawn latency does not matter either.
+      logDir, commands: { test: [{ run: "exec sleep 60", timeoutMs: 750 }] },
     });
     expect(result.checks[0]).toMatchObject({ status: "fail" });
-    expect(result.checks[0].message).toContain("timed out after 20 ms");
+    expect(result.checks[0].message).toContain("timed out after 750 ms");
+    expect(result.checks[0].durationMs).toBeLessThan(30_000);
     expect(result.checks[0].message).not.toContain("build artifact");
   });
 
