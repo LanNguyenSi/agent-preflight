@@ -1,9 +1,9 @@
-import { execa } from "execa";
 import { CheckResult, PreflightConfig } from "../types.js";
 import {
   CheckSetResult,
   commandExists,
   createProjectContext,
+  execaWithTimeout,
   getConfiguredCommands,
   hasJavaProject,
   hasNodeProject,
@@ -36,20 +36,20 @@ export interface NpmAuditRunResult {
 export const npmAuditRunner = {
   timeoutMs: 90_000,
   async run(repoPath: string): Promise<NpmAuditRunResult> {
-    const result = await execa(
+    const { result, timedOut } = await execaWithTimeout(
       "bash",
       ["-lc", "npm audit --json"],
       {
         cwd: repoPath,
         reject: false,
-        timeout: npmAuditRunner.timeoutMs,
-      }
+      },
+      npmAuditRunner.timeoutMs
     );
     return {
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
-      timedOut: result.timedOut,
+      timedOut,
     };
   },
 };

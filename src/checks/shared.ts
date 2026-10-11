@@ -1,4 +1,4 @@
-import { execa } from "execa";
+import { execa, type ExecaReturnValue, type Options as ExecaOptions } from "execa";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -224,6 +224,69 @@ interface ShellCheckRunResult {
   rawOutput?: string;
 }
 
+// How long a child killed for its timeout keeps its output streams open. A
+// descendant the kill does not reach can hold them open far longer; after
+// this grace they are destroyed so the call returns with the output read so
+// far.
+export const TIMEOUT_STREAM_GRACE_MS = 1_000;
+
+// Runs `execa` with a timeout this module owns.
+//
+// No `timeout` option is passed to execa: execa 8 hands it to
+// child_process.spawn as well as arming its own timer, and when Node's timer
+// kills the child and the exit is seen first, execa reports a plain SIGTERM
+// kill with `timedOut: false`.
+//
+// When the budget runs out, the timer does not kill at once. It waits for the
+// next check phase of the event loop (`setImmediate`), which comes after the
+// poll phase in which Node processes child exits. A child that exited before
+// then is seen as exited and `subprocess.kill()` returns false for it; called
+// directly in the timer callback, `kill()` would return true for a child
+// that has exited but whose exit Node has not processed yet.
+//
+// The verdict is whether that `kill()` delivered the signal (SIGTERM, then
+// execa's SIGKILL after five seconds, as execa's own timeout does). It does
+// not depend on how the child then ends: a child that handles SIGTERM and
+// exits 0 still ran out of time, and a SIGTERM sent by anyone else is never
+// counted. Elapsed time is not consulted.
+//
+// After a delivered kill, the output streams are destroyed once
+// TIMEOUT_STREAM_GRACE_MS has passed, so a descendant holding them cannot
+// keep the call waiting. execa then settles with the output buffered so far
+// and without the child's exit code or signal; the timeout verdict does not
+// need them. A child that ended on its own is waited for as before, including
+// any descendant still writing to its streams.
+export async function execaWithTimeout(
+  file: string,
+  args: string[],
+  options: ExecaOptions,
+  timeoutMs: number
+): Promise<{ result: ExecaReturnValue; timedOut: boolean }> {
+  const subprocess = execa(file, args, options);
+  let timedOut = false;
+  let check: NodeJS.Immediate | undefined;
+  let grace: NodeJS.Timeout | undefined;
+  const timer = setTimeout(() => {
+    check = setImmediate(() => {
+      timedOut = subprocess.kill();
+      if (!timedOut) return;
+      grace = setTimeout(() => {
+        subprocess.stdout?.destroy();
+        subprocess.stderr?.destroy();
+        subprocess.all?.destroy();
+      }, TIMEOUT_STREAM_GRACE_MS);
+    });
+  }, timeoutMs);
+  try {
+    const result = await subprocess;
+    return { result, timedOut };
+  } finally {
+    clearTimeout(timer);
+    if (check !== undefined) clearImmediate(check);
+    clearTimeout(grace);
+  }
+}
+
 // Invariant: when `missingLimitation` is set, we first check that the primary
 // binary of the command is resolvable. Only then do we execute. This keeps the
 // limitation path reserved for "the tool really isn't installed" and prevents
@@ -253,17 +316,18 @@ export async function runShellCheck(options: ShellCheckOptions): Promise<ShellCh
   }
 
   try {
-    const { exitCode, all, timedOut, signal, isCanceled } = await execa(
+    const { result, timedOut } = await execaWithTimeout(
       "bash",
       ["-c", options.command],
       {
         cwd: options.repoPath,
         reject: false,
         all: true,
-        timeout: options.timeoutMs ?? 120_000,
         env,
-      }
+      },
+      options.timeoutMs ?? 120_000
     );
+    const { exitCode, all, signal, isCanceled } = result;
 
     if (
       !timedOut &&
@@ -2065,19 +2129,19 @@ async function runSetupCommand(
   command: string,
   timeoutMs: number = 120_000
 ): Promise<SetupCommandResult> {
-  const { exitCode, all, timedOut } = await execa(
+  const { result, timedOut } = await execaWithTimeout(
     "bash",
     ["-c", command],
     {
       cwd: repoPath,
       reject: false,
       all: true,
-      timeout: timeoutMs,
       env: buildCommandEnv(repoPath),
-    }
+    },
+    timeoutMs
   );
 
-  return { exitCode: exitCode ?? 1, timedOut: Boolean(timedOut), output: all };
+  return { exitCode: result.exitCode ?? 1, timedOut, output: result.all };
 }
 
 const PREDICATE_WINDOW_PART = 65_536;
