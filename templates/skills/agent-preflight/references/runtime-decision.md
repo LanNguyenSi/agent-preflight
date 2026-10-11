@@ -30,6 +30,8 @@ Command:
 preflight sandbox . --json
 ```
 
+Sandbox mode needs a source checkout, an `install.sh` install or a release bundle of agent-preflight; the npm package does not include the image sources, and `preflight sandbox` then stops with `Sandbox Dockerfile not found`.
+
 For `act` inside the container:
 
 ```bash

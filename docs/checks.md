@@ -10,12 +10,12 @@ Check-specific descriptions below use the default gate unless stated otherwise. 
 |-------|------|-----------------|-------------|------------------|
 | Git state, clean worktree | `git-state` | Tracked or untracked local changes that would diverge from what gets pushed | `git status --porcelain`, `git status --porcelain -z` | `fail` (blocker) when dirty; under `--setup`, judged against a snapshot taken before setup ran, so setup's own install/build output is never the reason for a `fail` (see "Setup phase" below) |
 | Git state, protected branch | `git-state` | Pushing directly to `main`, `master`, or other configured branches | `git rev-parse --abbrev-ref HEAD` | `warn`, since some workflows allow direct push |
-| Lint | `lint` | Code-quality issues | `eslint`, `ruff`, `pint`, `phpcs`, plus `package.json` `scripts.lint` and other repo-native scripts (Java has no default linter; set `commands.lint`) | `fail` on lint errors |
+| Lint | `lint` | Code-quality issues | `eslint`, `ruff`, `pint`, `phpcs`, plus `package.json` `scripts.lint` and other repo-native scripts, and `tsc` as a Node fallback (Java has no default linter; set `commands.lint`) | `fail` on lint errors |
 | Typecheck | `typecheck` | Type errors and broken builds | `tsc --noEmit`, `mypy`, `phpstan`, `psalm`, `mvn compile`, `gradle classes` | `fail` on type errors |
 | Test | `test` | Broken test suites | `npm test`, `pytest`, `composer run test`, `mvn test`, `gradle test` | `fail` when tests fail; `skip` for the auto-detected `npm test` when every failing package is unbuilt on disk (it has a `build` script of its own, a declared artifact is missing), holds no build output at all, and its own output names a path that resolves either to that missing artifact itself or to something in the missing artifact's directory that is likewise NOT on disk. "Holds no build output" is a PACKAGE property: every output directory the package identifies (the directory of each declared artifact, plus `dist` when it identifies none) is absent or empty. Any entry in any of them means a build ran and did not produce the artifact, so a partially built package (one declared artifact its build never emits, the rest built -- including one emitted into a different or nested directory) stays a blocking `fail` whose message names the directory that decided it, the artifact, and the rebuild remedy; a stale partial output directory is included. See ["Build-required test classification"](#build-required-test-classification-an-unbuilt-package-is-not-a-broken-one) below |
 | Dependency audit | `audit` | Known CVEs in dependencies | `npm audit --json`, `pip-audit`, `composer audit` | `fail` on high-severity findings; `skip` with a limitation when npm returned no report (including a timeout) |
 | Secret detection | `secret-detection` | API keys, tokens, private keys in source files | regex scan, git-aware + diff-scoped severity | `fail` only when the current change introduced the secret; `warn` for pre-existing, docs, test-fixture, or non-git (gitignored files are not scanned inside a git work tree) |
-| Commit convention | `commit-convention` | Recent commit messages that do not follow conventional commits | `git log` | `warn` only |
+| Commit convention | `commit-convention` | Subjects of the last 10 commits that do not match `type(scope): subject` (types `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `ci`, `build`, `perf`, `revert`; a `!` marker is not accepted) | `git log` | `warn` only |
 | TDD signal | `tdd` | `.ts`/`.js` source files changed on the branch without a paired test file (see [TDD signal: changed files](#tdd-signal-changed-files)) | `git diff`, filesystem scan | `warn` to nudge; `skip` with a limitation when files changed but none is a `.ts`/`.js` file, or when nothing was found and the diff range could not be determined; `pass` when nothing changed or only test files and exceptions changed; blocks only when `tdd` is required (then a `skip` also blocks, because it is not a `pass`); associates filenames only, it does not establish coverage or prove a TDD workflow |
 | CI simulation (opt-in) | `ci-simulation` | Workflow failures before push | `act` against `.github/workflows/` | `fail` when act exits non-zero or the run times out; a missing `act` is reported as a limitation |
 | Custom checks | `custom` | Anything you can express as a shell command | user-provided `command` | `fail` or `warn` per `failOnError` |
@@ -49,7 +49,7 @@ For each category without a non-empty `commands.*` list, the runner checks the e
 
 Unknown stacks emit a `limitation` rather than a `fail`, so the runner still produces a score. See [confidence-scoring.md](./confidence-scoring.md) for how skips and limitations affect the result.
 
-For Node projects, `package.json` `scripts.lint` takes precedence over dependency detection. If ESLint is only detected as a dependency, the runner invokes it only when the repository root contains a supported flat `eslint.config.*` or legacy `.eslintrc*` file. Otherwise it reports the missing ESLint configuration as a limitation and does not run ESLint.
+For Node projects, `package.json` `scripts.lint` takes precedence over dependency detection. If ESLint is only detected as a dependency, the runner invokes it only when the repository root contains a supported flat `eslint.config.*` or legacy `.eslintrc*` file. Otherwise it reports the missing ESLint configuration as a limitation and does not run ESLint. Without a `lint` script or an ESLint dependency, a project with `tsconfig.json` gets a `tsc-lint-fallback` lint check that runs `npx tsc --noEmit --skipLibCheck`; without `tsconfig.json` the lint category reports a limitation.
 
 The `npm-audit` check runs with a bounded timeout, and an audit that did not answer is reported as `skip` (not `warn`) with a `limitations` entry naming the cause: a timeout with no parsable report, or npm exiting non-zero without producing a report, which is what an unreachable or failing registry produces. That is the default direction rather than a list of recognized registry errors, so an outage never hangs the run, and an unfamiliar failure degrades to "not evaluated" instead of being misread as a real finding. npm's own usage errors, such as a missing lockfile, name themselves in `error.code` and stay a `warn` naming that failure.
 
@@ -122,12 +122,13 @@ Every check can be turned off in `.preflight.json`:
 }
 ```
 
-CLI flags `--no-audit`, `--no-secrets`, and `--ci-simulation` override the file for one run.
+`preflight run` and `preflight sandbox` accept `--ci-simulation`; `run`, `batch` and `sandbox` accept `--no-audit` and `--no-secrets`. Each overrides the file for one run. `batch` has no `--ci-simulation` flag; a repo's own `checks.ciSimulation: true` still applies there. On `preflight sandbox`, `--no-audit` and `--no-secrets` are currently not passed into the container.
 
-Instead of `true`/`false`, any toggle except `ciSimulation` and
-`secretDetection` can also be `{ "acknowledge": "<reason>" }` to run the
-check but waive a `fail` result as a non-blocking `acknowledged` status
-with the reason attached. A kind in `requiredChecks` still needs every result to pass, so acknowledging its failure does not unblock readiness. See ["Waiving a permanently-failing
+Instead of `true`/`false`, any toggle can also be
+`{ "acknowledge": "<reason>" }`; it is honored for every toggle except
+`ciSimulation` and `secretDetection`. An honored acknowledge runs the check
+but waives a `fail` result as a non-blocking `acknowledged` status with the
+reason attached. A kind in `requiredChecks` still needs every result to pass, so acknowledging its failure does not unblock readiness. See ["Waiving a permanently-failing
 check"](#waiving-a-permanently-failing-check-checkskindacknowledge) below
 for the full contract (required non-empty reason, visibility guarantees,
 boundaries, and why `secretDetection` is excluded).
@@ -196,7 +197,7 @@ Since the log directory can be set from the process environment as well as from 
 }
 ```
 
-`workingDir` (default `.`) is the directory checks run against, relative to the repo root; it does not change where `logDir` resolves (see above). `tddExceptions` is a list of glob patterns excluded from the TDD signal check's changed-source scan. `actFlags` and `sandbox.aptPackages`/`sandbox.pipPackages` are covered in [architecture.md](./architecture.md#act-integration) and [architecture.md#sandbox](./architecture.md#sandbox). `setup` is covered in "Setup phase"; command overrides and required checks are described below.
+`workingDir` (default `.`) is the directory checks run against, relative to the repo root; it does not change where `logDir` resolves (see above). `tddExceptions` is a list of glob patterns excluded from the TDD signal check's changed-source scan. `actFlags` and `sandbox.aptPackages`/`sandbox.pipPackages` are covered in [architecture.md](./architecture.md#act-integration) and [architecture.md#sandbox](./architecture.md#sandbox). `setup` is covered in "Setup phase"; command overrides and required checks are described below. `commitConvention` is `"conventional"` (default) or `"none"`; `"none"` skips the commit-convention check and adds a limitation, while `checks.commitConvention: false` turns it off without one.
 
 Repo-config validation problems stay lenient (the field is ignored, defaults apply, a warning is printed on stderr), and every such warning also appears in the result's `limitations` with a `config <path>:` prefix, so `preflight run --json`, `preflight batch --json` and the MCP `preflight_run` and `preflight_batch` tools show them to structured consumers. Unknown keys warn at the top level, in `checks`/`setup`/`sandbox` and inside `customChecks[]` entries (the entry itself is kept; only the unknown key is ignored).
 
@@ -283,6 +284,37 @@ Custom checks let you wire in anything else as a shell command:
 ```
 
 `failOnError: false` downgrades a non-zero exit to a `warn`. It blocks readiness only when `custom` is in `requiredChecks`.
+
+The diagram below shows, per entry point, which repository-controlled inputs reach execution and where the two guards sit: the MCP shell gate (`src/shellGate.ts`) and the `actFlags` screening before `act` starts.
+
+```mermaid
+flowchart TD
+    REPO["repo-controlled input<br/>.preflight.json, package scripts, workflow files"]
+    SBX["preflight sandbox<br/>container, writable workspace and caches"]
+    CLI["preflight run / batch"]
+    MCP["MCP preflight_run / preflight_batch"]
+    GATE{"PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS<br/>is exactly 1?"}
+    STRIP["shellGate.ts: customChecks, commands.*, ciSimulation<br/>removed and reported as skip;<br/>kinds with removed commands switched off"]
+    RUNNER["runner.ts runPreflight"]
+    SHELL["runShellCheck<br/>customChecks and commands.*"]
+    AUTO["autodetected scripts and setup"]
+    AF["actFlags.ts screening"]
+    ACT["act --dryrun --json ... -C repo<br/>from an empty temp dir"]
+
+    REPO --> SBX
+    REPO --> CLI
+    REPO --> MCP
+    SBX -->|"same CLI in the container"| CLI
+    MCP --> GATE
+    GATE -->|"no"| STRIP
+    STRIP -->|"remaining config"| RUNNER
+    GATE -->|"yes: full config"| RUNNER
+    CLI -->|"full config"| RUNNER
+    RUNNER --> SHELL
+    RUNNER --> AUTO
+    RUNNER -->|"ciSimulation true"| AF
+    AF -->|"accepted flags"| ACT
+```
 
 **Security: the target repo is not just data.** Its `.preflight.json` can
 define shell commands (`customChecks[].command`, `commands.lint`/`typecheck`/
@@ -741,7 +773,7 @@ three outcomes are deliberately different:
   build first" would be a dead end.
 
 The remedy named in a skip message depends on what could actually fix it.
-`--setup` only ever runs `npm run build` at the repo root, so the message
+`--setup` only ever runs `npm run build` in the effective target directory (`workingDir`, default the repo root), so the message
 names that when the failing unit *is* the root package, or when the root build
 script fans out over the workspaces (`--workspaces`/`-ws`) and therefore
 reaches them. Otherwise it names a workspace-scoped `npm run build -w <name>`
@@ -845,13 +877,14 @@ identical to `true`, with no acknowledge behavior in play.
   `typecheck`, `test`, `audit`, `commitConvention`, `tdd`): one reason
   acknowledges every check of that kind for the whole run (e.g. every
   `commands.test` entry), not a single named sub-check.
-- **Not supported** for `ciSimulation` (its toggle stays a plain boolean,
-  acknowledging CI-simulation behavior is out of scope for this feature) or
-  for `customChecks` (which already have their own per-check
+- **Not supported** for `ciSimulation`: an `{ acknowledge }` value is
+  accepted but does not enable CI simulation (only `true` does), and
+  acknowledging CI-simulation behavior is out of scope for this feature. Not
+  supported for `customChecks` either (which already have their own per-check
   `failOnError: false` waiver instead).
-- **Not supported** for `secretDetection` either (its toggle also stays a
-  plain boolean, a deliberate design choice): every other kind above waives
-  the whole check for the run, but a secret-detection finding is not
+- **Not supported** for `secretDetection`: an `{ acknowledge }` value is
+  accepted but ignored, and the check still runs. Every other kind above
+  waives the whole check for the run, but a secret-detection finding is not
   interchangeable that way: one `acknowledge` reason would blind every
   *future* secret in the repo, not just the finding an operator actually
   reviewed. Use `secretAllowlist` (a `path` or `path:line` entry) or an

@@ -14,6 +14,8 @@ Use sandbox when the host lacks required dependencies:
 preflight sandbox . --json
 ```
 
+Sandbox mode needs a source checkout, an `install.sh` install or a release bundle of agent-preflight; the npm package does not include the image sources, and `preflight sandbox` then stops with `Sandbox Dockerfile not found`.
+
 Use Docker socket passthrough only for `act`:
 
 ```bash

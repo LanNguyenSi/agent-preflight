@@ -9,6 +9,7 @@
 ## Test plan
 
 - [ ] `npm run build`
+- [ ] `npx tsc --noEmit -p tsconfig.test.json`
 - [ ] `npm test`
 - [ ] Ran agent-preflight on a real repo to dogfood the change
 - [ ] Manual smoke check: <!-- command or scenario -->

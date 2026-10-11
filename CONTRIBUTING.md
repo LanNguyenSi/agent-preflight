@@ -11,13 +11,16 @@ Thanks for your interest. agent-preflight is a CI preflight validation tool: loc
 
 1. Fork, branch off `main` (e.g. `feat/<scope>`, `fix/<scope>`).
 2. Keep changes scoped where possible.
-3. Run the project's own preflight on your changes before pushing:
+3. Run the same checks as CI before pushing:
 
    ```bash
    npm install
    npm run build
+   npx tsc --noEmit -p tsconfig.test.json
    npm test
    ```
+
+   `npm run build` does not typecheck the test files; `npx tsc --noEmit -p tsconfig.test.json` does, as in CI. Optionally also run `npm run lint` (CI does not run it) and `node dist/cli.js run .` to dogfood preflight on the repo.
 
 4. Open the PR with a clear summary, motivation, and test plan.
 
