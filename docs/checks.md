@@ -24,7 +24,7 @@ Check-specific descriptions below use the default gate unless stated otherwise. 
 
 Without `requiredChecks`, the default gate is:
 
-- `pass` and `skip` never block.
+- `pass` never blocks. `skip` blocks only through [`requiredChecks`](#required-checks), except a skip for [missing installed dependencies](#missing-installed-dependencies), which adds one install-hint blocker.
 - `warn` shows in output but does not move `ready` to `false`.
 - `fail` is a blocker, `ready` becomes `false`, and the CLI exits non-zero.
 - `acknowledged` is a `fail` the operator explicitly waived via
@@ -81,6 +81,10 @@ For auto-detected PHPStan and PHPCS, preflight searches the target directory, th
 A discovered PHPStan or PHPCS tool without a config inside that boundary is not invoked; the limitation directs you to `commands.typecheck` or `commands.lint`. A Composer `lint` script still takes precedence over Pint and PHPCS. PHPStan is preferred over Psalm. This config search does not change Pint or Psalm's own config handling.
 
 PHP tests run through a Composer `test` script or an explicit `commands.test` list. Preflight no longer automatically invokes a bare PHPUnit binary. To migrate a repo that relied on that fallback, provide the intended suite and config, for example `vendor/bin/phpunit --configuration phpunit.xml --testsuite Unit`, or define a Composer `test` script with that command. If PHPUnit exits non-zero for deprecation notices on an otherwise green run, configure the explicit command with `"passRegex": "^OK \\(", "failRegex": "^(FAILURES!|ERRORS!)"`; see the [output predicate rules](#command-overrides). These commands can have side effects; preflight does not determine whether a suite needs a database, infrastructure or another service. Auto-detection reports missing tools as limitations; an explicit command with a missing executable fails. Configure required checks below when an unevaluated kind must block readiness.
+
+### Missing installed dependencies
+
+The auto-detected Node checks (`npm-test`, `npm-typecheck`, `tsc`, `npm-lint`, `eslint`, `tsc-lint-fallback`) do not run when the install is plainly absent. A fresh checkout or git worktree without `node_modules` would otherwise report module-not-found and `tsc` errors that look like defects. The detection is deliberately narrow: `package.json` declares at least one entry in `dependencies` or `devDependencies`, `--setup` is not enabled, and neither the target directory nor any ancestor directory up to the enclosing git repository root (the first directory containing a `.git` directory or a linked-worktree `.git` file; a submodule's `.git` file does not end the walk, so its superproject's install counts, and an unreadable or unrecognised `.git` file makes the check run as before) contains `node_modules` (a hoisted workspace install at the repository root counts) or a Yarn Plug'n'Play map (`.pnp.cjs`, `.pnp.js`). An install outside the repository never counts. In that case each affected check is reported as `skip`, with the message `<check> not evaluated: dependencies not installed; run with --setup or install first` and the same text in `limitations`. The status stays `skip`, not `fail`, but the run adds one blocker with the install hint, so `ready` is `false` in the default configuration too (not only when the kind is in `requiredChecks`). A `skip` adds no passing weight to `confidence` and costs the usual limitation penalty. When the install state is uncertain (no declared dependencies, an unreadable path, `--setup` given), the check runs exactly as before. Explicit `commands.*` overrides and the CI simulation path are not affected. Only presence is checked, not completeness: a partial install still runs the checks.
 
 ## Monorepos and workspaces
 

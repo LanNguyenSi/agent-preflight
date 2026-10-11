@@ -8,6 +8,8 @@ import {
   hasJavaProject,
   hasNodeProject,
   hasPhpProject,
+  nodeDependenciesMissing,
+  dependenciesNotInstalledResult,
   hasPythonProject,
   hasComposerScript,
   runConfiguredCommands,
@@ -65,6 +67,10 @@ export async function runTestChecks(
     if (context.packageJson?.scripts?.test) {
       if (shouldSkipRecursiveNodeTest(repoPath, "npm run test")) {
         limitations.push("Skipping recursive Node test command while already running under Vitest");
+      } else if (nodeDependenciesMissing(context, config)) {
+        const missing = dependenciesNotInstalledResult("npm-test", "test", 0.2);
+        checks.push(missing.check);
+        limitations.push(missing.limitation);
       } else {
         const result = await runShellCheck({
           repoPath,

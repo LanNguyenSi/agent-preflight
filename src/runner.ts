@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { CheckKind, CheckResult, CheckToggle, ConfigSource, PreflightConfig, PreflightResult } from "./types.js";
-import { defaultLogDir, ensureProjectSetup, getWorkingDirHint, SetupBuildOutcome } from "./checks/shared.js";
+import { defaultLogDir, DEPENDENCIES_NOT_INSTALLED_HINT, ensureProjectSetup, getWorkingDirHint, isDependenciesNotInstalled, SetupBuildOutcome } from "./checks/shared.js";
 import { expandLeadingTilde } from "./pathUtils.js";
 import { CONFIG_FILENAME, requiredChecksConfigurationError } from "./config.js";
 import type { WorktreeSnapshot } from "./checks/git.js";
@@ -339,6 +339,15 @@ export async function runPreflight(
   const blockers = finalChecks
     .filter((c) => c.status === "fail")
     .map((c) => c.message ?? c.name);
+  // A check skipped because the install is absent was not evaluated, so the
+  // run cannot be ready on the strength of the remaining checks. One blocker
+  // carries the install hint; the checks themselves stay `skip`, not `fail`.
+  const notInstalled = finalChecks.filter(
+    (c) => c.status === "skip" && isDependenciesNotInstalled(c)
+  );
+  if (notInstalled.length > 0) {
+    blockers.push(`${notInstalled.map((c) => c.name).join(", ")} not evaluated: ${DEPENDENCIES_NOT_INSTALLED_HINT}`);
+  }
   blockers.push(...requiredCheckBlockers(finalChecks, config));
 
   const warnings = finalChecks

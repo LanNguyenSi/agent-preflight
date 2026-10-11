@@ -13,6 +13,9 @@ function makeRepo(packageJson: Record<string, unknown>): { repoPath: string; cal
   const binDir = path.join(repoPath, ".bin");
   const callsPath = path.join(repoPath, "calls.txt");
   fs.mkdirSync(binDir);
+  // An installed project: without node_modules the Node checks are reported
+  // as "dependencies not installed" instead of running.
+  fs.mkdirSync(path.join(repoPath, "node_modules"));
   fs.writeFileSync(path.join(repoPath, "package.json"), JSON.stringify(packageJson));
 
   for (const command of ["npm", "npx"]) {
