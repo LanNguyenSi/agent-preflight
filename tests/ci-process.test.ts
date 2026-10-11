@@ -3,7 +3,7 @@
  * execa mock. Covers the timeout killing act's descendants and a missing act
  * binary being reported as a limitation.
  */
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -26,13 +26,44 @@ function makeRepo(): string {
   return dir;
 }
 
-function isAlive(pid: number): boolean {
+type ProcessState = "running" | "zombie" | "gone";
+
+/**
+ * Whether a process has terminated and is only waiting to be reaped. A
+ * terminated process whose parent is gone stays in the process table until
+ * init reaps it, and `kill(pid, 0)` still succeeds for it. On a machine whose
+ * init reaps late (or never, like a container whose pid 1 is not an init) that
+ * made a stopped process look alive.
+ */
+function isZombie(pid: number): boolean {
+  try {
+    // The state follows the parenthesised command name, which may itself
+    // contain spaces and parentheses.
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const state = stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3);
+    return state === "Z" || state === "X";
+  } catch {
+    if (fs.existsSync("/proc/self/stat")) return true; // procfs is there, the process is not
+  }
+  try {
+    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z");
+  } catch {
+    return true; // ps found no such process
+  }
+}
+
+function processState(pid: number): ProcessState {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
-    return false;
+    return "gone";
   }
+  return isZombie(pid) ? "zombie" : "running";
+}
+
+/** True while the process can still run; a terminated process awaiting its reaper is not alive. */
+function isAlive(pid: number): boolean {
+  return processState(pid) === "running";
 }
 
 async function waitFor(condition: () => boolean, timeoutMs: number): Promise<boolean> {
@@ -64,6 +95,30 @@ afterEach(() => {
     }
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+describe("process liveness helper", () => {
+  it("does not count a terminated process that nobody has reaped as alive", async () => {
+    // The shell starts a short-lived background child and replaces itself with
+    // a sleeper, which never waits on it: the child ends as a zombie that
+    // stays in the process table while its parent runs.
+    const holder = spawn("sh", ["-c", "sleep 0.1 & echo $!; exec sleep 30"], { stdio: ["ignore", "pipe", "ignore"] });
+    try {
+      const out = await new Promise<string>((resolve) => {
+        holder.stdout.once("data", (chunk: Buffer) => resolve(chunk.toString()));
+      });
+      const zombiePid = Number(out.trim());
+      expect(zombiePid).toBeGreaterThan(0);
+      expect(await waitFor(() => processState(zombiePid) !== "running", 5000)).toBe(true);
+      // kill(pid, 0) alone cannot tell this process from a live one.
+      expect(() => process.kill(zombiePid, 0)).not.toThrow();
+      expect(processState(zombiePid)).toBe("zombie");
+      expect(isAlive(zombiePid)).toBe(false);
+      expect(isAlive(holder.pid as number)).toBe(true);
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  }, 15_000);
 });
 
 describe("runCiSimulation process behaviour", () => {
@@ -165,7 +220,8 @@ describe("runCiSimulation when preflight itself is terminated", () => {
   // the ".js" specifiers of the sources to their ".ts" files. A timer keeps the
   // process alive after the check settles, so a signal ends it only when the
   // check's hook re-raises that signal, and "exit" and "listener" end it only
-  // when the test creates the go file.
+  // when the test creates the go file. It creates the ready file once the
+  // check has installed its hooks.
   const harness = `
 const Module = require("module");
 const orig = Module._resolveFilename;
@@ -178,13 +234,18 @@ Module._resolveFilename = function (request, ...rest) {
 require(process.argv[2]).register({ transpileOnly: true, compilerOptions: { module: "commonjs" } });
 const { runCiSimulation } = require(process.argv[3]);
 const fs = require("fs");
-const [mode, goFile, markerFile] = process.argv.slice(5);
+const [mode, goFile, markerFile, readyFile] = process.argv.slice(5);
 if (mode === "listener") {
   // The host handles SIGTERM itself, so the check must not re-raise it: one
   // "x" per delivery, and a re-raise would deliver the signal a second time.
   process.on("SIGTERM", () => fs.appendFileSync(markerFile, "x"));
 }
 runCiSimulation(process.argv[4], [], { timeoutMs: 120000 }).then(() => {});
+// The call has started act and installed its termination hooks by now, since
+// both happen before the first await. The test signals this process only after
+// it sees this file; a signal that arrived earlier would meet no hook and end
+// the process with act still running.
+fs.writeFileSync(readyFile, "");
 setInterval(() => {
   if (mode !== "wait" && fs.existsSync(goFile)) process.exit(3);
 }, 20);
@@ -207,6 +268,7 @@ setInterval(() => {
     const childPidFile = path.join(binDir, "child.pid");
     const goFile = path.join(binDir, "go");
     const markerFile = path.join(binDir, "listener.ran");
+    const readyFile = path.join(binDir, "ready");
     // act and a sleeper that holds act's output pipe, like a job container.
     fs.writeFileSync(
       path.join(binDir, "act"),
@@ -218,7 +280,7 @@ setInterval(() => {
 
     const parent = spawn(
       process.execPath,
-      [harnessFile, tsNode, ciSource, makeRepo(), scenario.mode, goFile, markerFile],
+      [harnessFile, tsNode, ciSource, makeRepo(), scenario.mode, goFile, markerFile, readyFile],
       { env: { ...process.env, PATH: `${binDir}${path.delimiter}${originalPath}` }, stdio: "ignore" }
     );
     const parentEnd = new Promise<ParentEnd | null>((resolve) => {
@@ -227,7 +289,10 @@ setInterval(() => {
       setTimeout(() => resolve(null), 10_000).unref();
     });
     try {
-      expect(await waitFor(() => readPid(actPidFile) > 0 && readPid(childPidFile) > 0, 15_000)).toBe(true);
+      expect(
+        await waitFor(() => fs.existsSync(readyFile) && readPid(actPidFile) > 0 && readPid(childPidFile) > 0, 15_000),
+        "act did not start, or the parent did not signal that its hooks are installed"
+      ).toBe(true);
       const actPid = readPid(actPidFile);
       const childPid = readPid(childPidFile);
       expect(isAlive(actPid)).toBe(true);
@@ -243,14 +308,22 @@ setInterval(() => {
       }
       if (scenario.mode === "listener") {
         // The check's hook has handled the signal without ending the host.
-        expect(await waitFor(() => !isAlive(actPid) && !isAlive(childPid), 5000)).toBe(true);
+        const stopped = await waitFor(() => !isAlive(actPid) && !isAlive(childPid), 5000);
+        expect(
+          stopped,
+          `act ${actPid} is ${processState(actPid)}, its sleeper ${childPid} is ${processState(childPid)}`
+        ).toBe(true);
         expect(parent.exitCode === null && parent.signalCode === null).toBe(true);
         fs.writeFileSync(goFile, "");
       }
 
       const end = await parentEnd;
       expect(end, "the parent did not end").not.toBeNull();
-      expect(await waitFor(() => !isAlive(actPid) && !isAlive(childPid), 5000)).toBe(true);
+      const gone = await waitFor(() => !isAlive(actPid) && !isAlive(childPid), 5000);
+      expect(
+        gone,
+        `act ${actPid} is ${processState(actPid)}, its sleeper ${childPid} is ${processState(childPid)}; the parent ended as ${JSON.stringify(end)}`
+      ).toBe(true);
       const marker = fs.existsSync(markerFile) ? fs.readFileSync(markerFile, "utf8") : "";
       return { ...(end as ParentEnd), listenerCalls: marker.length };
     } finally {
