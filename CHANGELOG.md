@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - CI simulation: a timed-out `act` run no longer leaves descendants behind (act runs in its own process group and the timeout kills the whole group), and the timed-out check says so, also when act exits 0 just as the timeout fires. The group is also killed when preflight exits or receives SIGINT, SIGTERM or SIGHUP while act runs (SIGKILL of preflight cannot be intercepted). Two seconds after the group kill the output streams are destroyed, so a descendant that left the group and holds act's pipes cannot keep the call waiting past the timeout; that descendant itself keeps running. A missing `act` binary is reported as the "act not installed" limitation instead of a failed `act-dry-run` check (task 599101dd).
 - The CI simulation refusal for a platform mapping with a non-ASCII character now reads as one sentence naming the whole `<label>=<image>` argument, the ASCII-only rule and its reason, instead of repeating "refused" (task f06ee007).
 - MCP: with the shell-execution gate closed, a malformed `commands` value in the repo config (a non-array `commands.<kind>`, an array with a malformed entry such as `{"lint": [5]}`, or an unrecognized key in `commands`) is no longer dropped or reported as `skip` with `ready: true`. It stays in the gated config and is reported as a `<kind>:configuration` failure exactly like the CLI, so readiness is false; nothing executes (task 47223fad). Well-formed commands are still skipped.
+- **Sandbox image installs the act binary for its own architecture** (task f43bed34): the Dockerfile selected `act_Linux_x86_64.tar.gz` on every platform, so an arm64 image ran an x86_64 act under emulation. The asset and its sha256 (from the official `checksums.txt`) are now chosen per `TARGETARCH` (amd64, arm64; other architectures fail the build), and the archive is extracted with `--no-same-owner`, so `/usr/local/bin/act` is owned by root. Rebuild the sandbox image (`preflight sandbox --build`) to pick it up.
 
 ### CI
 
@@ -30,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - The Sandbox chapter of `docs/architecture.md` now states that the sandbox is not an isolation boundary and lists what `src/sandbox.ts` mounts (writable workspace, writable package caches, and the host Docker socket with `--docker-socket`); the README feature lines that mention the `act` CI dry-run link to the CI-simulation security note (task 4eab4ff6).
 - The README overview, feature and usage lines no longer describe the `act` dry run as validating the workflow plan; they say it can still execute workflow steps and point at the security note. The `runtime-decision.md` references of the three skill templates recommend `--docker-socket --ci-simulation` only for trusted repositories, with a link to that note (task 78b68aaa).
+- **Skill templates: trust note for the host run** (task 8b8e56e1): each `runtime-decision.md` now says once that `preflight run` executes repository-defined commands and should only be pointed at trusted repositories, linking the security note.
 
 ## [0.11.0] - 2026-10-05
 
