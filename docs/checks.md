@@ -310,9 +310,9 @@ flowchart TD
     STRIP -->|"remaining config"| RUNNER
     GATE -->|"yes: full config"| RUNNER
     CLI -->|"full config"| RUNNER
-    RUNNER --> SHELL
+    RUNNER -->|"CLI or open gate:<br/>customChecks, commands.*"| SHELL
     RUNNER --> AUTO
-    RUNNER -->|"ciSimulation true"| AF
+    RUNNER -->|"CLI or open gate:<br/>ciSimulation true"| AF
     AF -->|"accepted flags"| ACT
 ```
 
