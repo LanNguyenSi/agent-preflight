@@ -6,6 +6,8 @@ Default path:
 preflight run . --json
 ```
 
+`preflight run` executes commands the target repository defines (for example `customChecks` and `commands.*` in its `.preflight.json`, and the lint/test scripts it autodetects), so run it only on trusted repositories; see the [security note](https://github.com/LanNguyenSi/agent-preflight/blob/main/docs/checks.md#custom-checks).
+
 Use sandbox when the host lacks required dependencies:
 
 ```bash

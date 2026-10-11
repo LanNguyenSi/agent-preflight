@@ -6,6 +6,8 @@ Run on the host first:
 preflight run . --json
 ```
 
+`preflight run` executes commands the target repository defines (for example `customChecks` and `commands.*` in its `.preflight.json`, and the lint/test scripts it autodetects), so run it only on trusted repositories; see the [security note](https://github.com/LanNguyenSi/agent-preflight/blob/main/docs/checks.md#custom-checks).
+
 Switch to sandbox when host limitations are mainly about missing tools:
 
 ```bash
