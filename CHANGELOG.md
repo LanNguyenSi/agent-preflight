@@ -29,9 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - The Sandbox chapter of `docs/architecture.md` now states that the sandbox is not an isolation boundary and lists what `src/sandbox.ts` mounts (writable workspace, writable package caches, and the host Docker socket with `--docker-socket`); the README feature lines that mention the `act` CI dry-run link to the CI-simulation security note (task 4eab4ff6).
 - The README overview, feature and usage lines no longer describe the `act` dry run as validating the workflow plan; they say it can still execute workflow steps and point at the security note. The `runtime-decision.md` references of the three skill templates recommend `--docker-socket --ci-simulation` only for trusted repositories, with a link to that note (task 78b68aaa).
-
-### Documentation
-
 - **Skill templates: trust note for the host run** (task 8b8e56e1): each `runtime-decision.md` now says once that `preflight run` executes repository-defined commands and should only be pointed at trusted repositories, linking the security note.
 
 ## [0.11.0] - 2026-10-05
