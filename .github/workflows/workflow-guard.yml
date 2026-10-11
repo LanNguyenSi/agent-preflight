@@ -13,7 +13,13 @@ jobs:
   workflow-guard:
     permissions:
       contents: read
-    uses: LanNguyenSi/agent-dx/.github/workflows/workflow-guard.yml@7ffc2c86f999a3e77849a35ea241800a3c3798cd
+    uses: LanNguyenSi/agent-dx/.github/workflows/workflow-guard.yml@4261a19c68fce9ce2d44c2221f536c04235c14aa
     with:
-      ref: 7ffc2c86f999a3e77849a35ea241800a3c3798cd
+      config: slop.config.yml
+
+  workflow-guard-lowercase-owner:
+    permissions:
+      contents: read
+    uses: lannguyensi/agent-dx/.github/workflows/workflow-guard.yml@4261a19c68fce9ce2d44c2221f536c04235c14aa
+    with:
       config: slop.config.yml
