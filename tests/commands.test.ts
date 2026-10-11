@@ -642,6 +642,16 @@ describe("test command timeouts", () => {
     expect(result.checks[0]).toMatchObject({ status: "fail", message: "test command failed" });
   });
 
+  it("waits for a descendant of a command that exited on its own, without tearing down its output", async () => {
+    // The command exits 0 before the budget; a background sleep keeps the
+    // output open past budget + grace. No kill was delivered, so this is a
+    // clean pass and the streams are not destroyed.
+    const result = await shellCheck("(sleep 2 &); echo ok; exit 0", 300);
+    const detail = `execa outcome: ${await execaOutcome()}; check: ${JSON.stringify(result.check)}`;
+    expect(result.check, detail).toMatchObject({ status: "pass" });
+    expect(result.rawOutput ?? "", detail).toContain("ok");
+  }, 20_000);
+
   it("returns shortly after the timeout when a descendant keeps the output open", async () => {
     // The timeout kills bash; the background sleep it started is not killed
     // and keeps bash's stdout and stderr open for 30 s.
@@ -667,10 +677,13 @@ describe("test command timeouts", () => {
     // The trap turns the SIGTERM into exit 0, so the exit status alone reads
     // like a clean pass. The timeout ended the command all the same.
     const result = await runTestChecks(repoPath, {
-      logDir, commands: { test: [{ run: "trap 'exit 0' TERM; echo ready; while :; do sleep 0.05; done", timeoutMs: 750 }] },
+      logDir, commands: { test: [{ run: "trap 'echo got-term; exit 0' TERM; echo ready; while :; do sleep 0.05; done", timeoutMs: 750 }] },
     });
     const detail = `execa outcome: ${await execaOutcome()}; check: ${JSON.stringify(result.checks[0])}`;
     expect(result.checks[0], detail).toMatchObject({ status: "fail", message: "test command failed: timed out after 750 ms" });
+    // The timeout sends SIGTERM first (the trap runs); SIGKILL only follows later.
+    const settled = (await vi.mocked(execaModule.execa).mock.results[0]?.value) as { all?: string; stdout?: string };
+    expect(String(settled?.all ?? settled?.stdout ?? ""), detail).toContain("got-term");
   });
 
   it.each([
