@@ -224,20 +224,38 @@ interface ShellCheckRunResult {
   rawOutput?: string;
 }
 
-// Runs `execa` with a timeout this module owns. execa 8 hands its `timeout`
-// option to child_process.spawn as well as arming its own timer. Node's timer
-// sends the same kill signal without telling execa, so when the child's exit
-// is observed before execa's own timer callback runs, execa reports a plain
-// SIGTERM kill with `timedOut: false` even though the timeout is what killed
-// the child. Both timers are due within about a millisecond of each other,
-// which makes this rare but real. Inferring a timeout from the elapsed time
-// instead misreads an unrelated early SIGTERM whose result settles late. So
-// no `timeout` is passed to execa: a local timer kills the child with
-// `subprocess.kill()` (SIGTERM, then execa's default SIGKILL after five
-// seconds, the same escalation execa's own timeout applies) and the verdict is
-// whether that timer sent the signal. `kill()` returns false for a child that
-// has already exited, so a command that finished just as the budget ran out is
-// not a timeout. The timer is cleared once the child has settled.
+// How long a child killed for its timeout keeps its output streams open. A
+// descendant the kill does not reach can hold them open far longer; after
+// this grace they are destroyed so the call returns with the output read so
+// far.
+export const TIMEOUT_STREAM_GRACE_MS = 1_000;
+
+// Runs `execa` with a timeout this module owns.
+//
+// No `timeout` option is passed to execa: execa 8 hands it to
+// child_process.spawn as well as arming its own timer, and when Node's timer
+// kills the child and the exit is seen first, execa reports a plain SIGTERM
+// kill with `timedOut: false`.
+//
+// When the budget runs out, the timer does not kill at once. It waits for the
+// next check phase of the event loop (`setImmediate`), which comes after the
+// poll phase in which Node processes child exits. A child that exited before
+// then is seen as exited and `subprocess.kill()` returns false for it; called
+// directly in the timer callback, `kill()` would return true for a child
+// that has exited but whose exit Node has not processed yet.
+//
+// The verdict is whether that `kill()` delivered the signal (SIGTERM, then
+// execa's SIGKILL after five seconds, as execa's own timeout does). It does
+// not depend on how the child then ends: a child that handles SIGTERM and
+// exits 0 still ran out of time, and a SIGTERM sent by anyone else is never
+// counted. Elapsed time is not consulted.
+//
+// After a delivered kill, the output streams are destroyed once
+// TIMEOUT_STREAM_GRACE_MS has passed, so a descendant holding them cannot
+// keep the call waiting. execa then settles with the output buffered so far
+// and without the child's exit code or signal; the timeout verdict does not
+// need them. A child that ended on its own is waited for as before, including
+// any descendant still writing to its streams.
 export async function execaWithTimeout(
   file: string,
   args: string[],
@@ -246,13 +264,26 @@ export async function execaWithTimeout(
 ): Promise<{ result: ExecaReturnValue; timedOut: boolean }> {
   const subprocess = execa(file, args, options);
   let timedOut = false;
+  let check: NodeJS.Immediate | undefined;
+  let grace: NodeJS.Timeout | undefined;
   const timer = setTimeout(() => {
-    timedOut = subprocess.kill();
+    check = setImmediate(() => {
+      timedOut = subprocess.kill();
+      if (!timedOut) return;
+      grace = setTimeout(() => {
+        subprocess.stdout?.destroy();
+        subprocess.stderr?.destroy();
+        subprocess.all?.destroy();
+      }, TIMEOUT_STREAM_GRACE_MS);
+    });
   }, timeoutMs);
   try {
-    return { result: await subprocess, timedOut };
+    const result = await subprocess;
+    return { result, timedOut };
   } finally {
     clearTimeout(timer);
+    if (check !== undefined) clearImmediate(check);
+    clearTimeout(grace);
   }
 }
 

@@ -1,6 +1,8 @@
+import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { PassThrough } from "stream";
 import * as execaModule from "execa";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, mergeConfig, validateConfig } from "../src/config.js";
@@ -73,6 +75,41 @@ function childSettlingAfter(ms: number, fields: Record<string, unknown>): FakeCh
     setTimeout(() => resolve({ timedOut: false, isCanceled: false, all: "", stdout: "", stderr: "", ...fields }), ms);
   });
   return Object.assign(promise, { kill: vi.fn(() => false), pid: 1 });
+}
+
+// A stand-in whose process the timeout kills while its output streams stay
+// open, as when a descendant the kill does not reach still holds them. Like
+// execa, it settles only once a stream is destroyed, with the output read so
+// far and without an exit code or signal.
+function childHoldingStreams(): FakeChild & { streams: PassThrough[] } {
+  const streams = [new PassThrough(), new PassThrough(), new PassThrough()];
+  const [stdout, stderr, all] = streams;
+  const promise = new Promise<Record<string, unknown>>((resolve) => {
+    for (const stream of streams) {
+      stream.on("close", () => resolve({
+        exitCode: undefined, signal: undefined, code: "ERR_STREAM_PREMATURE_CLOSE",
+        timedOut: false, isCanceled: false, all: "partial", stdout: "partial", stderr: "",
+      }));
+    }
+  });
+  return Object.assign(promise, { kill: vi.fn(() => true), pid: 1, stdout, stderr, all, streams });
+}
+
+// A stand-in whose process exits on its own in the same turn of the event
+// loop in which the timeout fires: its exit lands right after the timer
+// callback. Until then `kill()` still reports the signal as delivered, as
+// Node does for a child that has exited but whose exit it has not processed.
+function childExitingWithTheTimer(timeoutMs: number, fields: Record<string, unknown>): FakeChild {
+  let exited = false;
+  const promise = new Promise<Record<string, unknown>>((resolve) => {
+    // The microtask runs once the caller has armed its own timer, so this
+    // timer, with the same delay, is due in the same turn and fires after it.
+    queueMicrotask(() => setTimeout(() => {
+      exited = true;
+      resolve({ timedOut: false, isCanceled: false, all: "", stdout: "", stderr: "", ...fields });
+    }, timeoutMs));
+  });
+  return Object.assign(promise, { kill: vi.fn(() => !exited), pid: 1 });
 }
 
 describe.each(kinds)("configured %s commands", (kind) => {
@@ -517,6 +554,23 @@ async function waitUntil(condition: () => boolean, timeoutMs: number): Promise<b
   return condition();
 }
 
+// True once `pid` has exited and is waiting to be reaped. `ps` runs
+// synchronously, so asking does not let this process's event loop run and
+// process the exit.
+function isZombie(pid: number): boolean {
+  try {
+    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z");
+  } catch {
+    return false;
+  }
+}
+
+function shellCheck(command: string, timeoutMs: number): Promise<Awaited<ReturnType<typeof shared.runShellCheck>>> {
+  return shared.runShellCheck({
+    name: "test", kind: "test", command, repoPath, logDir, timeoutMs, weight: 1, failureMessage: "test command failed",
+  });
+}
+
 // The three places that run a command under a time budget: the configured
 // command checks, the --setup build step and the npm audit runner. Each one
 // returns whether the call was reported as timed out.
@@ -588,6 +642,61 @@ describe("test command timeouts", () => {
     expect(result.checks[0]).toMatchObject({ status: "fail", message: "test command failed" });
   });
 
+  it("returns shortly after the timeout when a descendant keeps the output open", async () => {
+    // The timeout kills bash; the background sleep it started is not killed
+    // and keeps bash's stdout and stderr open for 30 s.
+    const started = Date.now();
+    const result = await shellCheck('sleep 30 & echo "descendant $!"; wait', 300);
+    const elapsed = Date.now() - started;
+    const descendant = Number(/descendant (\d+)/.exec(result.rawOutput ?? "")?.[1]);
+    try {
+      const detail = `elapsed ${elapsed} ms; execa outcome: ${await execaOutcome()}; check: ${JSON.stringify(result.check)}`;
+      expect(result.check, detail).toMatchObject({ status: "fail", message: "test command failed: timed out after 300 ms" });
+      expect(descendant, detail).toBeGreaterThan(0);
+      // The descendant still held the output when the call returned.
+      expect(isAlive(descendant), detail).toBe(true);
+      expect(elapsed, detail).toBeLessThan(3000);
+    } finally {
+      if (descendant > 0 && isAlive(descendant)) {
+        try { process.kill(descendant, "SIGKILL"); } catch { /* gone */ }
+      }
+    }
+  }, 40_000);
+
+  it("reports a timeout for a command that exits 0 on the timeout's SIGTERM", async () => {
+    // The trap turns the SIGTERM into exit 0, so the exit status alone reads
+    // like a clean pass. The timeout ended the command all the same.
+    const result = await runTestChecks(repoPath, {
+      logDir, commands: { test: [{ run: "trap 'exit 0' TERM; echo ready; while :; do sleep 0.05; done", timeoutMs: 750 }] },
+    });
+    const detail = `execa outcome: ${await execaOutcome()}; check: ${JSON.stringify(result.checks[0])}`;
+    expect(result.checks[0], detail).toMatchObject({ status: "fail", message: "test command failed: timed out after 750 ms" });
+  });
+
+  it.each([
+    [0, "pass", undefined],
+    [3, "fail", "test command failed"],
+  ])("does not call exit %i a timeout when the timer fires before Node has processed that exit", async (code, status, message) => {
+    // The command is started from the check phase of the event loop, and the
+    // loop is then held until the command has exited and the budget is spent.
+    // The next timers phase comes before the next poll phase, in which Node
+    // processes child exits, so the timer fires while the exited child is
+    // still unreaped and kill(2) on it would still succeed.
+    await new Promise((resolve) => setImmediate(resolve));
+    const budget = 50;
+    const started = Date.now();
+    const pending = shellCheck(`exit ${code}`, budget);
+    const pid = (vi.mocked(execaModule.execa).mock.results[0]?.value as { pid?: number } | undefined)?.pid as number;
+    while (!(isZombie(pid) && Date.now() - started > budget + 50) && Date.now() - started < 20_000) {
+      // hold the event loop
+    }
+    const unreaped = isZombie(pid);
+    const result = await pending;
+    const detail = `unreaped ${unreaped}; execa outcome: ${await execaOutcome()}; check: ${JSON.stringify(result.check)}`;
+    expect(unreaped, detail).toBe(true);
+    expect(result.check, detail).toMatchObject({ status, message });
+  });
+
   describe.each(timeoutSites)("%s", (_site, run) => {
     it("reports a timeout when the timer fires and kills the child", async () => {
       const child = childEndedByKill();
@@ -616,6 +725,24 @@ describe("test command timeouts", () => {
         expect(await run(50), JSON.stringify(fields)).toBe(false);
         fs.rmSync(path.join(repoPath, "node_modules"), { recursive: true, force: true });
       }
+    });
+
+    it("does not call an exit a timeout when it lands in the same turn as the timer", async () => {
+      const child = childExitingWithTheTimer(50, { exitCode: 0 });
+      vi.mocked(execaModule.execa).mockImplementationOnce((() => child) as never);
+      expect(await run(50)).toBe(false);
+    });
+
+    it("destroys the output streams after the grace when the killed child's streams stay open", async () => {
+      const child = childHoldingStreams();
+      vi.mocked(execaModule.execa).mockImplementationOnce((() => child) as never);
+      const outcome = await Promise.race([
+        run(50).then((timedOut) => ({ timedOut })),
+        new Promise((resolve) => setTimeout(() => resolve("still waiting"), shared.TIMEOUT_STREAM_GRACE_MS + 3000)),
+      ]);
+      expect(outcome).toEqual({ timedOut: true });
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(child.streams.map((stream) => stream.destroyed)).toEqual([true, true, true]);
     });
 
     it("stops the timer once the child has settled", async () => {

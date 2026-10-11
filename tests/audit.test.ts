@@ -560,8 +560,8 @@ describe("runAuditChecks npm branch (through the npmAuditRunner seam)", () => {
   });
 });
 
-describe("npmAuditRunner real timeout (no mock: exercises execa's own timeout option)", () => {
-  // The seam's `timeout` option is the one line this whole change hangs on,
+describe("npmAuditRunner real timeout (no mock: exercises the runner's own timeout)", () => {
+  // The seam's timeout is the one line this whole change hangs on,
   // so one test drives the REAL `npm audit --json` through `bash -lc` and
   // lets execa kill it. For that kill to be deterministic the child must be
   // unable to finish on its own: a fixture with one dependency makes npm
