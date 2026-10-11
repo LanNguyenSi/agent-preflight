@@ -45,10 +45,22 @@ function isZombie(pid: number): boolean {
   } catch {
     if (fs.existsSync("/proc/self/stat")) return true; // procfs is there, the process is not
   }
+  return isZombieViaPs(pid);
+}
+
+/**
+ * The `ps` fallback for machines without procfs. Fails closed: only a `ps`
+ * that ran and listed no such process (exit status 1, empty output) means the
+ * process is gone; a `ps` that cannot run at all throws, so a broken probe
+ * cannot make a live process look terminated.
+ */
+function isZombieViaPs(pid: number, psPath = "/bin/ps"): boolean {
   try {
-    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z");
-  } catch {
-    return true; // ps found no such process
+    return execFileSync(psPath, ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z");
+  } catch (err) {
+    const failure = err as { status?: number | null; stdout?: string };
+    if (failure.status === 1 && !String(failure.stdout ?? "").trim()) return true; // ps found no such process
+    throw err;
   }
 }
 
@@ -98,6 +110,14 @@ afterEach(() => {
 });
 
 describe("process liveness helper", () => {
+  it("fails closed when ps cannot run instead of reporting the process as gone", () => {
+    expect(() => isZombieViaPs(process.pid, path.join(os.tmpdir(), "preflight-no-such-ps"))).toThrow();
+  });
+
+  it("reports a live process as not a zombie through ps", () => {
+    expect(isZombieViaPs(process.pid)).toBe(false);
+  });
+
   it("does not count a terminated process that nobody has reaped as alive", async () => {
     // The shell starts a short-lived background child and replaces itself with
     // a sleeper, which never waits on it: the child ends as a zombie that
