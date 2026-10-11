@@ -101,10 +101,12 @@ export const DEPENDENCIES_NOT_INSTALLED_HINT = "dependencies not installed; run 
 // directory nor any ancestor up to the repository boundary holds a
 // `node_modules` directory (an ancestor covers workspace packages hoisted to
 // the repo root) or a Yarn PnP map. The walk stops after the first directory
-// that contains a `.git` entry (directory or worktree file), so an install
-// outside the repository never counts. Any doubt answers false, so the check
-// runs exactly as before and a real failure is never hidden behind this
-// limitation.
+// that holds a `.git` directory or a linked-worktree `.git` file, so an install
+// outside the repository never counts. A submodule's `.git` file (gitdir under
+// `modules/`) is not a boundary: the walk continues into the superproject,
+// whose install the submodule may resolve. A `.git` file that is unreadable or
+// of unrecognised shape is doubt. Any doubt answers false, so the check runs
+// exactly as before and a real failure is never hidden behind this limitation.
 export function nodeDependenciesMissing(context: ProjectContext, config: PreflightConfig): boolean {
   if (config.setup?.enabled === true) return false;
   const pkg = context.packageJson;
@@ -121,16 +123,55 @@ export function nodeDependenciesMissing(context: ProjectContext, config: Preflig
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
       }
     }
-    try {
-      fs.statSync(path.join(dir, ".git"));
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
-    }
+    const boundary = gitBoundaryAt(dir);
+    if (boundary === "uncertain") return false;
+    if (boundary === "stop") return true;
     const parent = path.dirname(dir);
     if (parent === dir) return true;
     dir = parent;
   }
+}
+
+type GitBoundary = "none" | "stop" | "continue" | "uncertain";
+
+// Classifies the `.git` entry of `dir`: a directory or a linked-worktree file
+// ends the repository ("stop"); a submodule file does not ("continue"); a
+// missing entry is "none"; anything unreadable or unrecognised is "uncertain".
+function gitBoundaryAt(dir: string): GitBoundary {
+  const gitPath = path.join(dir, ".git");
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(gitPath);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "none" : "uncertain";
+  }
+  if (stat.isDirectory()) return "stop";
+  if (!stat.isFile()) return "uncertain";
+  let content: string;
+  try {
+    content = fs.readFileSync(gitPath, "utf8");
+  } catch {
+    return "uncertain";
+  }
+  const match = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(content);
+  if (!match) return "uncertain";
+  const segments = match[1].replace(/\\/g, "/").split("/");
+  // Last marker wins: a linked worktree of a submodule lives under
+  // `modules/<name>/worktrees/<id>` and is still a worktree boundary.
+  const worktrees = segments.lastIndexOf("worktrees");
+  const modules = segments.lastIndexOf("modules");
+  if (worktrees !== -1 && worktrees > modules) return "stop";
+  if (modules !== -1) return "continue";
+  return "uncertain";
+}
+
+// Check results produced by `dependenciesNotInstalledResult`. Tracked by
+// identity rather than by message text, so a skip that merely quotes the hint
+// is not mistaken for one.
+const dependenciesNotInstalledChecks = new WeakSet<CheckResult>();
+
+export function isDependenciesNotInstalled(check: CheckResult): boolean {
+  return dependenciesNotInstalledChecks.has(check);
 }
 
 // The non-blocking outcome for a Node check whose dependencies are missing:
@@ -141,10 +182,9 @@ export function dependenciesNotInstalledResult(
   weight: number
 ): { check: CheckResult; limitation: string } {
   const message = `${name} not evaluated: ${DEPENDENCIES_NOT_INSTALLED_HINT}`;
-  return {
-    check: { name, kind, status: "skip", message, durationMs: 0, confidenceContribution: weight },
-    limitation: message,
-  };
+  const check: CheckResult = { name, kind, status: "skip", message, durationMs: 0, confidenceContribution: weight };
+  dependenciesNotInstalledChecks.add(check);
+  return { check, limitation: message };
 }
 
 export function hasComposerScript(context: ProjectContext, name: string): boolean {

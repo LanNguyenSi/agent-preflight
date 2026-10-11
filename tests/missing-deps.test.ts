@@ -7,6 +7,7 @@ import { runLintChecks } from "../src/checks/lint.js";
 import { runTypecheckChecks } from "../src/checks/typecheck.js";
 import { runTestChecks } from "../src/checks/test.js";
 import { runPreflight } from "../src/runner.js";
+import { dependenciesNotInstalledResult, isDependenciesNotInstalled } from "../src/checks/shared.js";
 
 const HINT = "dependencies not installed; run with --setup or install first";
 const tempDirs: string[] = [];
@@ -201,17 +202,44 @@ describe("missing installed dependencies", () => {
       expect(test.limitations.join("\n")).toContain(HINT);
     });
 
-    it("also stops at a .git file (linked worktree)", async () => {
+    // A project copied under an outer directory that holds node_modules, with
+    // the given content in its own `.git` file (or none when omitted).
+    function nestedProject(gitFile?: string): string {
       const outer = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-missing-deps-outer-"));
       tempDirs.push(outer);
       fs.mkdirSync(path.join(outer, "node_modules"));
       const { repoPath } = makeRepo({ installed: false });
       const inner = path.join(outer, "repo");
       fs.cpSync(repoPath, inner, { recursive: true });
-      fs.writeFileSync(path.join(inner, ".git"), "gitdir: /nonexistent\n");
+      if (gitFile !== undefined) fs.writeFileSync(path.join(inner, ".git"), gitFile);
+      return inner;
+    }
 
+    it("also stops at a .git file pointing into a worktrees directory (linked worktree)", async () => {
+      const inner = nestedProject("gitdir: /somewhere/.git/worktrees/x\n");
       const test = await runTestChecks(inner, { logDir: logDir(inner) });
       expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "skip"]]);
+      expect(test.limitations.join("\n")).toContain(HINT);
+    });
+
+    it("keeps walking past a submodule .git file and uses the superproject install", async () => {
+      const inner = nestedProject("gitdir: ../../.git/modules/sub\n");
+      const test = await runTestChecks(inner, { logDir: logDir(inner) });
+      expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "fail"]]);
+      expect(test.limitations.join("\n")).not.toContain(HINT);
+
+      const result = await runPreflight(inner, {
+        logDir: logDir(inner),
+        checks: { gitState: false, audit: false, secretDetection: false, commitConvention: false, tdd: false },
+      });
+      expect(result.blockers.some((b) => b.includes(HINT))).toBe(false);
+    });
+
+    it("runs the checks when the .git file is unrecognised", async () => {
+      const inner = nestedProject("not a gitdir pointer\n");
+      const test = await runTestChecks(inner, { logDir: logDir(inner) });
+      expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "fail"]]);
+      expect(test.limitations.join("\n")).not.toContain(HINT);
     });
 
     it("counts a node_modules hoisted to the repository root for a nested package", async () => {
@@ -226,6 +254,16 @@ describe("missing installed dependencies", () => {
       const test = await runTestChecks(pkgDir, { logDir: logDir(repoPath) });
       expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "fail"]]);
       expect(test.limitations.join("\n")).not.toContain(HINT);
+    });
+  });
+
+  describe("not-installed marker", () => {
+    it("recognises only results built by dependenciesNotInstalledResult", () => {
+      const built = dependenciesNotInstalledResult("npm-test", "test", 0.2).check;
+      expect(isDependenciesNotInstalled(built)).toBe(true);
+      // A skip that only quotes the hint text must not add an install blocker.
+      expect(isDependenciesNotInstalled({ ...built })).toBe(false);
+      expect(isDependenciesNotInstalled({ name: "x", kind: "test", status: "skip", message: `x: ${HINT}`, durationMs: 0, confidenceContribution: 0 })).toBe(false);
     });
   });
 });
