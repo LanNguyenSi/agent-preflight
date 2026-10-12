@@ -444,6 +444,28 @@ describe("parent-death guard", () => {
     expect(raised).toEqual([]);
   });
 
+  it("re-raises a remembered signal at dispose when bind never ran", () => {
+    const raised: string[] = [];
+    const guard = createParentDeathGuard((s) => raised.push(s));
+    process.emit("SIGINT");
+    expect(raised).toEqual([]);
+    guard.dispose();
+    expect(raised).toEqual(["SIGINT"]);
+    guard.dispose();
+    expect(raised).toEqual(["SIGINT"]);
+  });
+
+  it("does not re-raise a remembered signal at dispose when the host listens for it", () => {
+    const raised: string[] = [];
+    const guard = createParentDeathGuard((s) => raised.push(s));
+    process.emit("SIGTERM");
+    const hostListener = (): void => {};
+    process.on("SIGTERM", hostListener);
+    guard.dispose();
+    process.removeListener("SIGTERM", hostListener);
+    expect(raised).toEqual([]);
+  });
+
   it("acts on a signal that arrives after bind without waiting for another call", () => {
     const raised: string[] = [];
     const killed: string[] = [];

@@ -55,6 +55,14 @@ export function createParentDeathGuard(
     process.removeListener("exit", onExit);
     for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler);
     signalHandlers.clear();
+    // A signal remembered for a bind that never came (the spawn path failed)
+    // still ends preflight once the hooks are gone, as it would have without
+    // the guard.
+    if (kill === undefined && pendingSignal !== undefined) {
+      const signal = pendingSignal;
+      pendingSignal = undefined;
+      if (process.listenerCount(signal) === 0) raise(signal);
+    }
   };
   const terminate = (signal: NodeJS.Signals): void => {
     kill?.();
