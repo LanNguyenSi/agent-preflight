@@ -67,7 +67,8 @@ const TOP_LEVEL_KEYS = [
   "customChecks",
 ] as const;
 
-// Compile-time guard: a PreflightConfig field missing from its *_KEYS list fails tsc here.
+// Compile-time guard: a PreflightConfig field missing from its *_KEYS list
+// fails tsc here.
 type MissingKeys<K extends string, L extends readonly string[]> = Exclude<K, L[number]>;
 const topLevelKeysComplete: [MissingKeys<keyof PreflightConfig, typeof TOP_LEVEL_KEYS>] extends [never] ? true : false = true;
 void topLevelKeysComplete;
@@ -101,16 +102,17 @@ export function requiredChecksConfigurationError(value: unknown): string | undef
 }
 
 /**
- * Type-checks a JSON.parse()'d `.preflight.json` payload field-by-field
- * against `PreflightConfig`'s shape, hand-rolled (no schema library). Every recognized field must match its declared type; a field
- * whose value has the wrong type is dropped (never merged over the default)
- * and reported in `warnings`, except explicit commands and requiredChecks,
- * which are retained so invalid configuration blocks readiness.
- * This prevents a malformed value from crashing a downstream consumer (e.g. `logDir: 123`
- * previously reached `expandLeadingTilde`/`path.isAbsolute` in runner.ts and
- * threw a `TypeError`, crashing the CLI). A payload that isn't even a plain
- * object (e.g. an array, a string, `null`) invalidates the whole file and
- * falls back to an empty override (defaults apply everywhere).
+ * Type-checks a JSON.parse()'d `.preflight.json` payload field-by-field against
+ * `PreflightConfig`'s shape, hand-rolled (no schema library). Every recognized
+ * field must match its declared type; a field whose value has the wrong type is
+ * dropped (never merged over the default) and reported in `warnings`, except
+ * explicit commands and requiredChecks, which are retained so invalid
+ * configuration blocks readiness. This prevents a malformed value from crashing
+ * a downstream consumer (e.g. `logDir: 123` previously reached
+ * `expandLeadingTilde`/`path.isAbsolute` in runner.ts and threw a `TypeError`,
+ * crashing the CLI). A payload that isn't even a plain object (e.g. an array, a
+ * string, `null`) invalidates the whole file and falls back to an empty
+ * override (defaults apply everywhere).
  *
  * Valid configs are unaffected: every field that already matches its type
  * passes through unchanged, and nested defaulting (checks/setup/commands/

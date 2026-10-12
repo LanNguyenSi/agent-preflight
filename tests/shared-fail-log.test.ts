@@ -374,7 +374,7 @@ describe("runShellCheck full-output logging (PREFLIGHT_LOG_DIR precedence, task 
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("relative/log/dir"));
   });
 
-  it("an empty PREFLIGHT_LOG_DIR warns naming the variable and falls back to the home-based default (review finding F1, task 2e8bcc7e)", async () => {
+  it("an empty PREFLIGHT_LOG_DIR warns naming the variable and falls back to the home-based default (task 2e8bcc7e)", async () => {
     const fakeHome = makeTempDir("preflight-fail-log-home-empty-");
     vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -399,7 +399,7 @@ describe("runShellCheck full-output logging (PREFLIGHT_LOG_DIR precedence, task 
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("PREFLIGHT_LOG_DIR"));
   });
 
-  it("a whitespace-only PREFLIGHT_LOG_DIR warns naming the variable and falls back to the home-based default (review finding F1/missing test, task 2e8bcc7e)", async () => {
+  it("a whitespace-only PREFLIGHT_LOG_DIR warns naming the variable and falls back to the home-based default (task 2e8bcc7e)", async () => {
     const fakeHome = makeTempDir("preflight-fail-log-home-whitespace-");
     vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -424,7 +424,7 @@ describe("runShellCheck full-output logging (PREFLIGHT_LOG_DIR precedence, task 
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("PREFLIGHT_LOG_DIR"));
   });
 
-  it("a '~/'-prefixed PREFLIGHT_LOG_DIR expands to os.homedir() before the absolute-path check, same as the configured logDir (review finding F4, task 2e8bcc7e)", async () => {
+  it("a '~/'-prefixed PREFLIGHT_LOG_DIR expands to os.homedir() before the absolute-path check, same as the configured logDir (task 2e8bcc7e)", async () => {
     const fakeHome = makeTempDir("preflight-fail-log-home-tilde-");
     vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -450,7 +450,7 @@ describe("runShellCheck full-output logging (PREFLIGHT_LOG_DIR precedence, task 
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("an absolute but unwritable PREFLIGHT_LOG_DIR degrades to details without a path line, and never throws (missing test, task 2e8bcc7e)", async () => {
+  it("an absolute but unwritable PREFLIGHT_LOG_DIR degrades to details without a path line, and never throws (task 2e8bcc7e)", async () => {
     const parentDir = makeTempDir("preflight-fail-log-env-writefail-");
     const blockingFile = path.join(parentDir, "blocking-file");
     fs.writeFileSync(blockingFile, "i am a file, not a directory");

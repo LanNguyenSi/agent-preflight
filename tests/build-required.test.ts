@@ -1563,7 +1563,7 @@ describe("the package-level partial-build rule (unit)", () => {
     );
   });
 
-  // Task bf67cf98, round 2 item 3: the mirror of the case above, swapping
+  // Task bf67cf98: the mirror of the case above, swapping
   // which of the two same-basename directories is populated. Here it is
   // b/dist that holds the entry and a/dist, the FIRST declared, that is
   // absent and owns the artifact the failure names. Correct code reads both
@@ -1595,14 +1595,14 @@ describe("the package-level partial-build rule (unit)", () => {
     );
   });
 
-  // Task bf67cf98, round 2 item 4: the executable anchor of the item-1
+  // Task bf67cf98: the executable anchor of the tracked-output
   // rejection (README/CHANGELOG). A package whose declared output directory
   // is fully git-tracked -- committed here the same way the fixture corpus
   // commits its fixtures, `git init && git add -A && git commit` -- must
   // still block on a failure naming a missing artifact in that directory.
   // `evaluatePartialBuild`/`packageOutputDirs` have no notion of git at all,
   // so this pins CURRENT behaviour; a future git-tracked-file filter (the
-  // rejected item-1 candidate) would make this test fail, which is the
+  // rejected tracked-output candidate) would make this test fail, which is the
   // point: it is the regression guard for that rejection, not evidence that
   // the code inspects git today.
   //
@@ -1613,7 +1613,7 @@ describe("the package-level partial-build rule (unit)", () => {
   // -- there is nothing left to read, and the package reads as unbuilt. A
   // `dist`-named fixture would let a naive git-tracked-file filter survive
   // by falling through to that same unfiltered conventional default.
-  it("keeps blocking when the declared output directory is fully git-tracked (item-1 rejection anchor)", () => {
+  it("keeps blocking when the declared output directory is fully git-tracked (tracked-output rejection anchor)", () => {
     withTempPackage(
       {
         "package.json": pkg({

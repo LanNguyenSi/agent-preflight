@@ -84,14 +84,14 @@ describe("clean-worktree under --setup (fixture: monorepo-build-required)", () =
     });
   });
 
-  it("F1: still fails clean-worktree under --setup when the build rewrites a TRACKED file (committed dist/index.js), naming that setup modified it", async () => {
+  it("still fails clean-worktree under --setup when the build rewrites a TRACKED file (committed dist/index.js), naming that setup modified it", async () => {
     await withFixture("monorepo-build-required", async (repoPath, logDir) => {
       // Commit a stale dist/index.js as if it had been checked in
       // deliberately (or left over from a previous, un-gitignored build).
       // The fixture's build.js always overwrites this file with different
       // content, so once `--setup` reruns the build this tracked file
-      // changes under git's feet -- untracked-output logic must not
-      // excuse that (review finding F1).
+      // changes under git's feet -- untracked-output logic must not excuse
+      // that.
       const distDir = path.join(repoPath, "packages", "needs-build", "dist");
       fs.mkdirSync(distDir, { recursive: true });
       fs.writeFileSync(path.join(distDir, "index.js"), "module.exports = { hello: () => \"stale\" };\n", "utf8");
@@ -157,15 +157,15 @@ describe("clean-worktree under --setup (fixture: monorepo-build-required)", () =
     });
   });
 
-  // task b16ab5d8, review round 3, finding N1: the fix above only holds
-  // for the FIRST --setup run in a worktree. If the un-gitignored setup
+  // Task b16ab5d8: the fix above only holds for the FIRST --setup run in a
+  // worktree. If the un-gitignored setup
   // output from run 1 is still there (nobody added it to .gitignore),
   // run 2's PRE-setup snapshot already contains it, so it reads as
   // pre-existing dirt on run 2 and blocks -- correctly (the tool cannot
   // tell run-1 leftovers from a real user change), but D-011 says the
   // failure should name the paths and point at .gitignore instead of the
   // old undifferentiated message.
-  it("N1: a second --setup run against still-un-gitignored output from run 1 fails naming the paths and the .gitignore remedy (run 1 stays a pass)", async () => {
+  it("a second --setup run against still-un-gitignored output from run 1 fails naming the paths and the .gitignore remedy (run 1 stays a pass)", async () => {
     await withFixture("monorepo-build-required", async (repoPath, logDir) => {
       const distIndex = path.join(repoPath, "packages", "needs-build", "dist", "index.js");
 
@@ -197,13 +197,13 @@ describe("clean-worktree under --setup (fixture: monorepo-build-required)", () =
     });
   });
 
-  // Control for N1, in the same two-run shape: a pre-existing TRACKED
-  // change (not the untracked-only case N1 covers) still yields today's
-  // undifferentiated message on run 2, with no .gitignore remedy --
-  // already pinned directly against runGitStateChecks by
-  // tests/git-state.test.ts's "N2" and pre-existing-tracked tests; pinned
-  // here too through the actual --setup wiring, since that's the surface
-  // N1 changed.
+  // Control for the second-run test above, in the same two-run shape: a
+  // pre-existing TRACKED change (not the untracked-only case the second-run
+  // test covers) still yields today's undifferentiated message on run 2, with
+  // no .gitignore remedy -- already pinned directly against runGitStateChecks
+  // by tests/git-state.test.ts's tracked-paths-in-limitations and
+  // pre-existing-tracked tests; pinned here too through the actual --setup
+  // wiring, since that's the surface the second-run fix changed.
   it("control: a pre-existing TRACKED modification before a second --setup run still yields the old undifferentiated message, no .gitignore remedy", async () => {
     await withFixture("monorepo-build-required", async (repoPath, logDir) => {
       const run1 = await runPreflight(repoPath, {
@@ -258,9 +258,9 @@ describe("clean-worktree under --setup (fixture: monorepo-build-required)", () =
       expect(fs.existsSync(path.join(repoPath, "packages", "needs-build", "dist", "index.js"))).toBe(true);
 
       // Before the second --setup run: the untracked dist/ output from
-      // run 1 is still there (un-gitignored, exactly like N1), AND a
-      // tracked file is also dirtied -- one pre-existing untracked entry
-      // plus one pre-existing tracked entry.
+      // run 1 is still there (un-gitignored, exactly like the second-run
+      // test), AND a tracked file is also dirtied -- one pre-existing
+      // untracked entry plus one pre-existing tracked entry.
       fs.appendFileSync(path.join(repoPath, "package.json"), "\n");
 
       // Pin the MIXED shape directly, before run 2 acts on it: at least

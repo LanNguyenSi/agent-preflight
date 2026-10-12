@@ -323,7 +323,7 @@ describe("checks.<kind>.acknowledge (agent-tasks b31065cc)", () => {
     }
   });
 
-  it("CONTRACT: an acknowledged check never appears in blockers[] or warnings[] (review finding 3)", async () => {
+  it("CONTRACT: an acknowledged check never appears in blockers[] or warnings[]", async () => {
     // blockers[] is `status === "fail"` and warnings[] is `status === "warn"`
     // — an "acknowledged" check is neither, so it must be absent from both.
     // This is the precise gap SKILL.md's "quote blockers and warnings"
@@ -381,7 +381,7 @@ describe("checks.<kind>.acknowledge (agent-tasks b31065cc)", () => {
   });
 });
 
-describe("checks.secretDetection.acknowledge is not supported (Orchestrator decision D-013, review finding 4)", () => {
+describe("checks.secretDetection.acknowledge is not supported (Orchestrator decision D-013)", () => {
   it("does not waive a real secret-detection finding — ready stays false, and a limitations entry explains why", async () => {
     const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-secret-ack-noop-repo-"));
     try {
@@ -461,7 +461,7 @@ describe("PreflightConfig.logDir tilde expansion", () => {
   });
 });
 
-describe("PREFLIGHT_LOG_DIR warning fires at most once per runPreflight call (review finding F5, task 2e8bcc7e)", () => {
+describe("PREFLIGHT_LOG_DIR warning fires at most once per runPreflight call (task 2e8bcc7e)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -507,7 +507,7 @@ describe("PREFLIGHT_LOG_DIR warning fires at most once per runPreflight call (re
   });
 });
 
-describe("PreflightConfig.logDir takes precedence over an invalid PREFLIGHT_LOG_DIR, with no warning (missing test 1, task 2e8bcc7e review round 2)", () => {
+describe("PreflightConfig.logDir takes precedence over an invalid PREFLIGHT_LOG_DIR, with no warning (task 2e8bcc7e)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });

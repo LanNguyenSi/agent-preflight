@@ -103,17 +103,17 @@ function isUntrackedOrIgnoredStatus(status: string): boolean {
 // message/limitation before it is truncated with an ellipsis.
 const MAX_PATH_NAME_LENGTH = 200;
 
-// `names` are repository-controlled (a committed or `--setup`-produced
-// path can be named anything the filesystem allows), and this string gets
-// interpolated verbatim into `details`/`limitations` text that the CLI
-// prints as-is. Escapes C0 control characters (below U+0020, including
-// \n, \r, \t, \x1b) the same way `JSON.stringify` would, so an embedded
-// C0 newline can no longer forge an extra line in the CLI's Limitations
-// block, and caps the result at `MAX_PATH_NAME_LENGTH` so one absurdly
-// long name can't blow up the message either. Reusing `JSON.stringify`'s escaping also means a
-// literal backslash or double quote in a path renders escaped (`\\`,
-// `\"`) rather than verbatim -- an accepted side effect of borrowing the
-// same escaper, not something a caller needs to unescape.
+// `names` are repository-controlled (a committed or `--setup`-produced path can
+// be named anything the filesystem allows), and this string gets interpolated
+// verbatim into `details`/`limitations` text that the CLI prints as-is. Escapes
+// C0 control characters (below U+0020, including \n, \r, \t, \x1b) the same way
+// `JSON.stringify` would, so an embedded C0 newline can no longer forge an
+// extra line in the CLI's Limitations block, and caps the result at
+// `MAX_PATH_NAME_LENGTH` so one absurdly long name can't blow up the message
+// either. Reusing `JSON.stringify`'s escaping also means a literal backslash or
+// double quote in a path renders escaped (`\\`, `\"`) rather than verbatim --
+// an accepted side effect of borrowing the same escaper, not something a caller
+// needs to unescape.
 // `JSON.stringify` alone leaves DEL (U+007F), the C1 range (U+0080-U+009F,
 // including U+009B CSI, an 8-bit escape introducer some terminals honour)
 // and the line separators U+2028/U+2029 untouched, so this additionally
@@ -302,14 +302,14 @@ async function runCleanWorktreeCheck(
     const produced = currentEntries.filter((entry) => !entry.paths.some((p) => snapshotPaths.has(p)));
 
     // Any change that predates `--setup` still blocks, exactly as today,
-    // regardless of whether `--setup` also produced its own output (the tool cannot know whether pre-existing dirt IS
-    // last run's un-gitignored setup output, so it still blocks -- but
-    // when every pre-existing entry is untracked, it's worth naming the
-    // paths and pointing at .gitignore as a likely fix, since that's
-    // exactly what a second `--setup` run against still-un-gitignored
-    // output looks like). A pre-existing entry that includes a TRACKED
-    // status keeps today's undifferentiated message unchanged: nothing
-    // about a tracked change suggests a `.gitignore` remedy.
+    // regardless of whether `--setup` also produced its own output (the tool
+    // cannot know whether pre-existing dirt IS last run's un-gitignored setup
+    // output, so it still blocks -- but when every pre-existing entry is
+    // untracked, it's worth naming the paths and pointing at .gitignore as a
+    // likely fix, since that's exactly what a second `--setup` run against
+    // still-un-gitignored output looks like). A pre-existing entry that
+    // includes a TRACKED status keeps today's undifferentiated message
+    // unchanged: nothing about a tracked change suggests a `.gitignore` remedy.
     if (preExisting.length > 0) {
       const allPreExistingUntracked = preExisting.every((entry) => isUntrackedOrIgnoredStatus(entry.status));
 
