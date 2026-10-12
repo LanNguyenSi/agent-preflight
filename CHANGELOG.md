@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-12
+
+### Breaking
+
+- **Node.js floor raised:** `engines.node` is now `^20.19.0 || >=22.12.0` (was `>=18`), the floor the CommonJS build needs to `require` the ESM-only `execa`; CI runs on 20.19.0, 20 and 22. Installing on Node 18, 21, 20 below 20.19 or 22 below 22.12 prints an npm engine warning (an error with `engine-strict`), and the CLI is not expected to run there.
+- **BEHAVIOR CHANGE for MCP users:** CI simulation through the MCP server now needs `PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1`, like `customChecks` and `commands.*`; without it `act` is not run and the check reports `skip` (details under Security). The CLI is unchanged.
+
 ### Changed
 
-- `preflight sandbox` now honors `--no-audit` and `--no-secrets` (they were parsed but never passed into the container), and reports an error such as a missing Docker binary or a missing sandbox Dockerfile as a single `preflight: <message>` line with exit code 1 instead of a stack trace. The npm package deliberately still does not ship the Dockerfile and sources, so sandbox mode needs a source checkout, an `./install.sh` install or a release bundle. `engines.node` is now `^20.19.0 || >=22.12.0`, the floor the CommonJS build needs to `require` the ESM-only `execa`, and CI runs on 20.19.0, 20 and 22. Source comments no longer cite tracker task ids or review finding labels (task a7ad29d5).
+- `preflight sandbox` now honors `--no-audit` and `--no-secrets` (they were parsed but never passed into the container), and reports an error such as a missing Docker binary or a missing sandbox Dockerfile as a single `preflight: <message>` line with exit code 1 instead of a stack trace. The npm package deliberately still does not ship the Dockerfile and sources, so sandbox mode needs a source checkout, an `./install.sh` install or a release bundle. Source comments no longer cite tracker task ids or review finding labels (task a7ad29d5).
 - Auto-detected Node checks (`npm-test`, `npm-typecheck`, `tsc`, `npm-lint`, `eslint`, `tsc-lint-fallback`) report a `skip` plus a limitation ("dependencies not installed; run with --setup or install first") instead of a `fail` when `package.json` declares dependencies but no `node_modules` (or Yarn PnP map) exists in the target directory or an ancestor up to the enclosing git repository root, and `--setup` is not given. The skip is not a pass, so it cannot raise confidence, and the run adds one blocker carrying the same install hint, so `ready` is `false` in the default configuration as well as when the kind is required. With an install present, or when the state is uncertain, the checks run as before (task 4f577c58).
 
 ### Security
