@@ -19,34 +19,69 @@ function killProcessGroup(subprocess: { pid?: number; kill: (signal?: NodeJS.Sig
 
 const PARENT_DEATH_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
+export interface ParentDeathGuard {
+  /**
+   * Supplies what to stop when preflight dies. A termination signal that
+   * arrived before this call is acted on now: the target is stopped, the hooks
+   * are removed and the signal is re-raised as usual.
+   */
+  bind(kill: () => void): void;
+  /** Removes the hooks. Safe to call more than once. */
+  dispose(): void;
+}
+
 /**
  * `detached` makes execa skip its own exit cleanup, and act is no longer in
  * the terminal's foreground group, so nothing would stop act and its
- * descendants when preflight itself is terminated. This hook runs `kill` when
- * the process exits or receives one of the usual termination signals, and
- * re-raises the signal when no other listener would handle it, so the default
- * termination still happens. It returns a function that removes the hook.
- * SIGKILL of preflight cannot be intercepted.
+ * descendants when preflight itself is terminated. The guard is created
+ * before act is spawned, so a termination signal that arrives while act is
+ * starting meets a handler instead of the default action, which would end
+ * preflight and leave act running. The process to stop is bound afterwards;
+ * a signal that arrives in between is remembered and handled at `bind`. Once
+ * bound, the guard runs `kill` when the process exits or receives one of the
+ * usual termination signals, and re-raises the signal when no other listener
+ * would handle it, so the default termination still happens. An "exit" before
+ * `bind` has nothing to stop. SIGKILL of preflight cannot be intercepted.
+ * `raise` ends the process by the given signal; tests replace it.
  */
-function killOnParentDeath(kill: () => void): () => void {
+export function createParentDeathGuard(
+  raise: (signal: NodeJS.Signals) => void = (signal) => { process.kill(process.pid, signal); }
+): ParentDeathGuard {
   const signalHandlers = new Map<NodeJS.Signals, () => void>();
-  const onExit = (): void => kill();
+  let kill: (() => void) | undefined;
+  let pendingSignal: NodeJS.Signals | undefined;
+  const onExit = (): void => kill?.();
   const dispose = (): void => {
     process.removeListener("exit", onExit);
     for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler);
     signalHandlers.clear();
   };
+  const terminate = (signal: NodeJS.Signals): void => {
+    kill?.();
+    dispose();
+    if (process.listenerCount(signal) === 0) raise(signal);
+  };
   process.on("exit", onExit);
   for (const signal of PARENT_DEATH_SIGNALS) {
     const handler = (): void => {
-      kill();
-      dispose();
-      if (process.listenerCount(signal) === 0) process.kill(process.pid, signal);
+      if (kill === undefined) {
+        pendingSignal ??= signal;
+        return;
+      }
+      terminate(signal);
     };
     signalHandlers.set(signal, handler);
     process.on(signal, handler);
   }
-  return dispose;
+  return {
+    bind(target: () => void): void {
+      // After dispose the hooks are gone and so is the reason to act on them.
+      if (signalHandlers.size === 0) return;
+      kill = target;
+      if (pendingSignal !== undefined) terminate(pendingSignal);
+    },
+    dispose,
+  };
 }
 
 interface CheckSetResult { checks: CheckResult[]; limitations: string[]; }
@@ -60,6 +95,12 @@ const STREAM_GRACE_MS = 2_000;
 export interface CiSimulationOptions {
   /** Wall-clock limit for the act run; tests inject a short one. */
   timeoutMs?: number;
+  /**
+   * Test seam: awaited right after act is spawned and before the parent-death
+   * guard is bound to it, so a test can deliver a signal while the guard does
+   * not yet know act's pid. Production callers leave it unset.
+   */
+  afterSpawn?: () => void | Promise<void>;
 }
 
 export async function runCiSimulation(
@@ -114,6 +155,11 @@ export async function runCiSimulation(
   let graceTimer: NodeJS.Timeout | undefined;
   let disposeParentHook: (() => void) | undefined;
   try {
+    // The parent-death hooks go in before act is spawned: a termination signal
+    // that reaches preflight while act is starting must find a handler, not the
+    // default action that ends preflight and leaves act running.
+    const parentGuard = createParentDeathGuard();
+    disposeParentHook = parentGuard.dispose;
     // act starts its own children (job containers, shells). execa's `timeout`
     // signals only the direct child, so descendants outlive it. act runs as the
     // leader of its own process group instead, and the timeout kills the whole
@@ -133,7 +179,8 @@ export async function runCiSimulation(
         subprocess.all?.destroy();
       }, STREAM_GRACE_MS);
     }, timeoutMs);
-    disposeParentHook = killOnParentDeath(() => killProcessGroup(subprocess));
+    if (options.afterSpawn !== undefined) await options.afterSpawn();
+    parentGuard.bind(() => killProcessGroup(subprocess));
     const result = await subprocess;
     const { exitCode, all } = result;
 
