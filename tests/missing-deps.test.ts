@@ -322,10 +322,10 @@ describe("classifyGitdir", () => {
     ["/srv/repo.git/modules/n", "submodule"],
     ["/srv/repo.git/modules/a/modules/b", "submodule"],
     ["/r/.git/worktrees/wt1/modules", "unknown"],
-    ["/r/notgit/modules/sub", "unknown"],
+    ["/gd/proj/modules/ms", "submodule"],
     ["/r/.git/modules", "unknown"],
     ["/r/.git", "unknown"],
-    ["/r/modules/sub", "unknown"],
+    ["/r/modules/sub", "submodule"],
     ["", "unknown"],
   ] as const)("%s -> %s", (gitdir, expected) => {
     expect(classifyGitdir(gitdir)).toBe(expected);
