@@ -15,13 +15,13 @@ import { stripShellExecution } from "./shellGate.js";
 //     out of scope);
 //   - "custom" (customChecks[] already has its own per-check `failOnError`
 //     waiver);
-//   - "secret-detection" (a deliberate decision): unlike every other check kind here, a single
-//     `checks.secretDetection.acknowledge` reason would waive EVERY future
-//     secret-detection finding for the whole run, not just the one the
-//     operator actually reviewed — the scanner already has finding-scoped
-//     waivers (`secretAllowlist` path/`path:line` entries, an inline
-//     `pragma: allowlist secret` comment) that don't carry that blast
-//     radius, so this feature intentionally does not add a coarser one.
+//   - "secret-detection" (a deliberate decision): unlike every other check kind
+//     here, a single `checks.secretDetection.acknowledge` reason would waive
+//     EVERY future secret-detection finding for the whole run, not just the one
+//     the operator actually reviewed — the scanner already has finding-scoped
+//     waivers (`secretAllowlist` path/`path:line` entries, an inline `pragma:
+//     allowlist secret` comment) that don't carry that blast radius, so this
+//     feature intentionally does not add a coarser one.
 //     See checkSecretDetectionAcknowledgeIgnored() below, which reports a
 //     configured-but-inert `checks.secretDetection.acknowledge` instead of
 //     silently doing nothing with it.
@@ -48,18 +48,18 @@ interface AcknowledgeResolution {
   rejected: boolean;
 }
 
-// config.ts#validateConfig() does validate .preflight.json's outer shape: it already guarantees `toggle` is a boolean or a plain
-// object, dropping (with a warning) anything else before it ever reaches
-// here. This function still reads the toggle defensively rather than
-// trusting that outer guarantee for the INNER `acknowledge` value: any
-// shape other than a plain object with a non-empty string `acknowledge` is
-// treated as "no acknowledge configured" (booleans, `null`, arrays, `{}`)
-// or "rejected" (an `acknowledge` key present but not a usable string),
-// never a crash. Deliberately: validateConfig() only checks the toggle is
-// boolean-or-object, not that an object's `acknowledge` (if present) is a
-// non-empty string; that inner check, and its own `limitations` reporting
-// on rejection, is intentionally kept here rather than duplicated in
-// config.ts (see config.ts's CHECK_TOGGLE_KEYS comment).
+// config.ts#validateConfig() does validate .preflight.json's outer shape: it
+// already guarantees `toggle` is a boolean or a plain object, dropping (with a
+// warning) anything else before it ever reaches here. This function still reads
+// the toggle defensively rather than trusting that outer guarantee for the
+// INNER `acknowledge` value: any shape other than a plain object with a
+// non-empty string `acknowledge` is treated as "no acknowledge configured"
+// (booleans, `null`, arrays, `{}`) or "rejected" (an `acknowledge` key present
+// but not a usable string), never a crash. Deliberately: validateConfig() only
+// checks the toggle is boolean-or-object, not that an object's `acknowledge`
+// (if present) is a non-empty string; that inner check, and its own
+// `limitations` reporting on rejection, is intentionally kept here rather than
+// duplicated in config.ts (see config.ts's CHECK_TOGGLE_KEYS comment).
 function resolveAcknowledge(toggle: CheckToggle | undefined): AcknowledgeResolution {
   if (toggle === null || typeof toggle !== "object" || Array.isArray(toggle)) {
     return { reason: null, rejected: false };
@@ -201,14 +201,14 @@ export async function runPreflight(
   // the default `~/.agent-preflight/logs`.
   const configuredLogDir = config.logDir ? expandLeadingTilde(config.logDir) : undefined;
   // When `.preflight.json` did not configure a `logDir`, resolve
-  // `PREFLIGHT_LOG_DIR`/the home-based default exactly ONCE here and thread the result through
-  // `effectiveConfig.logDir` the same way a configured value already is,
-  // rather than leaving `logDir` undefined for every check runner to
-  // resolve independently. Every check runner below passes
-  // `effectiveConfig.logDir` straight through to `runShellCheck`, so
-  // without this a run with several failing checks called
-  // `defaultLogDir()` once per failing check, and printed its
-  // PREFLIGHT_LOG_DIR warning once per failing check with it.
+  // `PREFLIGHT_LOG_DIR`/the home-based default exactly ONCE here and thread the
+  // result through `effectiveConfig.logDir` the same way a configured value
+  // already is, rather than leaving `logDir` undefined for every check runner
+  // to resolve independently. Every check runner below passes
+  // `effectiveConfig.logDir` straight through to `runShellCheck`, so without
+  // this a run with several failing checks called `defaultLogDir()` once per
+  // failing check, and printed its PREFLIGHT_LOG_DIR warning once per failing
+  // check with it.
   let resolvedLogDir: string | undefined;
   if (configuredLogDir) {
     resolvedLogDir = path.isAbsolute(configuredLogDir) ? configuredLogDir : path.resolve(repoPath, configuredLogDir);
@@ -352,7 +352,8 @@ export async function runPreflight(
     .map((c) => c.message ?? c.name);
 
   const confidence = computeConfidence(finalChecks, limitations);
-  // Confidence describes actual results; requiredChecks only adds gate blockers.
+  // Confidence describes actual results; requiredChecks only adds gate
+  // blockers.
   const ready = blockers.length === 0;
 
   return {

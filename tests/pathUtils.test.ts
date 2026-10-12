@@ -4,12 +4,12 @@ import path from "path";
 import { expandLeadingTilde } from "../src/pathUtils";
 
 /**
- * Unit coverage for `expandLeadingTilde`'s documented edges (task 2e8bcc7e,
- * review round 2 missing test 3): the docblock claims a bare `~` without a
- * trailing slash, an already-absolute value, and a relative value without a
- * tilde all pass through unchanged. Only the `~/`-prefixed case is exercised
- * indirectly elsewhere (runner.test.ts's tilde-expansion case, shared-*
- * tests); these pin the pass-through edges directly.
+ * Unit coverage for `expandLeadingTilde`'s documented edges (task 2e8bcc7e):
+ * the docblock claims a bare `~` without a trailing slash, an already-absolute
+ * value, and a relative value without a tilde all pass through unchanged.
+ * Only the `~/`-prefixed case is exercised indirectly elsewhere
+ * (runner.test.ts's tilde-expansion case, shared-* tests); these pin the
+ * pass-through edges directly.
  */
 describe("expandLeadingTilde", () => {
   it("expands a leading '~/' to os.homedir()", () => {

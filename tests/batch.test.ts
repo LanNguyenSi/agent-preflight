@@ -116,7 +116,7 @@ describe("runBatch", () => {
   });
 });
 
-describe("runBatch warning count with an invalid PREFLIGHT_LOG_DIR (missing test 2, task 2e8bcc7e review round 2)", () => {
+describe("runBatch warning count with an invalid PREFLIGHT_LOG_DIR (task 2e8bcc7e)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -156,9 +156,9 @@ describe("runBatch warning count with an invalid PREFLIGHT_LOG_DIR (missing test
       );
       // repoA and repoB each ran a separate runPreflight() call (src/batch.ts's
       // sequential for-loop), so each resolves PREFLIGHT_LOG_DIR once, for a
-      // total of two: this pins the "once per repository run" wording (review
-      // finding F1, task 2e8bcc7e), not "once per preflight run/batch
-      // invocation" as an earlier CHANGELOG draft said.
+      // total of two: this pins the "once per repository run" wording (task
+      // 2e8bcc7e), not "once per preflight run/batch invocation" as an
+      // earlier CHANGELOG draft said.
       expect(warningCalls).toHaveLength(2);
     } finally {
       homedirSpy.mockRestore();

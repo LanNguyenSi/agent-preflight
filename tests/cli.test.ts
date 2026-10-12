@@ -337,7 +337,7 @@ describe("batch command — exit-code contract", () => {
   });
 });
 
-describe("batch command — pretty output acknowledged marker (review finding 3)", () => {
+describe("batch command — pretty output acknowledged marker", () => {
   it("shows an '[n acknowledged]' marker on a repo's line when it has acknowledged checks", async () => {
     mockRunBatch.mockResolvedValue({
       total: 1,

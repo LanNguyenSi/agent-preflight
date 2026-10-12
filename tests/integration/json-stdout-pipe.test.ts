@@ -1,5 +1,5 @@
 /**
- * Task 0089e6f5: `preflight run --json` (and, since round 2, `preflight batch
+ * Task 0089e6f5: `preflight run --json` (and `preflight batch
  * --json`) write the full result envelope with a single
  * `console.log`/`process.stdout.write` call and used to call `process.exit`
  * immediately afterwards. Piping stdout is asynchronous: a payload bigger
@@ -30,7 +30,7 @@
  * output regardless of how large the token is made).
  *
  * A real EPIPE (the reader closing the pipe before the write completes) is
- * also exercised end to end here (round 2, review of task 0089e6f5): the
+ * also exercised end to end here (task 0089e6f5): the
  * child's own stdout read end is destroyed immediately after spawn, which is
  * deterministic in practice (measured 10/10 over repeated local runs on
  * macOS / Node 26) because Node's pipe write only completes asynchronously,
@@ -176,7 +176,7 @@ describe("preflight run --json over a real piped stdout (task 0089e6f5)", () => 
   }, 30_000);
 });
 
-describe("preflight batch --json over a real piped stdout (task 0089e6f5, round 2)", () => {
+describe("preflight batch --json over a real piped stdout (task 0089e6f5)", () => {
   let batchRoot: string;
 
   beforeAll(() => {
@@ -211,7 +211,7 @@ describe("preflight batch --json over a real piped stdout (task 0089e6f5, round 
   }, 30_000);
 });
 
-describe("preflight run --json against a reader that closes the pipe immediately (real EPIPE, task 0089e6f5 round 2)", () => {
+describe("preflight run --json against a reader that closes the pipe immediately (real EPIPE, task 0089e6f5)", () => {
   let repoPath: string;
 
   beforeAll(() => {
