@@ -155,14 +155,31 @@ function gitBoundaryAt(dir: string): GitBoundary {
   }
   const match = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(content);
   if (!match) return "uncertain";
-  const segments = match[1].replace(/\\/g, "/").split("/");
-  // Last marker wins: a linked worktree of a submodule lives under
-  // `modules/<name>/worktrees/<id>` and is still a worktree boundary.
-  const worktrees = segments.lastIndexOf("worktrees");
-  const modules = segments.lastIndexOf("modules");
-  if (worktrees !== -1 && worktrees > modules) return "stop";
-  if (modules !== -1) return "continue";
+  const kind = classifyGitdir(match[1]);
+  if (kind === "worktree") return "stop";
+  if (kind === "submodule") return "continue";
   return "uncertain";
+}
+
+// Classifies a `gitdir:` pointer by the position of its segments, not by
+// whether a segment name occurs somewhere in it. A linked worktree's admin
+// directory is `<common dir>/worktrees/<id>`: the parent of the last segment
+// is `worktrees` (this also covers a worktree of a submodule,
+// `.git/modules/<name>/worktrees/<id>`). A submodule's git directory is
+// `<git dir>/modules/<name>`: a `.git` segment directly followed by `modules`
+// and at least one name segment. So a worktree whose id is `modules` and a
+// submodule named `worktrees` keep their class. Backslashes are separators.
+export function classifyGitdir(gitdir: string): "worktree" | "submodule" | "unknown" {
+  const segments = gitdir
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== ".");
+  const n = segments.length;
+  if (n >= 2 && segments[n - 2] === "worktrees") return "worktree";
+  for (let i = 0; i + 2 < n; i++) {
+    if (segments[i] === ".git" && segments[i + 1] === "modules") return "submodule";
+  }
+  return "unknown";
 }
 
 // Check results produced by `dependenciesNotInstalledResult`. Tracked by
