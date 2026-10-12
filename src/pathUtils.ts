@@ -3,7 +3,7 @@ import path from "path";
 
 /**
  * Expands a leading `~/` to `os.homedir()`. Shared by both log-directory
- * sources (task 2e8bcc7e) so a `~/`-prefixed value behaves identically
+ * sources so a `~/`-prefixed value behaves identically
  * whether it comes from `.preflight.json`'s `logDir` (see runner.ts's
  * `configuredLogDir`) or the `PREFLIGHT_LOG_DIR` environment variable (see
  * `checks/shared.ts`'s `defaultLogDir`). Any other value (already

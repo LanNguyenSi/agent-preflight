@@ -126,7 +126,7 @@ Every check can be turned off in `.preflight.json`:
 }
 ```
 
-`preflight run` and `preflight sandbox` accept `--ci-simulation`; `run`, `batch` and `sandbox` accept `--no-audit` and `--no-secrets`. Each overrides the file for one run. `batch` has no `--ci-simulation` flag; a repo's own `checks.ciSimulation: true` still applies there. On `preflight sandbox`, `--no-audit` and `--no-secrets` are currently not passed into the container.
+`preflight run` and `preflight sandbox` accept `--ci-simulation`; `run`, `batch` and `sandbox` accept `--no-audit` and `--no-secrets`. Each overrides the file for one run. `batch` has no `--ci-simulation` flag; a repo's own `checks.ciSimulation: true` still applies there. On `preflight sandbox`, both flags are passed into the container.
 
 Instead of `true`/`false`, any toggle can also be
 `{ "acknowledge": "<reason>" }`; it is honored for every toggle except

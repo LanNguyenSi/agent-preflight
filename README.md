@@ -52,7 +52,7 @@ npm install -g @lannguyensi/agent-preflight
 preflight run .
 ```
 
-The npm package contains the CLI and the MCP server. `preflight sandbox` builds its image from the `Dockerfile` and sources next to the installed CLI, and the npm package does not include them, so sandbox mode needs a source checkout, an `./install.sh` install or a release bundle. From an npm or npx install, `preflight sandbox` stops with `Sandbox Dockerfile not found`, also with `--print` or `--image`.
+The npm package contains the CLI and the MCP server. `preflight sandbox` builds its image from the `Dockerfile` and sources next to the installed CLI, and the npm package does not include them, so sandbox mode needs a source checkout, an `./install.sh` install or a release bundle. From an npm or npx install, `preflight sandbox` stops with `preflight: Sandbox Dockerfile not found in <dir>.`, also with `--print` or `--image`. Not shipping the `Dockerfile`, sources and lockfile in the npm package is a deliberate decision, to keep the package small.
 
 ## Usage
 
@@ -73,7 +73,7 @@ Options per subcommand (`preflight --version` and `--help` are global; every sub
 | `--config <path>` | `run` | Load this config file instead of `<repoPath>/.preflight.json` (see [Configuration](#configuration)); `sandbox` rejects it, `batch` has no such option |
 | `--setup` | `run`, `batch`, `sandbox` | Run the conservative dependency and build bootstrap before the checks |
 | `--ci-simulation` | `run`, `sandbox` | Add the `act` CI simulation (trusted repos only); `batch` has no such option, but a repo's own `checks.ciSimulation: true` still applies there |
-| `--no-audit`, `--no-secrets` | `run`, `batch`, `sandbox` | Skip the dependency audit or secret detection; on `sandbox` both flags are currently not passed into the container, so the run there follows the repo config for both checks |
+| `--no-audit`, `--no-secrets` | `run`, `batch`, `sandbox` | Skip the dependency audit or secret detection (on `sandbox` they are passed into the container) |
 | `--only <pattern>`, `--exclude <pattern>` | `batch` | Include or exclude repos whose directory name matches the glob |
 | `--build` | `sandbox` | Build the sandbox image before starting |
 | `--pull` | `sandbox` | Run `docker pull` on the image first; only works for a registry image given with `--image` |

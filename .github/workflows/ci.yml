@@ -9,11 +9,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20.19.0 is the lowest supported Node.js (see engines in package.json).
+        node-version: ['20.19.0', '20', '22']
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: ${{ matrix.node-version }}
           cache: 'npm'
       - run: npm ci --no-audit --no-fund
       - run: npx tsc --noEmit --skipLibCheck
