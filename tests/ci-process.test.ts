@@ -7,8 +7,8 @@ import { execFileSync, spawn } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { afterEach, describe, expect, it } from "vitest";
-import { runCiSimulation } from "../src/checks/ci.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createParentDeathGuard, runCiSimulation } from "../src/checks/ci.js";
 
 const originalPath = process.env.PATH;
 const tempDirs: string[] = [];
@@ -254,13 +254,20 @@ Module._resolveFilename = function (request, ...rest) {
 require(process.argv[2]).register({ transpileOnly: true, compilerOptions: { module: "commonjs" } });
 const { runCiSimulation } = require(process.argv[3]);
 const fs = require("fs");
-const [mode, goFile, markerFile, readyFile] = process.argv.slice(5);
+const [mode, goFile, markerFile, readyFile, unboundSignal] = process.argv.slice(5);
 if (mode === "listener") {
   // The host handles SIGTERM itself, so the check must not re-raise it: one
   // "x" per delivery, and a re-raise would deliver the signal a second time.
   process.on("SIGTERM", () => fs.appendFileSync(markerFile, "x"));
 }
-runCiSimulation(process.argv[4], [], { timeoutMs: 120000 }).then(() => {});
+const options = { timeoutMs: 120000 };
+if (mode === "unbound") {
+  // Holds the check between spawning act and binding its hooks to act until
+  // the signal has been delivered. The check's own handler is registered
+  // before this listener, so it has seen the signal when this one runs.
+  options.afterSpawn = () => new Promise((resolve) => process.once(unboundSignal, resolve));
+}
+runCiSimulation(process.argv[4], [], options).then(() => {});
 // The call has started act and installed its termination hooks by now, since
 // both happen before the first await. The test signals this process only after
 // it sees this file; a signal that arrived earlier would meet no hook and end
@@ -278,6 +285,7 @@ setInterval(() => {
 
   type Scenario =
     | { mode: "wait"; signal: NodeJS.Signals }
+    | { mode: "unbound"; signal: NodeJS.Signals }
     | { mode: "exit" }
     | { mode: "listener"; signal: "SIGTERM" };
 
@@ -300,7 +308,7 @@ setInterval(() => {
 
     const parent = spawn(
       process.execPath,
-      [harnessFile, tsNode, ciSource, makeRepo(), scenario.mode, goFile, markerFile, readyFile],
+      [harnessFile, tsNode, ciSource, makeRepo(), scenario.mode, goFile, markerFile, readyFile, scenario.mode === "unbound" ? scenario.signal : ""],
       { env: { ...process.env, PATH: `${binDir}${path.delimiter}${originalPath}` }, stdio: "ignore" }
     );
     const parentEnd = new Promise<ParentEnd | null>((resolve) => {
@@ -361,6 +369,19 @@ setInterval(() => {
     30_000
   );
 
+  it.each<NodeJS.Signals>(["SIGTERM", "SIGINT", "SIGHUP"])(
+    "stops act and its descendants and still dies by %s when it arrives before the hooks are bound to act",
+    async (signal) => {
+      // The harness holds the check right after act was spawned, with act's
+      // pid not yet known to the hooks. Hooks registered only after the spawn
+      // would not exist at this point.
+      const end = await runScenario({ mode: "unbound", signal });
+      expect(end.signal).toBe(signal);
+      expect(end.code).toBeNull();
+    },
+    30_000
+  );
+
   it("stops act and its descendants when the parent exits normally while act runs", async () => {
     const end = await runScenario({ mode: "exit" });
     expect(end).toMatchObject({ code: 3, signal: null });
@@ -369,5 +390,119 @@ setInterval(() => {
   it("stops act's group but leaves the host alive when the host has its own SIGTERM listener", async () => {
     const end = await runScenario({ mode: "listener", signal: "SIGTERM" });
     expect(end).toMatchObject({ code: 3, signal: null, listenerCalls: 1 });
+  }, 30_000);
+});
+
+describe("parent-death guard", () => {
+  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+  const events = ["exit", ...signals];
+  let saved: Map<NodeJS.Signals, NodeJS.SignalsListener[]>;
+
+  // The test runner may listen for these signals itself, which would count as
+  // "another listener" for the re-raise decision; set them aside.
+  beforeEach(() => {
+    saved = new Map();
+    for (const name of signals) {
+      saved.set(name, process.listeners(name));
+      process.removeAllListeners(name);
+    }
+  });
+  afterEach(() => {
+    for (const name of signals) {
+      process.removeAllListeners(name);
+      for (const l of saved.get(name) ?? []) process.on(name, l);
+    }
+  });
+
+  function listenerCounts(): Record<string, number> {
+    return Object.fromEntries(events.map((e) => [e, process.listenerCount(e)]));
+  }
+
+  it.each(signals)("remembers %s that arrives before bind and acts on it at bind", (signal) => {
+    const raised: string[] = [];
+    const killed: string[] = [];
+    const guard = createParentDeathGuard((s) => raised.push(s));
+    process.emit(signal);
+    expect(killed).toEqual([]);
+    expect(raised).toEqual([]);
+    guard.bind(() => killed.push("group"));
+    expect(killed).toEqual(["group"]);
+    expect(raised).toEqual([signal]);
+    expect(process.listenerCount(signal)).toBe(0);
+  });
+
+  it("does not re-raise a remembered signal when the host listens for it itself", () => {
+    const raised: string[] = [];
+    const killed: string[] = [];
+    const guard = createParentDeathGuard((s) => raised.push(s));
+    process.emit("SIGTERM");
+    const hostListener = (): void => {};
+    process.on("SIGTERM", hostListener);
+    guard.bind(() => killed.push("group"));
+    process.removeListener("SIGTERM", hostListener);
+    expect(killed).toEqual(["group"]);
+    expect(raised).toEqual([]);
+  });
+
+  it("re-raises a remembered signal at dispose when bind never ran", () => {
+    const raised: string[] = [];
+    const guard = createParentDeathGuard((s) => raised.push(s));
+    process.emit("SIGINT");
+    expect(raised).toEqual([]);
+    guard.dispose();
+    expect(raised).toEqual(["SIGINT"]);
+    guard.dispose();
+    expect(raised).toEqual(["SIGINT"]);
+  });
+
+  it("does not re-raise a remembered signal at dispose when the host listens for it", () => {
+    const raised: string[] = [];
+    const guard = createParentDeathGuard((s) => raised.push(s));
+    process.emit("SIGTERM");
+    const hostListener = (): void => {};
+    process.on("SIGTERM", hostListener);
+    guard.dispose();
+    process.removeListener("SIGTERM", hostListener);
+    expect(raised).toEqual([]);
+  });
+
+  it("acts on a signal that arrives after bind without waiting for another call", () => {
+    const raised: string[] = [];
+    const killed: string[] = [];
+    const guard = createParentDeathGuard((s) => raised.push(s));
+    guard.bind(() => killed.push("group"));
+    process.emit("SIGHUP");
+    expect(killed).toEqual(["group"]);
+    expect(raised).toEqual(["SIGHUP"]);
+    guard.dispose();
+  });
+
+  it("ignores signals after dispose and a bind after dispose", () => {
+    const raised: string[] = [];
+    const killed: string[] = [];
+    const before = listenerCounts();
+    const guard = createParentDeathGuard((s) => raised.push(s));
+    guard.dispose();
+    guard.dispose();
+    guard.bind(() => killed.push("group"));
+    process.emit("SIGINT");
+    expect(killed).toEqual([]);
+    expect(raised).toEqual([]);
+    expect(listenerCounts()).toEqual(before);
+  });
+
+  it("leaves no listeners behind across repeated runs", async () => {
+    const binDir = makeTempDir("preflight-ci-bin-");
+    fs.writeFileSync(path.join(binDir, "act"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    process.env.PATH = `${binDir}${path.delimiter}${originalPath}`;
+    const before = listenerCounts();
+    for (let i = 0; i < 3; i++) {
+      const result = await runCiSimulation(makeRepo(), [], { timeoutMs: 15_000 });
+      expect(result.checks[0].status).toBe("pass");
+      expect(listenerCounts()).toEqual(before);
+    }
+    process.env.PATH = makeTempDir("preflight-ci-empty-");
+    await runCiSimulation(makeRepo());
+    expect(listenerCounts()).toEqual(before);
   }, 30_000);
 });

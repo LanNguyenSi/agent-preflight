@@ -84,6 +84,22 @@ describe("runCiSimulation — act exits 0", () => {
     expect(result.limitations.some((l) => l.includes("act simulation"))).toBe(true);
   });
 
+  it("has the parent-death hooks installed by the time execa is called", async () => {
+    const dir = makeRepoWithWorkflows();
+    const events = ["SIGINT", "SIGTERM", "SIGHUP", "exit"] as const;
+    const before = events.map((e) => process.listenerCount(e));
+    let during: number[] = [];
+    mockExeca.mockImplementation(() => {
+      during = events.map((e) => process.listenerCount(e));
+      return Promise.resolve({ exitCode: 0, all: "" });
+    });
+
+    await runCiSimulation(dir);
+
+    expect(mockExeca).toHaveBeenCalledOnce();
+    events.forEach((_, i) => expect(during[i]).toBeGreaterThan(before[i]));
+  });
+
   it("calls execa with act --dryrun --json, the repo as -C, and a neutral cwd", async () => {
     const dir = makeRepoWithWorkflows();
     mockExeca.mockResolvedValue({ exitCode: 0, all: "" });

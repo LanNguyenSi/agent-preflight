@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Test names and comments no longer carry review-round or finding labels, and long source comments are wrapped to 80 columns (task 5de6dfe8). No behaviour change.
 
+### Fixed
+
+- CI simulation registers its parent-death hooks (SIGINT, SIGTERM, SIGHUP, exit) before it spawns `act`, so a termination signal that reaches preflight while `act` is starting no longer ends preflight with `act` still running; a signal that arrives before the hooks know `act`'s pid is remembered and stops its process group as soon as the pid is bound (task 314f942b).
+
 ## [0.12.0] - 2026-10-12
 
 ### Breaking
