@@ -52,7 +52,7 @@ npm install -g @lannguyensi/agent-preflight
 preflight run .
 ```
 
-The npm package contains the CLI and the MCP server. `preflight sandbox` builds its image from the `Dockerfile` and sources next to the installed CLI, and the npm package does not include them, so sandbox mode needs a source checkout, an `./install.sh` install or a release bundle. From an npm or npx install, `preflight sandbox` stops with `preflight: Sandbox Dockerfile not found in <dir>.`, also with `--print` or `--image`. Not shipping the `Dockerfile`, sources and lockfile in the npm package is a deliberate decision, to keep the package small; sandbox mode needs a source checkout.
+The npm package contains the CLI and the MCP server. `preflight sandbox` builds its image from the `Dockerfile` and sources next to the installed CLI, and the npm package does not include them, so sandbox mode needs a source checkout, an `./install.sh` install or a release bundle. From an npm or npx install, `preflight sandbox` stops with `preflight: Sandbox Dockerfile not found in <dir>.`, also with `--print` or `--image`. Not shipping the `Dockerfile`, sources and lockfile in the npm package is a deliberate decision, to keep the package small.
 
 ## Usage
 

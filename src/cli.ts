@@ -244,8 +244,9 @@ export function createProgram(): Command {
           noSecrets: secrets === false,
         });
       } catch (err) {
-        // Expected failures (explicit config, missing docker or Dockerfile) are
-        // reported as a single line rather than an unhandled rejection.
+        // Every Error on the sandbox path (explicit config, missing docker or
+        // Dockerfile, anything else) is reported as a single line rather than
+        // an unhandled rejection with a stack trace.
         if (err instanceof Error) {
           process.stderr.write(`preflight: ${err.message}\n`);
           process.exitCode = 1;
