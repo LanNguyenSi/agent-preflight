@@ -90,7 +90,7 @@ describe("git state checks", () => {
   });
 });
 
-// task b16ab5d8, review round 1, findings F2-F4 and the missing-tests list:
+// task b16ab5d8:
 // the failed-snapshot fallback, the rename-parsing branch, the special-path
 // `-z` parsing, the ">10 paths" cap wording, and the "snapshot present but
 // nothing produced" clean branch were all unpinned. `runGitStateChecks`'s
@@ -100,7 +100,7 @@ describe("git state checks", () => {
 // classification logic, not the setup wiring (already covered by
 // tests/setup-clean-worktree.test.ts).
 describe("clean-worktree with a pre-setup snapshot", () => {
-  it("F2: falls back to the undifferentiated check and still fails on a dirty repo when the snapshot itself failed", async () => {
+  it("falls back to the undifferentiated check and still fails on a dirty repo when the snapshot itself failed", async () => {
     const repoPath = makeTempDir("preflight-git-state-snapshot-failed-dirty-");
     initGitRepo(repoPath);
     git(repoPath, ["checkout", "-b", "feature/example"]);
@@ -116,7 +116,7 @@ describe("clean-worktree with a pre-setup snapshot", () => {
     ).toBe(true);
   });
 
-  it("F2: falls back and still passes on a clean repo when the snapshot itself failed, but flags the limitation", async () => {
+  it("falls back and still passes on a clean repo when the snapshot itself failed, but flags the limitation", async () => {
     const repoPath = makeTempDir("preflight-git-state-snapshot-failed-clean-");
     initGitRepo(repoPath);
     git(repoPath, ["checkout", "-b", "feature/example"]);
@@ -130,7 +130,7 @@ describe("clean-worktree with a pre-setup snapshot", () => {
     ).toBe(true);
   });
 
-  it("F3 (direct): snapshotWorktreeState splits a staged rename into both its old and new path", async () => {
+  it("snapshotWorktreeState splits a staged rename into both its old and new path", async () => {
     const repoPath = makeTempDir("preflight-git-state-rename-snapshot-");
     initGitRepo(repoPath);
     git(repoPath, ["checkout", "-b", "feature/example"]);
@@ -149,7 +149,7 @@ describe("clean-worktree with a pre-setup snapshot", () => {
     expect(snapshot.paths?.has("old.txt -> new.txt")).toBe(false);
   });
 
-  it("F3 (end-to-end): a pre-existing modification still blocks even when it later reads as the 'from' side of a rename record", async () => {
+  it("a pre-existing modification still blocks even when it later reads as the 'from' side of a rename record", async () => {
     // Deliberately the reverse order of "stage the rename before the
     // snapshot": that ordering does not actually discriminate the
     // rename-parsing branch, because the same porcelain line is parsed
@@ -158,11 +158,10 @@ describe("clean-worktree with a pre-setup snapshot", () => {
     // discriminate it: a plain pre-existing change captured by the
     // snapshot as its own simple path, which by check time is folded into
     // a rename record's "from" field. A parser that drops the "from"
-    // field (the bug review finding F3 describes -- "parsed as one path,
-    // miss the snapshot") loses the only token that still matches the
-    // snapshot, and the pre-existing change wrongly falls through to the
-    // "--setup produced this" classification instead of blocking with
-    // today's message.
+    // field (the bug "parsed as one path, miss the snapshot") loses the only
+    // token that still matches the snapshot, and the pre-existing change
+    // wrongly falls through to the "--setup produced this" classification
+    // instead of blocking with today's message.
     const repoPath = makeTempDir("preflight-git-state-rename-loses-identity-");
     initGitRepo(repoPath);
     git(repoPath, ["checkout", "-b", "feature/example"]);
@@ -192,7 +191,7 @@ describe("clean-worktree with a pre-setup snapshot", () => {
     expect(check?.message).toBe("Repository has uncommitted changes");
   });
 
-  it("F4: an untracked setup-produced path containing a space and a literal ' -> ' substring is named correctly, not split", async () => {
+  it("an untracked setup-produced path containing a space and a literal ' -> ' substring is named correctly, not split", async () => {
     const repoPath = makeTempDir("preflight-git-state-weird-name-");
     initGitRepo(repoPath);
     git(repoPath, ["checkout", "-b", "feature/example"]);
@@ -272,8 +271,8 @@ describe("clean-worktree with a pre-setup snapshot", () => {
     expect(result.limitations).toEqual([]);
   });
 
-  // task b16ab5d8, review round 3:
-  it("N2: names the tracked paths in a limitations entry too, since the CLI never prints a check's own details", async () => {
+  // task b16ab5d8:
+  it("names the tracked paths in a limitations entry too, since the CLI never prints a check's own details", async () => {
     const repoPath = makeTempDir("preflight-git-state-tracked-limitation-");
     initGitRepo(repoPath);
     git(repoPath, ["checkout", "-b", "feature/example"]);
@@ -319,7 +318,7 @@ describe("clean-worktree with a pre-setup snapshot", () => {
     expect(text).toContain("stale-artifact.txt");
   });
 
-  it("N3: a setup-produced path name containing a newline is escaped to a single line, in both details and the limitation", async () => {
+  it("a setup-produced path name containing a newline is escaped to a single line, in both details and the limitation", async () => {
     const repoPath = makeTempDir("preflight-git-state-newline-name-");
     initGitRepo(repoPath);
     git(repoPath, ["checkout", "-b", "feature/example"]);
@@ -355,7 +354,7 @@ describe("clean-worktree with a pre-setup snapshot", () => {
     expect(limitation).toContain("weird\\nname.txt");
   });
 
-  it("N3: a very long setup-produced path name is truncated with an ellipsis instead of growing the message unbounded", async () => {
+  it("a very long setup-produced path name is truncated with an ellipsis instead of growing the message unbounded", async () => {
     const repoPath = makeTempDir("preflight-git-state-long-name-");
     initGitRepo(repoPath);
     git(repoPath, ["checkout", "-b", "feature/example"]);

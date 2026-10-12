@@ -130,10 +130,10 @@ describe("preflight run honours PREFLIGHT_LOG_DIR (task 2e8bcc7e)", () => {
     expect(fs.existsSync(defaultLogsUnderFakeHome)).toBe(false);
   }, 30_000);
 
-  it("prints the PREFLIGHT_LOG_DIR warning on stderr, leaving --json's stdout parseable (missing test, task 2e8bcc7e)", async () => {
-    // Own fake HOME, separate from the shared `fakeHome` above (review
-    // finding F4, task 2e8bcc7e): this case's invalid PREFLIGHT_LOG_DIR
-    // falls back to the home-based default and creates
+  it("prints the PREFLIGHT_LOG_DIR warning on stderr, leaving --json's stdout parseable (task 2e8bcc7e)", async () => {
+    // Own fake HOME, separate from the shared `fakeHome` above (task
+    // 2e8bcc7e): this case's invalid PREFLIGHT_LOG_DIR falls back to the
+    // home-based default and creates
     // `<home>/.agent-preflight/logs`, which would make the previous case's
     // "no default logs under fakeHome" assertion pass only because this
     // case runs after it, not because the code path is actually clean.

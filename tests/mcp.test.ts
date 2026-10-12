@@ -45,7 +45,7 @@ async function connectedClient(
 // fixture's own config, so a test can tell "the MCP noAudit/noSecrets flag
 // actually suppressed the check" apart from "the fixture's config disabled
 // it regardless of the flag" — the latter is what made the original
-// noAudit/noSecrets assertions inert (mcp.test.ts review finding #3).
+// noAudit/noSecrets assertions inert.
 // `enableAudit` wires a deterministic `commands.audit` override (a bare
 // `true`) instead of relying on the real `npm audit`, which would be slow
 // and network-dependent for an empty fixture package.json.
@@ -131,9 +131,9 @@ describe("MCP tool schema / registration", () => {
       expect(run.description).toContain(readyFalseWarning);
       expect(batch.description).toContain(readyFalseWarning);
 
-      // Same pinning discipline for the shell-execution security warning
-      // (review finding #1): the target repo's .preflight.json can define
-      // shell commands this tool executes, so a calling agent must see the
+      // Same pinning discipline for the shell-execution security warning:
+      // the target repo's .preflight.json can define shell commands this
+      // tool executes, so a calling agent must see the
       // "trusted repositories only" guidance, not just a code comment.
       const shellSurfaceWarning =
         "The target repo's .preflight.json can define shell commands this tool will execute " +
@@ -303,7 +303,7 @@ describe("preflight_run noAudit/noSecrets threading", () => {
   // or absence in the response can only be explained by the MCP call's
   // noAudit/noSecrets arguments — not by the fixture's config already
   // disabling them regardless of the flag (the bug that made the original
-  // assertions inert; review finding #3).
+  // assertions inert).
   let repoPath: string;
 
   beforeAll(() => {
@@ -525,8 +525,7 @@ describe("preflight_batch only/exclude", () => {
   // Two repos in one root: `only`/`exclude` filtering has real signal only
   // when there's something to filter OUT. The single-repo batchRoot above
   // can't tell "only/exclude are threaded to runBatch correctly" apart
-  // from "only/exclude are silently dropped and every repo runs anyway"
-  // (review finding #4).
+  // from "only/exclude are silently dropped and every repo runs anyway".
   let batchRoot: string;
 
   beforeAll(() => {
