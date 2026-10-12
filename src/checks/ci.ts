@@ -26,7 +26,11 @@ export interface ParentDeathGuard {
    * are removed and the signal is re-raised as usual.
    */
   bind(kill: () => void): void;
-  /** Removes the hooks. Safe to call more than once. */
+  /**
+   * Removes the hooks. Safe to call more than once. If a termination signal
+   * arrived and `bind` never ran, the signal is re-raised once the hooks are
+   * gone, unless another listener handles it.
+   */
   dispose(): void;
 }
 
@@ -236,7 +240,9 @@ export async function runCiSimulation(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
     if (graceTimer !== undefined) clearTimeout(graceTimer);
-    disposeParentHook?.();
+    // Remove the temp dir first: dispose may re-raise a remembered signal,
+    // which ends preflight on the spot.
     fs.rmSync(neutralDir, { recursive: true, force: true });
+    disposeParentHook?.();
   }
 }
