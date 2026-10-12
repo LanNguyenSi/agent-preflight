@@ -166,9 +166,12 @@ function gitBoundaryAt(dir: string): GitBoundary {
 // directory is `<common dir>/worktrees/<id>`: the parent of the last segment
 // is `worktrees` (this also covers a worktree of a submodule,
 // `.git/modules/<name>/worktrees/<id>`). A submodule's git directory is
-// `<git dir>/modules/<name>`: a `.git` segment directly followed by `modules`
-// and at least one name segment. So a worktree whose id is `modules` and a
-// submodule named `worktrees` keep their class. Backslashes are separators.
+// `<git dir>/modules/<name>`: a `modules` segment with at least one name
+// segment after it, directly below a git directory (`.git`, or a bare
+// `<name>.git`) or below a worktree admin directory (`worktrees/<id>`, a
+// submodule checked out in a linked worktree of its superproject). So a
+// worktree whose id is `modules` and a submodule named `worktrees` keep their
+// class. Backslashes are separators.
 export function classifyGitdir(gitdir: string): "worktree" | "submodule" | "unknown" {
   const segments = gitdir
     .replace(/\\/g, "/")
@@ -176,8 +179,10 @@ export function classifyGitdir(gitdir: string): "worktree" | "submodule" | "unkn
     .filter((segment) => segment !== "" && segment !== ".");
   const n = segments.length;
   if (n >= 2 && segments[n - 2] === "worktrees") return "worktree";
-  for (let i = 0; i + 2 < n; i++) {
-    if (segments[i] === ".git" && segments[i + 1] === "modules") return "submodule";
+  for (let i = 1; i + 1 < n; i++) {
+    if (segments[i] !== "modules") continue;
+    const parent = segments[i - 1];
+    if (parent.endsWith(".git") || (i >= 2 && segments[i - 2] === "worktrees")) return "submodule";
   }
   return "unknown";
 }

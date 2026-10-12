@@ -256,6 +256,13 @@ describe("missing installed dependencies", () => {
       expect(test.limitations.join("\n")).not.toContain(HINT);
     });
 
+    it("keeps walking past a submodule checked out in a linked worktree of its superproject", async () => {
+      const inner = nestedProject("gitdir: ../../sup/.git/worktrees/wt1/modules/mysub\n");
+      const test = await runTestChecks(inner, { logDir: logDir(inner) });
+      expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "fail"]]);
+      expect(test.limitations.join("\n")).not.toContain(HINT);
+    });
+
     it("stops at a linked worktree of a submodule", async () => {
       const inner = nestedProject("gitdir: /somewhere/.git/modules/sub/worktrees/wt\n");
       const test = await runTestChecks(inner, { logDir: logDir(inner) });
@@ -310,6 +317,12 @@ describe("classifyGitdir", () => {
     ["/r/.git/modules/a/modules/b", "submodule"],
     ["./.git/modules/libs/x", "submodule"],
     ["C:\\r\\.git\\modules\\worktrees", "submodule"],
+    ["/r/.git/worktrees/wt1/modules/sub", "submodule"],
+    ["../../sup/.git/worktrees/wt1/modules/worktrees", "submodule"],
+    ["/srv/repo.git/modules/n", "submodule"],
+    ["/srv/repo.git/modules/a/modules/b", "submodule"],
+    ["/r/.git/worktrees/wt1/modules", "unknown"],
+    ["/r/notgit/modules/sub", "unknown"],
     ["/r/.git/modules", "unknown"],
     ["/r/.git", "unknown"],
     ["/r/modules/sub", "unknown"],
