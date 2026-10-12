@@ -7,7 +7,7 @@ import { runLintChecks } from "../src/checks/lint.js";
 import { runTypecheckChecks } from "../src/checks/typecheck.js";
 import { runTestChecks } from "../src/checks/test.js";
 import { runPreflight } from "../src/runner.js";
-import { dependenciesNotInstalledResult, isDependenciesNotInstalled } from "../src/checks/shared.js";
+import { classifyGitdir, dependenciesNotInstalledResult, isDependenciesNotInstalled } from "../src/checks/shared.js";
 
 const HINT = "dependencies not installed; run with --setup or install first";
 const tempDirs: string[] = [];
@@ -242,6 +242,41 @@ describe("missing installed dependencies", () => {
       expect(test.limitations.join("\n")).not.toContain(HINT);
     });
 
+    it("stops at a linked worktree whose id is `modules`", async () => {
+      const inner = nestedProject("gitdir: /somewhere/.git/worktrees/modules\n");
+      const test = await runTestChecks(inner, { logDir: logDir(inner) });
+      expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "skip"]]);
+      expect(test.limitations.join("\n")).toContain(HINT);
+    });
+
+    it("keeps walking past a submodule named `worktrees`", async () => {
+      const inner = nestedProject("gitdir: ../../.git/modules/worktrees\n");
+      const test = await runTestChecks(inner, { logDir: logDir(inner) });
+      expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "fail"]]);
+      expect(test.limitations.join("\n")).not.toContain(HINT);
+    });
+
+    it("keeps walking past a submodule checked out in a linked worktree of its superproject", async () => {
+      const inner = nestedProject("gitdir: ../../sup/.git/worktrees/wt1/modules/mysub\n");
+      const test = await runTestChecks(inner, { logDir: logDir(inner) });
+      expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "fail"]]);
+      expect(test.limitations.join("\n")).not.toContain(HINT);
+    });
+
+    it("stops at a linked worktree of a submodule", async () => {
+      const inner = nestedProject("gitdir: /somewhere/.git/modules/sub/worktrees/wt\n");
+      const test = await runTestChecks(inner, { logDir: logDir(inner) });
+      expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "skip"]]);
+      expect(test.limitations.join("\n")).toContain(HINT);
+    });
+
+    it("reads a Windows-style backslash gitdir", async () => {
+      const inner = nestedProject("gitdir: C:\\work\\repo\\.git\\worktrees\\modules\n");
+      const test = await runTestChecks(inner, { logDir: logDir(inner) });
+      expect(test.checks.map((c) => [c.name, c.status])).toEqual([["npm-test", "skip"]]);
+      expect(test.limitations.join("\n")).toContain(HINT);
+    });
+
     it("counts a node_modules hoisted to the repository root for a nested package", async () => {
       const { repoPath } = makeRepo({ installed: true });
       execFileSync("git", ["init", "-q"], { cwd: repoPath });
@@ -265,5 +300,34 @@ describe("missing installed dependencies", () => {
       expect(isDependenciesNotInstalled({ ...built })).toBe(false);
       expect(isDependenciesNotInstalled({ name: "x", kind: "test", status: "skip", message: `x: ${HINT}`, durationMs: 0, confidenceContribution: 0 })).toBe(false);
     });
+  });
+});
+
+describe("classifyGitdir", () => {
+  it.each([
+    ["/r/.git/worktrees/x", "worktree"],
+    ["/r/.git/worktrees/modules", "worktree"],
+    ["/r/.git/worktrees/x/", "worktree"],
+    ["/srv/bare.git/worktrees/x", "worktree"],
+    ["/r/.git/modules/sub/worktrees/wt", "worktree"],
+    ["/r/.git/modules/worktrees/worktrees/wt", "worktree"],
+    ["C:\\r\\.git\\worktrees\\modules", "worktree"],
+    ["../../.git/modules/sub", "submodule"],
+    ["../../.git/modules/worktrees", "submodule"],
+    ["/r/.git/modules/a/modules/b", "submodule"],
+    ["./.git/modules/libs/x", "submodule"],
+    ["C:\\r\\.git\\modules\\worktrees", "submodule"],
+    ["/r/.git/worktrees/wt1/modules/sub", "submodule"],
+    ["../../sup/.git/worktrees/wt1/modules/worktrees", "submodule"],
+    ["/srv/repo.git/modules/n", "submodule"],
+    ["/srv/repo.git/modules/a/modules/b", "submodule"],
+    ["/r/.git/worktrees/wt1/modules", "unknown"],
+    ["/gd/proj/modules/ms", "submodule"],
+    ["/r/.git/modules", "unknown"],
+    ["/r/.git", "unknown"],
+    ["/r/modules/sub", "submodule"],
+    ["", "unknown"],
+  ] as const)("%s -> %s", (gitdir, expected) => {
+    expect(classifyGitdir(gitdir)).toBe(expected);
   });
 });
