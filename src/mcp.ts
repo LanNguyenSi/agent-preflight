@@ -59,7 +59,7 @@ const CHECK_KIND_VALUES = [
 const checkResultOutputShape = {
   name: z.string(),
   kind: z.enum(CHECK_KIND_VALUES),
-  // "acknowledged" (agent-tasks b31065cc): a check that failed but was
+  // "acknowledged": a check that failed but was
   // waived via checks.<kind>.acknowledge in .preflight.json. Mirrors
   // CheckResult["status"] (src/types.ts) exactly — the schema-drift guard
   // below fails typecheck if this list and that union ever diverge.

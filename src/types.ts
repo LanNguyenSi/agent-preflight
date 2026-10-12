@@ -54,7 +54,7 @@ export type CheckKind = typeof CHECK_KINDS[number];
  * non-string value is rejected (ignored, with the rejection reported in
  * `PreflightResult.limitations`), never silently treated as "acknowledged".
  * Deliberately NOT *honored* for `ciSimulation` or `secretDetection`
- * (Orchestrator decision D-013 for the latter: a whole-kind waiver would
+ * (for the latter: a whole-kind waiver would
  * blind every future secret-detection finding for the run, not just the
  * one an operator reviewed; use `secretAllowlist` or an inline `pragma:
  * allowlist secret` comment instead), or for `custom` checks (which

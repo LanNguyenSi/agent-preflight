@@ -207,8 +207,7 @@ export function createProgram(): Command {
         // Acknowledged checks (waived failures) never surface in
         // blockers/warnings — they only exist in checks[] — so this batch
         // summary line would otherwise show a plain ✅ with no sign that a
-        // failure was waived (review finding 3, fix-round on agent-tasks
-        // b31065cc). The single-repo `run` command already has a dedicated
+        // failure was waived. The single-repo `run` command already has a dedicated
         // "Acknowledged" section for this; batch's one-line-per-repo format
         // has no room for that, so it gets a compact count marker instead.
         const acknowledgedCount = result.checks.filter((c) => c.status === "acknowledged").length;
@@ -236,9 +235,18 @@ export function createProgram(): Command {
     .option("--no-secrets", "Skip secret detection")
     .action(async (repoPath: string | undefined, opts) => {
       try {
-        await runSandbox(repoPath, opts);
+        // Commander turns `--no-audit` / `--no-secrets` into `audit: false` /
+        // `secrets: false`; the sandbox options use the `noAudit` / `noSecrets` names.
+        const { audit, secrets, ...rest } = opts;
+        await runSandbox(repoPath, {
+          ...rest,
+          noAudit: audit === false,
+          noSecrets: secrets === false,
+        });
       } catch (err) {
-        if (err instanceof ExplicitConfigError) {
+        // Expected failures (explicit config, missing docker or Dockerfile) are
+        // reported as a single line rather than an unhandled rejection.
+        if (err instanceof Error) {
           process.stderr.write(`preflight: ${err.message}\n`);
           process.exitCode = 1;
           return;

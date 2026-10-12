@@ -58,7 +58,7 @@ error: target path '/tmp/missing-repo' does not exist. Pass a path to an existin
 
 Never expose raw exception traces to the user by default.
 
-Current behaviour does not fully match this yet. Explicit-config errors use `preflight: <message>`. Repo-config problems, including an unparsable `.preflight.json`, are warnings (`[preflight] Warning: <path>: <message>`, or `[preflight] Warning: failed to parse <path>: <message>` for an unparsable file), and the run continues with defaults. Some errors, for example `Sandbox Dockerfile not found` on `preflight sandbox`, still surface as stack traces.
+Current behaviour does not fully match this yet. Explicit-config errors use `preflight: <message>`. Repo-config problems, including an unparsable `.preflight.json`, are warnings (`[preflight] Warning: <path>: <message>`, or `[preflight] Warning: failed to parse <path>: <message>` for an unparsable file), and the run continues with defaults. Sandbox errors, for example `Sandbox Dockerfile not found`, use the same `preflight: <message>` line and exit `1`.
 
 ### Structured Output
 

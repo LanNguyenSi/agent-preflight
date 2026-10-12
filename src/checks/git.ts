@@ -14,7 +14,7 @@ const MAX_NOTED_SETUP_PATHS = 10;
 // check can tell dirt that predates `--setup` (still a blocker) apart from
 // output `--setup` itself just produced (never a blocker for untracked
 // output; still a blocker when `--setup` touched a TRACKED file -- see
-// task b16ab5d8, review finding F1). `paths: null` means the snapshot
+// isUntrackedOrIgnoredStatus). `paths: null` means the snapshot
 // attempt itself failed (a git error) -- distinct from "snapshot
 // succeeded, worktree was clean" (an empty Set) -- so the check can fall
 // back to today's undifferentiated behaviour and say so, instead of
@@ -56,7 +56,7 @@ interface PorcelainEntry {
 // literal newline or a literal " -> " substring can no longer be misread
 // as a rename delimiter or truncate an entry (`-z` never quotes and a
 // rename record is unambiguous: two NUL-terminated fields instead of one
-// field containing " -> ") (task b16ab5d8, review finding F4).
+// field containing " -> ").
 function parsePorcelainEntriesZ(stdout: string): PorcelainEntry[] {
   // `-z` terminates every field with NUL, including the last one, so
   // splitting on "\0" always leaves one trailing empty string; nothing
@@ -94,15 +94,13 @@ function parsePorcelainEntriesZ(stdout: string): PorcelainEntry[] {
 // `runCleanWorktreeCheck` excuses as harmless `--setup` output. Any other
 // status (` M`, `M `, ` D`, `A `, `R `, `C `, `MM`, ...) means git is
 // already tracking the path, so `--setup` having touched it is a real
-// content change to a committed file that `.gitignore` cannot wave away
-// (task b16ab5d8, review finding F1).
+// content change to a committed file that `.gitignore` cannot wave away.
 function isUntrackedOrIgnoredStatus(status: string): boolean {
   return status === "??" || status === "!!";
 }
 
 // The longest a single sanitized path name is allowed to be in a check
-// message/limitation before it is truncated with an ellipsis (task
-// b16ab5d8, review round 3 finding N3).
+// message/limitation before it is truncated with an ellipsis.
 const MAX_PATH_NAME_LENGTH = 200;
 
 // `names` are repository-controlled (a committed or `--setup`-produced
@@ -112,19 +110,18 @@ const MAX_PATH_NAME_LENGTH = 200;
 // \n, \r, \t, \x1b) the same way `JSON.stringify` would, so an embedded
 // C0 newline can no longer forge an extra line in the CLI's Limitations
 // block, and caps the result at `MAX_PATH_NAME_LENGTH` so one absurdly
-// long name can't blow up the message either (task b16ab5d8, review
-// round 3 finding N3). Reusing `JSON.stringify`'s escaping also means a
+// long name can't blow up the message either. Reusing `JSON.stringify`'s escaping also means a
 // literal backslash or double quote in a path renders escaped (`\\`,
 // `\"`) rather than verbatim -- an accepted side effect of borrowing the
-// same escaper, not something a caller needs to unescape (task 4036f6b7).
+// same escaper, not something a caller needs to unescape.
 // `JSON.stringify` alone leaves DEL (U+007F), the C1 range (U+0080-U+009F,
 // including U+009B CSI, an 8-bit escape introducer some terminals honour)
 // and the line separators U+2028/U+2029 untouched, so this additionally
 // renders that class as `\uXXXX` the same way the C0 range already is
-// (task dd8258ca: narrowed rather than accepted, since U+009B is a
+// (narrowed rather than accepted, since U+009B is a
 // terminal-honoured escape introducer and the extra pass is a small
 // replace over one code-point class; see CHANGELOG).
-// Left deliberately out of scope for task dd8258ca and still passed
+// Left deliberately out of scope and still passed
 // through verbatim: the bidi control characters U+202A to U+202E and
 // U+2066 to U+2069, other Cf/invisible format characters such as
 // U+200B (zero-width space) and U+FEFF (BOM), and NBSP (U+00A0).
@@ -268,7 +265,7 @@ async function runCleanWorktreeCheck(
   try {
     // The plain (non `-z`) call this check has always used, kept
     // byte-identical for the no-snapshot and failed-snapshot fallback
-    // paths below (tracker criterion 3; review finding F2) -- neither
+    // paths below -- neither
     // path needs per-path parsing, only "is the worktree dirty at all".
     const { stdout } = await execa("git", ["status", "--porcelain"], {
       cwd: repoPath,
@@ -276,7 +273,7 @@ async function runCleanWorktreeCheck(
 
     // No `--setup` run (or the caller didn't pass a snapshot at all): the
     // exact same code path as before this feature existed, so behaviour
-    // stays byte-identical without `--setup` (tracker criterion 3).
+    // stays byte-identical without `--setup`.
     if (!preSetupSnapshot) {
       return { check: buildCleanWorktreeResult(stdout.trim().length > 0, start) };
     }
@@ -295,7 +292,7 @@ async function runCleanWorktreeCheck(
     }
 
     // A real snapshot exists: re-inspect via `-z` for unambiguous per-path
-    // classification (parsePorcelainEntriesZ; review finding F4).
+    // classification (parsePorcelainEntriesZ).
     const { stdout: stdoutZ } = await execa("git", ["status", "--porcelain", "-z"], {
       cwd: repoPath,
     });
@@ -305,8 +302,7 @@ async function runCleanWorktreeCheck(
     const produced = currentEntries.filter((entry) => !entry.paths.some((p) => snapshotPaths.has(p)));
 
     // Any change that predates `--setup` still blocks, exactly as today,
-    // regardless of whether `--setup` also produced its own output (task
-    // b16ab5d8, D-011: the tool cannot know whether pre-existing dirt IS
+    // regardless of whether `--setup` also produced its own output (the tool cannot know whether pre-existing dirt IS
     // last run's un-gitignored setup output, so it still blocks -- but
     // when every pre-existing entry is untracked, it's worth naming the
     // paths and pointing at .gitignore as a likely fix, since that's
@@ -349,7 +345,7 @@ async function runCleanWorktreeCheck(
     // tracks that `--setup` modified or removed (a committed `dist/`
     // file the build rewrote, `package-lock.json` rewritten by `npm ci`)
     // is a real content change to a committed file, not something
-    // `.gitignore` can fix, so it still blocks (review finding F1).
+    // `.gitignore` can fix, so it still blocks.
     const trackedProduced = produced.filter((entry) => !isUntrackedOrIgnoredStatus(entry.status));
     const untrackedProduced = produced.filter((entry) => isUntrackedOrIgnoredStatus(entry.status));
 
@@ -374,8 +370,7 @@ async function runCleanWorktreeCheck(
         // Mirrors the untracked-produced branch below: the CLI only
         // prints blockers/warnings/acknowledged/limitations, not a
         // check's own `details`, so without this the CLI showed just
-        // "--setup modified or removed tracked files" with no paths
-        // (task b16ab5d8, review round 3 finding N2).
+        // "--setup modified or removed tracked files" with no paths.
         limitation: `--setup modified or removed tracked files (${list}); ${remedy}`,
       };
     }

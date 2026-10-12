@@ -15,8 +15,7 @@ import { stripShellExecution } from "./shellGate.js";
 //     out of scope);
 //   - "custom" (customChecks[] already has its own per-check `failOnError`
 //     waiver);
-//   - "secret-detection" (Orchestrator decision D-013, fix-round on
-//     agent-tasks b31065cc): unlike every other check kind here, a single
+//   - "secret-detection" (a deliberate decision): unlike every other check kind here, a single
 //     `checks.secretDetection.acknowledge` reason would waive EVERY future
 //     secret-detection finding for the whole run, not just the one the
 //     operator actually reviewed — the scanner already has finding-scoped
@@ -49,8 +48,7 @@ interface AcknowledgeResolution {
   rejected: boolean;
 }
 
-// config.ts#validateConfig() does validate .preflight.json's outer shape
-// (task 850903cb): it already guarantees `toggle` is a boolean or a plain
+// config.ts#validateConfig() does validate .preflight.json's outer shape: it already guarantees `toggle` is a boolean or a plain
 // object, dropping (with a warning) anything else before it ever reaches
 // here. This function still reads the toggle defensively rather than
 // trusting that outer guarantee for the INNER `acknowledge` value: any
@@ -79,7 +77,7 @@ function resolveAcknowledge(toggle: CheckToggle | undefined): AcknowledgeResolut
 /**
  * Downgrades a `fail` CheckResult to an `acknowledged` status
  * when its check kind's `.preflight.json` toggle carries a valid
- * `acknowledge` justification (agent-tasks b31065cc). Scoped to `fail`
+ * `acknowledge` justification. Scoped to `fail`
  * only — `pass`/`warn`/`skip` are left untouched. Required kinds still need
  * every result to pass. Never silent: every application appends a
  * `PreflightResult.limitations` entry naming the check and the reason, and
@@ -93,7 +91,7 @@ function resolveAcknowledge(toggle: CheckToggle | undefined): AcknowledgeResolut
  * (one per `commands.test` entry), and reporting the same rejection once
  * per result only differed by an internal check name, which the
  * deduplication at the end of `runPreflight` (`[...new Set(limitations)]`)
- * could not collapse (review finding, fix-round on agent-tasks b31065cc).
+ * could not collapse.
  */
 function applyAcknowledgements(
   checks: CheckResult[],
@@ -129,8 +127,8 @@ function applyAcknowledgements(
 }
 
 /**
- * `secret-detection` has no CHECK_KIND_TO_CONFIG_KEY entry (Orchestrator
- * decision D-013, see the block comment on that map), so
+ * `secret-detection` has no CHECK_KIND_TO_CONFIG_KEY entry (a deliberate
+ * decision, see the block comment on that map), so
  * applyAcknowledgements() above never touches it — a
  * `checks.secretDetection.acknowledge` configured in `.preflight.json` is
  * otherwise silently inert: the check still runs, still reports `fail` on
@@ -203,8 +201,7 @@ export async function runPreflight(
   // the default `~/.agent-preflight/logs`.
   const configuredLogDir = config.logDir ? expandLeadingTilde(config.logDir) : undefined;
   // When `.preflight.json` did not configure a `logDir`, resolve
-  // `PREFLIGHT_LOG_DIR`/the home-based default exactly ONCE here (task
-  // 2e8bcc7e, review finding F5) and thread the result through
+  // `PREFLIGHT_LOG_DIR`/the home-based default exactly ONCE here and thread the result through
   // `effectiveConfig.logDir` the same way a configured value already is,
   // rather than leaving `logDir` undefined for every check runner to
   // resolve independently. Every check runner below passes
@@ -247,7 +244,7 @@ export async function runPreflight(
   // Snapshotted BEFORE `ensureProjectSetup` runs, and only when the
   // clean-worktree check is actually going to run, so the check can judge
   // `--setup`'s own install/build output against the worktree state that
-  // predates it instead of blaming its own writes (task b16ab5d8). `--setup`
+  // predates it instead of blaming its own writes. `--setup`
   // disabled or the git-state check disabled both leave this `undefined`,
   // which keeps `runCleanWorktreeCheck`'s undifferentiated (byte-identical)
   // behaviour for every run that isn't the `--setup` case this exists for.

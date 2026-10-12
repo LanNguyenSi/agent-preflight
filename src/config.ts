@@ -18,7 +18,7 @@ const DEFAULT_ACT_FLAGS = ["--platform", "ubuntu-latest=catthehacker/ubuntu:act-
 // did, via a separate boolean-only picker) made a `checks.secretDetection:
 // { acknowledge: "..." }` in `.preflight.json` invisible to `runPreflight`:
 // it never reached runner.ts#checkSecretDetectionAcknowledgeIgnored, so the
-// documented D-013 "not supported" `limitations` entry could never actually
+// documented "not supported" `limitations` entry could never actually
 // fire from a config file, only from a config built programmatically
 // (bypassing `loadConfig`). Passing the object through here, unmodified,
 // lets runner.ts's own defensive reads see it and react (secretDetection:
@@ -102,8 +102,7 @@ export function requiredChecksConfigurationError(value: unknown): string | undef
 
 /**
  * Type-checks a JSON.parse()'d `.preflight.json` payload field-by-field
- * against `PreflightConfig`'s shape, hand-rolled (no schema library — task
- * 850903cb). Every recognized field must match its declared type; a field
+ * against `PreflightConfig`'s shape, hand-rolled (no schema library). Every recognized field must match its declared type; a field
  * whose value has the wrong type is dropped (never merged over the default)
  * and reported in `warnings`, except explicit commands and requiredChecks,
  * which are retained so invalid configuration blocks readiness.
