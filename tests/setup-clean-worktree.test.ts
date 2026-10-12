@@ -157,8 +157,8 @@ describe("clean-worktree under --setup (fixture: monorepo-build-required)", () =
     });
   });
 
-  // task b16ab5d8: the fix above only holds
-  // for the FIRST --setup run in a worktree. If the un-gitignored setup
+  // Task b16ab5d8: the fix above only holds for the FIRST --setup run in a
+  // worktree. If the un-gitignored setup
   // output from run 1 is still there (nobody added it to .gitignore),
   // run 2's PRE-setup snapshot already contains it, so it reads as
   // pre-existing dirt on run 2 and blocks -- correctly (the tool cannot

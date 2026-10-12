@@ -90,13 +90,12 @@ describe("git state checks", () => {
   });
 });
 
-// task b16ab5d8:
-// the failed-snapshot fallback, the rename-parsing branch, the special-path
-// `-z` parsing, the ">10 paths" cap wording, and the "snapshot present but
-// nothing produced" clean branch were all unpinned. `runGitStateChecks`'s
-// third parameter is exercised directly here (the same entry point
-// `runCleanWorktreeCheck` uses once `--setup` is enabled) rather than
-// through `runPreflight`, since these are about `clean-worktree`'s own
+// Task b16ab5d8: the failed-snapshot fallback, the rename-parsing branch, the
+// special-path `-z` parsing, the ">10 paths" cap wording, and the "snapshot
+// present but nothing produced" clean branch were all unpinned.
+// `runGitStateChecks`'s third parameter is exercised directly here (the same
+// entry point `runCleanWorktreeCheck` uses once `--setup` is enabled) rather
+// than through `runPreflight`, since these are about `clean-worktree`'s own
 // classification logic, not the setup wiring (already covered by
 // tests/setup-clean-worktree.test.ts).
 describe("clean-worktree with a pre-setup snapshot", () => {
@@ -271,7 +270,6 @@ describe("clean-worktree with a pre-setup snapshot", () => {
     expect(result.limitations).toEqual([]);
   });
 
-  // task b16ab5d8:
   it("names the tracked paths in a limitations entry too, since the CLI never prints a check's own details", async () => {
     const repoPath = makeTempDir("preflight-git-state-tracked-limitation-");
     initGitRepo(repoPath);
