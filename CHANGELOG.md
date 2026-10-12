@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Breaking
 
 - **Node.js floor raised:** `engines.node` is now `^20.19.0 || >=22.12.0` (was `>=18`), the floor the CommonJS build needs to `require` the ESM-only `execa`; CI runs on 20.19.0, 20 and 22. Installing on Node 18, 21, 20 below 20.19 or 22 below 22.12 prints an npm engine warning (an error with `engine-strict`), and the CLI is not expected to run there.
-- **BEHAVIOR CHANGE for MCP users:** CI simulation through the MCP server now needs `PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1`, like `customChecks` and `commands.*`; without it `act` is not run and the check reports `skip` (details under Security). The CLI is unchanged.
+- **BEHAVIOR CHANGE for MCP users:** CI simulation through the MCP server now needs `PREFLIGHT_MCP_ALLOW_CUSTOM_CHECKS=1`, like `customChecks` and `commands.*`; without it `act` is not run and the check reports `skip` (details under Security). This gate does not apply to the CLI.
+- **CI simulation (CLI and MCP):** the repo's `.actrc` is no longer read, and `actFlags` that would turn the leading `--dryrun` into step execution (a `-self-hosted` platform mapping, a non-ASCII `<label>=<image>` argument, a `--dryrun=`/`-n=` value other than a true spelling) make `act-dry-run` fail, so `ready` is `false` (details under Security).
 
 ### Changed
 
