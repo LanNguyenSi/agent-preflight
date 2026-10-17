@@ -359,7 +359,7 @@ Operative guidance: run preflight, and CI simulation in particular, only against
 Optional bootstrap before checks. Enable with `--setup` or `setup.enabled: true` in `.preflight.json`. When on:
 
 - Node: `npm ci` if `package-lock.json` exists and `node_modules/` is missing
-- Node: `npm run build` when `package.json` has a `build` script AND `.github/workflows/ci.yml` shows a `run:` step invoking it before a step invoking the test script. The step has its own wall-clock budget, 300000 ms by default (override with `setup.buildTimeoutMs`): a build that exits non-zero is a blocker naming the exit code and the persisted log, a build that exhausts the budget makes the test check "not evaluated" (a named `skip` plus a limitation) rather than a blocker, and after a successful build any test failure is a genuine blocker. Trust boundary: this is the one place where text in the target repo (a `run:` line in its own workflow file) decides whether that repo's `build` script executes on your machine, so `--setup` belongs only on repositories you already trust to run. See ["Build-required test classification"](#build-required-test-classification-an-unbuilt-package-is-not-a-broken-one) below for the exact detection rule and its documented limits
+- Node: `npm run build` when `package.json` has a `build` script AND `.github/workflows/ci.yml` shows a `run:` step invoking it before a step invoking the test script. The step has its own wall-clock budget, 300000 ms by default (override with `setup.buildTimeoutMs`): a build that exits non-zero is a blocker naming the exit code and the persisted log, a build that exhausts the budget makes the test check "not evaluated" (a named `skip` plus a limitation) rather than a blocker, and after a successful build any test failure is a genuine blocker. The budget bounds a command that is still running at the deadline: a command that exited on its own while a background descendant keeps its output streams open is waited for, and is not cut off by the budget (the linked section below states this too). Trust boundary: this is the one place where text in the target repo (a `run:` line in its own workflow file) decides whether that repo's `build` script executes on your machine, so `--setup` belongs only on repositories you already trust to run. See ["Build-required test classification"](#build-required-test-classification-an-unbuilt-package-is-not-a-broken-one) below for the exact detection rule and its documented limits
 - Python: creates `.preflight-venv` and installs `requirements.txt` when present
 - PHP: `composer install --no-interaction --no-progress` when `vendor/` is missing
 - Maven: dependency warmup before the Java compile and test checks
@@ -756,7 +756,10 @@ ever executed.
 
 The build step gets its own wall-clock budget, **300000 ms** by default (the
 same budget the test check gets, rather than the 120000 ms the dependency
-installs share). Override it with `setup.buildTimeoutMs` in
+installs share). This budget bounds a command that is still running at the
+deadline: a command that exited on its own while a background descendant keeps
+its output streams open is waited for, and is not cut off by the
+budget. Override it with `setup.buildTimeoutMs` in
 `.preflight.json`: a positive integer, in milliseconds, up to one day
 (86400000 ms); any other value (non-finite, non-integer, non-positive, or
 above that bound) is dropped with a warning and the default applies. The
