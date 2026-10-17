@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - CI simulation registers its parent-death hooks (SIGINT, SIGTERM, SIGHUP, exit) before it spawns `act`, so a termination signal that reaches preflight while `act` is starting no longer ends preflight with `act` still running; a signal that arrives before the hooks know `act`'s pid is remembered and stops its process group as soon as the pid is bound (task 314f942b).
 
+### Docs
+
+- docs/checks.md now says, at each place that names the wall-clock budget of the `--setup` build step, that the budget bounds a command still running at the deadline: a command that exited on its own while a background descendant keeps its output streams open is waited for and is not cut off by the budget. No behaviour change.
+
 ## [0.12.0] - 2026-10-12
 
 ### Breaking
