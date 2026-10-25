@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-10-25
+
 ### Changed
 
 - Test names and comments no longer carry review-round or finding labels, and long source comments are wrapped to 80 columns (task 5de6dfe8). No behaviour change.
