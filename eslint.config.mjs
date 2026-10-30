@@ -4,8 +4,7 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default defineConfig([
-  // Flat config has no `--ext`: the old `eslint ... --ext .ts` linted only
-  // TypeScript sources, so JS fixtures under tests/ stay out of the file set.
+  // Only TypeScript sources are linted; the JS fixtures under tests/ are not.
   { ignores: ["dist/", "node_modules/", "**/*.js", "**/*.cjs", "**/*.mjs"] },
   {
     files: ["**/*.ts"],
@@ -18,6 +17,9 @@ export default defineConfig([
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+      // ESLint 10 defaults checkLoops to allExceptWhileTrue; "all" keeps
+      // constant loops such as while (true) reported
+      "no-constant-condition": ["error", { checkLoops: "all" }],
     },
   },
 ]);
