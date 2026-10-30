@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Dev tooling: ESLint 8 to ESLint 10 with a flat `eslint.config.mjs` (replaces `.eslintrc.json`), using the unified `typescript-eslint` package. `npm run lint` now takes no `--ext`; the same `.ts` files under `src` and `tests` are linted. The ESLint 10 `recommended` set adds six rules and drops three removed ones; `no-constant-condition` is set to `checkLoops: "all"` so `while (true)` stays reported despite the new ESLint 10 default. No source change was needed. Dev-only, no runtime change.
+
 ## [0.12.1] - 2026-10-25
 
 ### Changed

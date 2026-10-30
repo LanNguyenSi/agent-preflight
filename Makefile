@@ -26,7 +26,7 @@ check:
 
 ## Lint
 lint:
-	npx eslint src tests --ext .ts --fix || true
+	npx eslint src tests --fix || true
 
 ## Install + build in one step
 setup: install build

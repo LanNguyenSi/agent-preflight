@@ -24,7 +24,7 @@
     "dev": "ts-node src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint src tests --ext .ts",
+    "lint": "eslint src tests",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
@@ -45,13 +45,14 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^20.0.0",
-    "@typescript-eslint/eslint-plugin": "^8.71.0",
-    "@typescript-eslint/parser": "^8.71.0",
     "@vitest/coverage-v8": "^4.1.11",
-    "eslint": "^8.57.0",
+    "eslint": "^10.14.0",
+    "globals": "^17.13.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.0",
+    "typescript-eslint": "^8.72.1",
     "vitest": "^4.1.11"
   },
   "overrides": {
