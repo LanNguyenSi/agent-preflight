@@ -1,8 +1,9 @@
 import js from "@eslint/js";
+import { defineConfig } from "eslint/config";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
-export default tseslint.config(
+export default defineConfig([
   // Flat config has no `--ext`: the old `eslint ... --ext .ts` linted only
   // TypeScript sources, so JS fixtures under tests/ stay out of the file set.
   { ignores: ["dist/", "node_modules/", "**/*.js", "**/*.cjs", "**/*.mjs"] },
@@ -19,4 +20,4 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
     },
   },
-);
+]);
