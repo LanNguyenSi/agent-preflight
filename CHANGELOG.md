@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- **`@hono/node-server` 2.1.5** (GHSA-rmxm-3fg6-px4f): the lockfile resolves 2.1.5 (was 2.1.1), which fixes `serveStatic` decoding the request path a second time and so letting a request bypass middleware on static paths (affected: `>= 1.19.10, < 2.1.3`). Lockfile only, pulled in through `@modelcontextprotocol/sdk`, whose range is unchanged.
+
 ### Changed
 
 - Dev tooling: ESLint 8 to ESLint 10 with a flat `eslint.config.mjs` (replaces `.eslintrc.json`), using the unified `typescript-eslint` package. `npm run lint` now takes no `--ext`; the same `.ts` files under `src` and `tests` are linted. The ESLint 10 `recommended` set adds six rules and drops three removed ones; `no-constant-condition` is set to `checkLoops: "all"` so `while (true)` stays reported despite the new ESLint 10 default. No source change was needed. Dev-only, no runtime change.
