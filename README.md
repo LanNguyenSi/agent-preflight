@@ -131,7 +131,7 @@ npm install
 npm run build
 npx tsc --noEmit -p tsconfig.test.json   # test-file typecheck, as in CI
 npm test
-npm run lint                             # not run in CI
+npm run lint                             # as in CI (Node 22 entry)
 ```
 
 `make release-bundle` produces `out/release/agent-preflight-v<version>-bundle.tar.gz` plus a `.sha256` (output directory overridable with `RELEASE_OUTPUT_DIR`); bundle installs require `node` but not `npm`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the PR workflow and dev setup.
