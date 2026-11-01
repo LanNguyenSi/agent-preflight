@@ -21,6 +21,9 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
       - run: npm ci --no-audit --no-fund
+      # Lint once on the latest Node.js; the rule set is version-independent.
+      - run: npm run lint
+        if: matrix.node-version == '22'
       - run: npx tsc --noEmit --skipLibCheck
       - run: npx tsc --noEmit -p tsconfig.test.json
       - run: npx vitest run --coverage
