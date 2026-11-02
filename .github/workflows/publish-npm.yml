@@ -16,7 +16,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           registry-url: "https://registry.npmjs.org"
 
@@ -40,8 +40,8 @@ jobs:
 
       - name: Upgrade npm for trusted publishing
         # npm Trusted Publishing (OIDC) needs npm >= 11.5.1; this workflow's
-        # Node 20 already satisfies npm 11's floor (^20.17.0), but it still
-        # bundles npm 10, so upgrade first. Auth comes from the GitHub OIDC
+        # Node 24 already bundles npm 11, so this upgrade is a no-op there
+        # and is kept only as a floor guard. Auth comes from the GitHub OIDC
         # token (permissions.id-token: write above) matched against the
         # package's Trusted Publisher entry on npmjs.com (repo
         # LanNguyenSi/agent-preflight, workflow publish-npm.yml), not an
