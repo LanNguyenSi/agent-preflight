@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Dependency updates: `renovate.json` extends the shared `github>LanNguyenSi/renovate-config` preset (weekly grouped patch/minor pull requests, 7-day minimum release age, no automerge, majors only through the Dependency Dashboard). It replaces `.github/dependabot.yml` (security updates now come from Renovate's vulnerability alerts).
 - Runtime and CI move from Node 20 (EOL) to Node 24 LTS; `@types/node` stays `^20.0.0` because the package is published and `engines` still allows Node 20. The sandbox image is `node:24-bookworm`, the CI matrix is Node 22 and 24, and the release and publish workflows run on Node 24. Users of the plain `agent-preflight:local` image tag run `make sandbox-build` (or `preflight sandbox --build`) once to pick up the new base; hash-keyed tags rebuild on their own.
 - CI now runs `npm run lint` right after `npm ci`, once on the Node 22 matrix entry, so lint regressions fail the pipeline instead of showing up only locally.
 - Dev tooling: ESLint 8 to ESLint 10 with a flat `eslint.config.mjs` (replaces `.eslintrc.json`), using the unified `typescript-eslint` package. `npm run lint` now takes no `--ext`; the same `.ts` files under `src` and `tests` are linted. The ESLint 10 `recommended` set adds six rules and drops three removed ones; `no-constant-condition` is set to `checkLoops: "all"` so `while (true)` stays reported despite the new ESLint 10 default. No source change was needed. Dev-only, no runtime change.
