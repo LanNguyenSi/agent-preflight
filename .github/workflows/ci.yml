@@ -12,8 +12,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 20.19.0 is the lowest supported Node.js (see engines in package.json).
-        node-version: ['20.19.0', '20', '22']
+        # 22 is the oldest Node.js in CI; 24 is the current LTS. engines in
+        # package.json still allows 20.19.0, which CI no longer exercises.
+        node-version: ['22', '24']
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -21,7 +22,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
       - run: npm ci --no-audit --no-fund
-      # Lint once on the latest Node.js; the rule set is version-independent.
+      # Lint once (on 22); the rule set is version-independent.
       - run: npm run lint
         if: matrix.node-version == '22'
       - run: npx tsc --noEmit --skipLibCheck
