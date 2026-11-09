@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - CI now runs `npm run lint` right after `npm ci`, once on the Node 22 matrix entry, so lint regressions fail the pipeline instead of showing up only locally.
 - Dev tooling: ESLint 8 to ESLint 10 with a flat `eslint.config.mjs` (replaces `.eslintrc.json`), using the unified `typescript-eslint` package. `npm run lint` now takes no `--ext`; the same `.ts` files under `src` and `tests` are linted. The ESLint 10 `recommended` set adds six rules and drops three removed ones; `no-constant-condition` is set to `checkLoops: "all"` so `while (true)` stays reported despite the new ESLint 10 default. No source change was needed. Dev-only, no runtime change.
 
+### Fixed
+
+- GitHub releases now carry the CHANGELOG section of their version as the release body, and the release job fails before publishing when that section is missing or empty.
+
 ## [0.12.1] - 2026-10-25
 
 ### Changed

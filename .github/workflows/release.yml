@@ -25,8 +25,18 @@ jobs:
       - run: npx vitest run
       - run: ./scripts/create-release-bundle.sh
 
-      - uses: softprops/action-gh-release@v3
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG_NAME#v}"
+          ./scripts/extract-release-notes.sh "$VERSION" CHANGELOG.md release_notes.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
         with:
+          name: ${{ github.ref_name }}
+          body_path: release_notes.md
           files: |
             out/release/*.tar.gz
             out/release/*.sha256
