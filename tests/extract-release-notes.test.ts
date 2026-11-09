@@ -164,6 +164,36 @@ describe("extract-release-notes.sh", () => {
     });
   });
 
+  it.skipIf(process.getuid?.() === 0)(
+    "fails on an unreadable changelog and writes no file",
+    () => {
+      withTempDir((dir) => {
+        const changelog = path.join(dir, "CHANGELOG.md");
+        const out = path.join(dir, "notes.md");
+        fs.writeFileSync(changelog, ["## [1.0.0] - 2026-11-01", "", "- Item.", ""].join("\n"));
+        fs.chmodSync(changelog, 0o000);
+        try {
+          const result = runExtract(["1.0.0", changelog, out], dir);
+          expect(result.status).not.toBe(0);
+          expect(result.stderr).toContain("failed to read");
+          expect(fs.existsSync(out)).toBe(false);
+        } finally {
+          fs.chmodSync(changelog, 0o600);
+        }
+      });
+    }
+  );
+
+  it("fails when the output directory does not exist", () => {
+    withTempDir((dir) => {
+      const changelog = path.join(dir, "CHANGELOG.md");
+      fs.writeFileSync(changelog, ["## [1.0.0] - 2026-11-01", "", "- Item.", ""].join("\n"));
+      const result = runExtract(["1.0.0", changelog, path.join(dir, "missing", "notes.md")], dir);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("failed to read the changelog or write");
+    });
+  });
+
   it("extracts a non-empty body for 0.12.1 from the real CHANGELOG.md", () => {
     withTempDir((dir) => {
       const out = path.join(dir, "notes.md");

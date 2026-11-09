@@ -36,7 +36,7 @@ fi
 
 if [ "$status" -ne 0 ]; then
   rm -f "$OUTPUT"
-  echo "Error: failed to read ${CHANGELOG}." >&2
+  echo "Error: failed to read the changelog or write the output (${CHANGELOG} -> ${OUTPUT})." >&2
   exit 1
 fi
 
