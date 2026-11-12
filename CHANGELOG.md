@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 
+- **`minimatch` 11.0.4 in the dev toolchain** (GHSA-g3hv-75wg-m249): `package.json` pins minimatch to 11.0.4 through scoped overrides under `eslint`, `@eslint/config-array` and `@typescript-eslint/typescript-estree`, whose own ranges still ask for 10.x, which has no fix. Dev dependencies only; lint, typecheck, tests and build are unchanged. The overrides go once those packages depend on minimatch 11.
 - **`@hono/node-server` 2.1.5** (GHSA-rmxm-3fg6-px4f): the lockfile resolves 2.1.5 (was 2.1.1), which fixes `serveStatic` decoding the request path a second time and so letting a request bypass middleware on static paths (affected: `>= 1.19.10, < 2.1.3`). Lockfile only, pulled in through `@modelcontextprotocol/sdk`, whose range is unchanged.
 
 ### Changed
