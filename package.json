@@ -39,21 +39,21 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1",
-    "commander": "^12.0.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "commander": "^12.1.0",
     "execa": "^8.0.1",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^20.0.0",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@types/node": "^20.19.43",
+    "@vitest/coverage-v8": "^4.1.12",
     "eslint": "^10.14.0",
-    "globals": "^17.13.0",
+    "globals": "^17.14.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.4.0",
+    "typescript": "^5.9.3",
     "typescript-eslint": "^8.72.1",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "overrides": {
     "postcss": "^8.5.18",
